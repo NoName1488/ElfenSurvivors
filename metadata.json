@@ -1,0 +1,6 @@
+{
+  "name": "Elfen Lied: Vector Survivor",
+  "description": "Brotato-style arena survival roguelite with Elfen Lied psychokinetic vectors, psychic progression, DNA mutations, wave defense, and item shops.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
