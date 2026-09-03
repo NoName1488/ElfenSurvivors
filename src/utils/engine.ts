@@ -18,9 +18,13 @@ import {
   HelicopterDropship,
   ArenaType,
   PsychicMutationState,
+  StatUpgradeOption,
+  ArtilleryHazard,
+  ActiveArchetype,
+  WeaponEvolution,
 } from '../types';
 import { sound } from './sound';
-import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE } from '../data/gameData';
+import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS } from '../data/gameData';
 import { PSYCHIC_MUTATION_TREES, PsychicMutationNode } from '../data/psychicMutationsData';
 import { getLanguage } from './i18n';
 
@@ -52,6 +56,7 @@ export interface GameEngineState {
     dashVy: number;
   };
   mutationState: PsychicMutationState;
+  baseStatBonuses: Partial<Record<keyof PlayerStats, number>>;
   stats: PlayerStats;
   weapons: Weapon[];
   passiveItems: PassiveItem[];
@@ -90,6 +95,18 @@ export interface GameEngineState {
   arenaWidth: number;
   arenaHeight: number;
 
+  // Adrenaline Kill-Streak & Surge Flow System
+  killStreak: number;
+  killStreakTimer: number;
+  maxKillStreak: number;
+  surgeLevel: number; // 0: None, 1: Пси-Резонанс, 2: Гипер-Транс, 3: Сингулярный Разрыв
+
+  // Mid-Wave Tactical Artillery Crisis Event (Wave 7+)
+  artilleryHazards: ArtilleryHazard[];
+  crisisWarningText: string | null;
+  crisisWarningTimer: number;
+  crisisTriggeredInWave: boolean;
+
   // Character Unique Mechanic State
   characterResource: {
     name: string;
@@ -98,6 +115,31 @@ export interface GameEngineState {
     isActive: boolean;
   };
   laserSightTarget: { x: number; y: number } | null;
+
+  // Economy & Archetypes (Brotato Macro-Gameplay)
+  lastWaveDividend: number;
+  freeRerollAvailable: boolean;
+  savedLockedShopItems: any[];
+  activeArchetypes: ActiveArchetype[];
+
+  // Macro-Economy: Bagged Materials Reserve & Compound Harvesting
+  baggedDna: number;
+  lastWaveBaggedSaved: number;
+  lastWaveHarvestPayout: number;
+
+  // Catalytic Weapon Evolution System
+  evolvedWeapons: string[];
+  recentEvolutionPopup: {
+    name: string;
+    russianName: string;
+    description: string;
+    russianDescription: string;
+    powerSpike: string;
+    russianPowerSpike: string;
+    color: string;
+    icon: string;
+    timer: number;
+  } | null;
 }
 
 export class GameEngine {
@@ -111,6 +153,7 @@ export class GameEngine {
   private keysDown: Set<string> = new Set();
   private virtualJoystick: { active: boolean; dx: number; dy: number } = { active: false, dx: 0, dy: 0 };
   private nyuRepulseTimer: number = 0;
+  private tacticalAmbushTimer: number = 14;
 
   public onLevelUpCallback?: (newLevel: number) => void;
   public onWaveCompleteCallback?: (nextWave: number) => void;
@@ -154,6 +197,7 @@ export class GameEngine {
           quantumCleave: 0,
         },
       },
+      baseStatBonuses: {},
       stats: baseStats,
       weapons: [{ ...starterWeapon, id: 'starter_' + Math.random().toString(36).substr(2, 9) }],
       passiveItems: [],
@@ -191,6 +235,14 @@ export class GameEngine {
       shakeIntensity: 0,
       arenaWidth: width,
       arenaHeight: height,
+      killStreak: 0,
+      killStreakTimer: 0,
+      maxKillStreak: 0,
+      surgeLevel: 0,
+      artilleryHazards: [],
+      crisisWarningText: null,
+      crisisWarningTimer: 0,
+      crisisTriggeredInWave: false,
       characterResource: {
         name: character.mechanic.resourceName,
         current: 0,
@@ -198,6 +250,15 @@ export class GameEngine {
         isActive: false,
       },
       laserSightTarget: null,
+      lastWaveDividend: 0,
+      freeRerollAvailable: false,
+      savedLockedShopItems: [],
+      activeArchetypes: [],
+      baggedDna: 0,
+      lastWaveBaggedSaved: 0,
+      lastWaveHarvestPayout: 0,
+      evolvedWeapons: [],
+      recentEvolutionPopup: null,
     };
 
     this.recalculateStats();
@@ -370,8 +431,83 @@ export class GameEngine {
     return lastMerged;
   }
 
+  // Catalytic Weapon Evolution System (2.В.2)
+  // Max Tier 4 Weapon + Catalyst Passive Item -> Tier 5 Transformed Evolved Weapon
+  public checkWeaponEvolutions(): WeaponEvolution | null {
+    let newlyEvolved: WeaponEvolution | null = null;
+
+    for (const weapon of this.state.weapons) {
+      if (weapon.tier === 4 && !weapon.isEvolved) {
+        const match = WEAPON_EVOLUTIONS.find(
+          (evo) =>
+            evo.baseWeaponType === weapon.type &&
+            this.state.passiveItems.some((p) => p.id === evo.requiredPassiveId)
+        );
+
+        if (match) {
+          weapon.isEvolved = true;
+          weapon.tier = 5;
+          weapon.evolutionId = match.id;
+          weapon.evolvedName = match.evolvedWeaponName;
+          weapon.evolvedRussianName = match.evolvedRussianName;
+          weapon.evolvedDescription = match.evolvedRussianDescription;
+          weapon.name = match.evolvedWeaponName;
+          weapon.russianName = match.evolvedRussianName;
+          weapon.description = match.evolvedRussianDescription;
+          weapon.color = match.color;
+          weapon.damage = Math.round(weapon.damage * 2.2);
+          weapon.cooldown = Math.max(0.18, weapon.cooldown * 0.7);
+          weapon.range = Math.round(weapon.range * 1.45);
+          weapon.critChance = Math.min(1.0, weapon.critChance + 0.3);
+
+          if (!this.state.evolvedWeapons.includes(match.id)) {
+            this.state.evolvedWeapons.push(match.id);
+          }
+
+          this.state.recentEvolutionPopup = {
+            ...match,
+            timer: 5.0,
+          };
+
+          sound.playEvolutionFanfare();
+          this.triggerScreenShake(16, 0.7);
+
+          // Emit ascension celebration particles
+          for (let k = 0; k < 32; k++) {
+            const angle = (Math.PI * 2 * k) / 32;
+            this.state.particles.push({
+              x: this.state.player.x,
+              y: this.state.player.y,
+              vx: Math.cos(angle) * (180 + Math.random() * 80),
+              vy: Math.sin(angle) * (180 + Math.random() * 80),
+              radius: 4 + Math.random() * 3,
+              color: match.color,
+              life: 1.2,
+              maxLife: 1.2,
+              type: 'spark',
+            });
+          }
+
+          newlyEvolved = match;
+          break;
+        }
+      }
+    }
+
+    return newlyEvolved;
+  }
+
   public recalculateStats() {
     const stats = { ...this.state.character.baseStats };
+
+    // 0. Apply Level-up chosen stat upgrades
+    if (this.state.baseStatBonuses) {
+      for (const [key, value] of Object.entries(this.state.baseStatBonuses)) {
+        if (value !== undefined && typeof value === 'number') {
+          (stats as any)[key] = ((stats as any)[key] || 0) + value;
+        }
+      }
+    }
 
     // 1. Apply passive items with tier scaling
     for (const item of this.state.passiveItems) {
@@ -435,29 +571,128 @@ export class GameEngine {
       }
     }
 
-    // 3.5 Apply Apex Overcharge Levels (Infinite Late-Game Mutation Sink)
+    // 3.5 Apply Apex Overcharge Levels (Balanced Late-Game Mutation Sink)
     if (this.state.mutationState.overchargeLevels) {
       const oc = this.state.mutationState.overchargeLevels;
       if (oc.vectorSingularity && oc.vectorSingularity > 0) {
-        stats.vectorCount = (stats.vectorCount || 4) + oc.vectorSingularity;
-        stats.psiPower = (stats.psiPower || 0) + oc.vectorSingularity * 15;
+        // +1 vector every 3 overcharge levels, +4% psiPower per level
+        const extraVectors = Math.floor(oc.vectorSingularity / 3);
+        if (extraVectors > 0) {
+          stats.vectorCount = (stats.vectorCount || 4) + extraVectors;
+        }
+        stats.psiPower = (stats.psiPower || 0) + oc.vectorSingularity * 4;
       }
       if (oc.psychicOverdrive && oc.psychicOverdrive > 0) {
-        stats.psiPower = (stats.psiPower || 0) + oc.psychicOverdrive * 25;
-        stats.vectorReach = (stats.vectorReach || 0) + oc.psychicOverdrive * 30;
+        stats.psiPower = (stats.psiPower || 0) + oc.psychicOverdrive * 5;
+        stats.vectorReach = (stats.vectorReach || 0) + oc.psychicOverdrive * 8;
       }
       if (oc.cellularImmortality && oc.cellularImmortality > 0) {
-        stats.maxHp = (stats.maxHp || 100) + oc.cellularImmortality * 45;
-        stats.armor = (stats.armor || 0) + oc.cellularImmortality * 6;
-        stats.hpRegen = (stats.hpRegen || 0) + oc.cellularImmortality * 2;
+        stats.maxHp = (stats.maxHp || 100) + oc.cellularImmortality * 12;
+        stats.armor = (stats.armor || 0) + oc.cellularImmortality * 1;
+        stats.hpRegen = (stats.hpRegen || 0) + Math.floor(oc.cellularImmortality / 3);
       }
       if (oc.quantumCleave && oc.quantumCleave > 0) {
-        stats.critChance = (stats.critChance || 5) + oc.quantumCleave * 12;
-        stats.critDamage = (stats.critDamage || 1.5) + oc.quantumCleave * 0.35;
-        stats.attackSpeed = (stats.attackSpeed || 0) + oc.quantumCleave * 15;
+        stats.critChance = (stats.critChance || 5) + oc.quantumCleave * 3;
+        stats.critDamage = (stats.critDamage || 1.5) + oc.quantumCleave * 0.1;
+        stats.attackSpeed = (stats.attackSpeed || 0) + oc.quantumCleave * 3;
       }
     }
 
+    // 4. Dynamic Archetypes Evaluation (Macro-Build Synergies)
+    let vectorScore = 0;
+    let ballisticScore = 0;
+    let psiScore = 0;
+    let bioScore = 0;
+
+    for (const w of this.state.weapons) {
+      if (w.category === 'vector') vectorScore++;
+      else if (w.category === 'firearm' || w.category === 'cyberware') ballisticScore++;
+      else if (w.category === 'telekinesis') psiScore++;
+    }
+
+    for (const p of this.state.passiveItems) {
+      if (!p.tags) continue;
+      if (p.tags.includes('vector')) vectorScore++;
+      if (p.tags.includes('firearm') || p.tags.includes('tech')) ballisticScore++;
+      if (p.tags.includes('stasis') || p.tags.includes('kinetic')) psiScore++;
+      if (p.tags.includes('blood') || p.tags.includes('dna')) bioScore++;
+    }
+
+    const archetypes: ActiveArchetype[] = [
+      {
+        id: 'vector_butcher',
+        name: 'Vector Butcher',
+        russianName: 'Векторный мясник',
+        count: vectorScore,
+        threshold: 3,
+        isActive: vectorScore >= 3,
+        bonusText: '+12% Reach, +10% Attack Speed, +8% PSI Power',
+        russianBonusText: '+12% Радиус, +10% Скорость атаки, +8% Сила ПСИ',
+        color: '#c084fc',
+        icon: 'Maximize2',
+      },
+      {
+        id: 'ballistic_commando',
+        name: 'Ballistic Commando',
+        russianName: 'Баллистик SAT',
+        count: ballisticScore,
+        threshold: 3,
+        isActive: ballisticScore >= 3,
+        bonusText: '+3 Armor, +8% Crit Chance, +0.25x Crit Multiplier',
+        russianBonusText: '+3 Броня, +8% Шанс крита, +0.25x Множитель крита',
+        color: '#38bdf8',
+        icon: 'Crosshair',
+      },
+      {
+        id: 'psi_storm',
+        name: 'Psychic Storm',
+        russianName: 'Психокинетический шторм',
+        count: psiScore,
+        threshold: 3,
+        isActive: psiScore >= 3,
+        bonusText: '+15% PSI Damage, +15% Range, +5% Dodge',
+        russianBonusText: '+15% Пси-урон, +15% Радиус атаки, +5% Уклонение',
+        color: '#f59e0b',
+        icon: 'Zap',
+      },
+      {
+        id: 'bio_mutant',
+        name: 'Hemodynamic Mutant',
+        russianName: 'Гемо-мутант Вивария',
+        count: bioScore,
+        threshold: 3,
+        isActive: bioScore >= 3,
+        bonusText: '+3% Lifesteal, +20 Max HP, +25% DNA Harvest, +1 HP/5s',
+        russianBonusText: '+3% Вампиризм, +20 Макс ОЗ, +25% Сбор ДНК, +1 Реген/5с',
+        color: '#ef4444',
+        icon: 'Droplets',
+      },
+    ];
+
+    for (const a of archetypes) {
+      if (a.isActive) {
+        if (a.id === 'vector_butcher') {
+          stats.vectorReach = (stats.vectorReach || 0) + 12;
+          stats.attackSpeed = (stats.attackSpeed || 0) + 10;
+          stats.psiPower = (stats.psiPower || 0) + 8;
+        } else if (a.id === 'ballistic_commando') {
+          stats.armor = (stats.armor || 0) + 3;
+          stats.critChance = (stats.critChance || 0) + 8;
+          stats.critDamage = (stats.critDamage || 1.5) + 0.25;
+        } else if (a.id === 'psi_storm') {
+          stats.psiPower = (stats.psiPower || 0) + 15;
+          stats.vectorReach = (stats.vectorReach || 0) + 15;
+          stats.dodge = (stats.dodge || 0) + 5;
+        } else if (a.id === 'bio_mutant') {
+          stats.bloodLifesteal = (stats.bloodLifesteal || 0) + 3;
+          stats.maxHp = (stats.maxHp || 100) + 20;
+          stats.dnaHarvest = (stats.dnaHarvest || 0) + 25;
+          stats.hpRegen = (stats.hpRegen || 0) + 1;
+        }
+      }
+    }
+
+    this.state.activeArchetypes = archetypes;
     this.state.activeSynergies = activeSyns;
 
     // Minimum constraints
@@ -472,6 +707,19 @@ export class GameEngine {
     }
 
     this.initVectorArms();
+    this.checkWeaponEvolutions();
+  }
+
+  public applyStatUpgrade(option: StatUpgradeOption) {
+    if (!this.state.baseStatBonuses) {
+      this.state.baseStatBonuses = {};
+    }
+    const current = this.state.baseStatBonuses[option.statKey] || 0;
+    this.state.baseStatBonuses[option.statKey] = current + option.amount;
+    if (option.statKey === 'maxHp') {
+      this.state.player.hp = Math.min(this.state.player.maxHp + option.amount, this.state.player.hp + option.amount);
+    }
+    this.recalculateStats();
   }
 
   private initVectorArms() {
@@ -539,6 +787,10 @@ export class GameEngine {
     this.state.dropshipSpawnedInWave = false;
     this.state.dropshipWarningTimer = 0;
     this.state.dropshipWarningText = null;
+    this.state.artilleryHazards = [];
+    this.state.crisisWarningTimer = 0;
+    this.state.crisisWarningText = null;
+    this.state.crisisTriggeredInWave = false;
     this.state.projectiles = [];
     this.state.vectorClashes = [];
     this.state.player.vectorGuard = this.state.player.maxVectorGuard;
@@ -547,6 +799,7 @@ export class GameEngine {
     this.state.player.isDashing = false;
     this.state.player.mobilityActiveTimer = 0;
     this.lastEnemySpawn = 0;
+    this.tacticalAmbushTimer = 12 + Math.random() * 4;
     this.recalculateStats();
 
     // Revert back to authentic character theme at wave start
@@ -899,6 +1152,14 @@ export class GameEngine {
       this.state.shakeTimer -= dt;
     }
 
+    // Evolution celebration popup timer
+    if (this.state.recentEvolutionPopup) {
+      this.state.recentEvolutionPopup.timer -= dt;
+      if (this.state.recentEvolutionPopup.timer <= 0) {
+        this.state.recentEvolutionPopup = null;
+      }
+    }
+
     // Cooldown timers
     if (this.state.player.specialCooldownTimer > 0) {
       this.state.player.specialCooldownTimer -= dt;
@@ -1008,11 +1269,39 @@ export class GameEngine {
       }
     }
 
+    // Adrenaline Kill-Streak & Surge Flow decay
+    if (this.state.killStreakTimer > 0) {
+      this.state.killStreakTimer -= dt;
+      if (this.state.killStreakTimer <= 0) {
+        this.state.killStreak = 0;
+        this.state.surgeLevel = 0;
+      }
+    }
+
+    // Mid-Wave Tactical Artillery Strike Crisis (Wave 7+ at ~45% elapsed)
+    if (
+      this.state.wave >= 7 &&
+      !this.state.crisisTriggeredInWave &&
+      this.state.maxWaveTimer - this.state.waveTimer >= this.state.maxWaveTimer * 0.45 &&
+      !this.state.isWaveEnding
+    ) {
+      this.state.crisisTriggeredInWave = true;
+      this.triggerTacticalArtilleryCrisis();
+    }
+
+    if (this.state.crisisWarningTimer > 0) {
+      this.state.crisisWarningTimer -= dt;
+      if (this.state.crisisWarningTimer <= 0) {
+        this.state.crisisWarningText = null;
+      }
+    }
+
     this.updatePlayerMovement(dt);
     this.updateVectorArms(dt);
     this.updateWeapons(dt);
     this.updateEnemySpawning(dt);
     this.updateDropships(dt);
+    this.updateArtilleryHazards(dt);
     this.updateEnemies(dt);
     this.updateProjectiles(dt);
     this.updateDnaDrops(dt);
@@ -1218,6 +1507,11 @@ export class GameEngine {
     } else if (this.state.character.id === 'mariko' && this.state.characterResource.isActive) {
       // Overheat slows Mariko's motorized suspension
       speed *= 0.7;
+    }
+
+    // Crisis Adrenaline Rush (Near-death survival clutch)
+    if (p.hp / Math.max(1, p.maxHp) <= 0.35) {
+      speed *= 1.15; // +15% movement speed when critically wounded
     }
 
     p.x += dx * speed * dt;
@@ -1430,8 +1724,11 @@ export class GameEngine {
           arm.targetEnemyId = bestTarget.id;
           arm.strikeType = Math.random() < 0.45 ? 'pierce' : 'slash';
 
-          // Base independent vector unit damage (scaled by psi power, character passives and weapon tier)
-          const baseDmg = (14 + this.state.stats.psiPower * 0.35) * psiMultiplier;
+          // Base independent vector unit damage (scaled cleanly by psi power with soft cap and character state)
+          const rawPsi = Math.max(-50, this.state.stats.psiPower);
+          const effectivePsi = rawPsi <= 60 ? rawPsi : 60 + (rawPsi - 60) * 0.45;
+          const charBonus = psiMultiplier / Math.max(0.1, 1 + this.state.stats.psiPower / 100);
+          const baseDmg = (13 + effectivePsi * 0.22) * (1 + effectivePsi / 100) * charBonus;
           const isCrit = Math.random() < (this.state.stats.critChance / 100);
           let finalDmg = isCrit ? baseDmg * this.state.stats.critDamage : baseDmg;
 
@@ -1823,20 +2120,27 @@ export class GameEngine {
     enemiesInRange.sort((a, b) => Math.hypot(a.x - pX, a.y - pY) - Math.hypot(b.x - pX, b.y - pY));
     const target = enemiesInRange[0];
 
-    let psiMultiplier = 1 + this.state.stats.psiPower / 100;
+    const rawPsi = Math.max(-50, this.state.stats.psiPower);
+    const effectivePsi = rawPsi <= 60 ? rawPsi : 60 + (rawPsi - 60) * 0.5;
+    let psiMultiplier = 1 + effectivePsi / 100;
     if (this.state.character.id === 'nyu' && this.state.characterResource.isActive) {
-      psiMultiplier *= 2.5;
+      psiMultiplier *= 2.0;
     }
 
     // Mariko Overheat Heat Generator & Penalty
     if (this.state.character.id === 'mariko') {
-      this.state.characterResource.current = Math.min(100, this.state.characterResource.current + 3.8);
+      this.state.characterResource.current = Math.min(100, this.state.characterResource.current + 3.5);
       if (this.state.characterResource.isActive) {
-        psiMultiplier *= 0.55; // Suffer 45% damage reduction during severe vector overheat
+        psiMultiplier *= 0.65; // Suffer damage reduction during severe vector overheat
       }
     }
 
-    const baseDamage = weapon.damage * psiMultiplier * (1 + (weapon.tier - 1) * 0.4);
+    const baseDamage = weapon.damage * psiMultiplier * (1 + (weapon.tier - 1) * 0.35);
+
+    // Catalytic Weapon Evolution: Qualitative Transformative Attack Geometry (2.В.2)
+    if (weapon.isEvolved) {
+      return this.executeEvolvedWeapon(weapon, baseDamage, enemiesInRange, target, pX, pY);
+    }
 
     switch (weapon.type) {
       // === BANDO FIREARMS & CYBERWARE ===
@@ -2268,6 +2572,409 @@ export class GameEngine {
     }
   }
 
+  // Catalytic Weapon Evolution: Qualitative Transformative Attack Geometry (2.В.2)
+  private executeEvolvedWeapon(
+    weapon: Weapon,
+    baseDamage: number,
+    enemiesInRange: Enemy[],
+    target: Enemy | null,
+    pX: number,
+    pY: number
+  ): boolean {
+    const evoId = weapon.evolutionId;
+
+    switch (evoId) {
+      // 1. QUEEN'S CRIMSON HARVEST (Lucy Vector Slasher Evolution)
+      case 'evo_crimson_harvest': {
+        sound.playVectorSlash();
+        sound.playSurgeChime(2);
+        this.triggerScreenShake(7, 0.25);
+
+        // 360° Cleave: All vector arms visually lash out in a circle
+        this.state.vectorArms.forEach((arm, i) => {
+          const armAng = (Math.PI * 2 * i) / Math.max(1, this.state.vectorArms.length);
+          arm.striking = true;
+          arm.strikeProgress = 0;
+          arm.targetX = pX + Math.cos(armAng) * weapon.range;
+          arm.targetY = pY + Math.sin(armAng) * weapon.range;
+          arm.strikeType = 'slash';
+        });
+
+        // Gravitational Pull & 100% Critical Strike Whirlwind on ALL enemies in range
+        enemiesInRange.forEach((e) => {
+          const pullAngle = Math.atan2(pY - e.y, pX - e.x);
+          e.x += Math.cos(pullAngle) * 35;
+          e.y += Math.sin(pullAngle) * 35;
+
+          const critMultiplier = this.state.stats.critDamage || 1.75;
+          const dmg = baseDamage * critMultiplier * 1.5;
+          this.damageEnemy(e, dmg, true, weapon);
+          this.spawnVectorImpact(e.x, e.y, Math.atan2(e.y - pY, e.x - pX), true, 'slash');
+        });
+
+        // Blood shockwave particle burst
+        for (let i = 0; i < 16; i++) {
+          const ang = (Math.PI * 2 * i) / 16;
+          this.state.particles.push({
+            x: pX,
+            y: pY,
+            vx: Math.cos(ang) * 220,
+            vy: Math.sin(ang) * 220,
+            radius: 4,
+            color: '#ef4444',
+            life: 0.6,
+            maxLife: 0.6,
+            type: 'spark',
+          });
+        }
+        return true;
+      }
+
+      // 2. PSYCHOTRONIC RAILGUN (Telekinetic Shard Evolution)
+      case 'evo_psychotronic_railgun': {
+        if (!target) return false;
+        sound.playRailgun();
+        this.triggerScreenShake(10, 0.3);
+
+        const angle = Math.atan2(target.y - pY, target.x - pX);
+        const speed = 1600;
+
+        // Pierces infinite targets across the whole arena, detonating on impact
+        this.state.projectiles.push({
+          id: ++this.projectileIdCounter,
+          x: pX,
+          y: pY,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          radius: 12,
+          damage: baseDamage * 2.8,
+          isPlayer: true,
+          color: '#38bdf8',
+          life: 1.2,
+          maxLife: 1.2,
+          penetration: 999,
+          isBullet: true,
+          explosionRadius: 55,
+        });
+
+        // Plasma trail
+        for (let i = 0; i < 8; i++) {
+          this.state.particles.push({
+            x: pX + Math.cos(angle) * i * 40,
+            y: pY + Math.sin(angle) * i * 40,
+            vx: (Math.random() - 0.5) * 60,
+            vy: (Math.random() - 0.5) * 60,
+            radius: 3.5,
+            color: '#7dd3fc',
+            life: 0.4,
+            maxLife: 0.4,
+            type: 'spark',
+          });
+        }
+        return true;
+      }
+
+      // 3. CRIMSON EVENT HORIZON (Blood Vortex Evolution)
+      case 'evo_crimson_singularity': {
+        if (!target) return false;
+        sound.playVectorSlash();
+        this.triggerScreenShake(6, 0.2);
+
+        const vortexX = target.x;
+        const vortexY = target.y;
+
+        // Sucks all nearby enemies into center and drains life
+        const vortexRadius = 240;
+        let totalDrained = 0;
+        this.state.enemies.forEach((e) => {
+          const dist = Math.hypot(e.x - vortexX, e.y - vortexY);
+          if (dist <= vortexRadius) {
+            const pullAng = Math.atan2(vortexY - e.y, vortexX - e.x);
+            e.x += Math.cos(pullAng) * 45;
+            e.y += Math.sin(pullAng) * 45;
+            const tickDmg = baseDamage * 0.9;
+            this.damageEnemy(e, tickDmg, false, weapon);
+            totalDrained += tickDmg * 0.03;
+
+            // Corpse bone flak if target is killed
+            if (e.hp <= 0) {
+              for (let k = 0; k < 4; k++) {
+                const flakAng = (Math.PI * 2 * k) / 4 + Math.random() * 0.5;
+                this.state.projectiles.push({
+                  id: ++this.projectileIdCounter,
+                  x: e.x,
+                  y: e.y,
+                  vx: Math.cos(flakAng) * 450,
+                  vy: Math.sin(flakAng) * 450,
+                  radius: 5,
+                  damage: baseDamage * 0.6,
+                  isPlayer: true,
+                  color: '#f87171',
+                  life: 0.5,
+                  maxLife: 0.5,
+                  penetration: 2,
+                });
+              }
+            }
+          }
+        });
+
+        if (totalDrained > 0) {
+          this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + Math.max(1, Math.round(totalDrained)));
+        }
+
+        // Singularity VFX
+        for (let i = 0; i < 12; i++) {
+          const a = (Math.PI * 2 * i) / 12;
+          this.state.particles.push({
+            x: vortexX + Math.cos(a) * 60,
+            y: vortexY + Math.sin(a) * 60,
+            vx: -Math.cos(a) * 120,
+            vy: -Math.sin(a) * 120,
+            radius: 5,
+            color: '#b91c1c',
+            life: 0.5,
+            maxLife: 0.5,
+            type: 'blood',
+          });
+        }
+        return true;
+      }
+
+      // 4. AEGIS OF SILPELIT (Deflection Barrier Evolution)
+      case 'evo_aegis_silpelit': {
+        sound.playLaser();
+        this.triggerScreenShake(5, 0.2);
+
+        // Reflect all enemy bullets within 160px with 300% damage boost
+        this.state.projectiles.forEach((p) => {
+          if (!p.isPlayer && Math.hypot(p.x - pX, p.y - pY) <= 160) {
+            p.isPlayer = true;
+            p.vx = -p.vx * 1.6;
+            p.vy = -p.vy * 1.6;
+            p.damage = Math.max(p.damage * 3, baseDamage * 1.5);
+            p.color = '#c084fc';
+          }
+        });
+
+        // 360° Sonic concussive wave knocking back and damaging all enemies within 220px
+        enemiesInRange.forEach((e) => {
+          const ang = Math.atan2(e.y - pY, e.x - pX);
+          e.x += Math.cos(ang) * 65;
+          e.y += Math.sin(ang) * 65;
+          this.damageEnemy(e, baseDamage * 1.3, false, weapon);
+          this.spawnVectorImpact(e.x, e.y, ang, false, 'blunt');
+        });
+
+        // Ring ripple
+        for (let i = 0; i < 18; i++) {
+          const a = (Math.PI * 2 * i) / 18;
+          this.state.particles.push({
+            x: pX,
+            y: pY,
+            vx: Math.cos(a) * 260,
+            vy: Math.sin(a) * 260,
+            radius: 4,
+            color: '#8b5cf6',
+            life: 0.45,
+            maxLife: 0.45,
+            type: 'spark',
+          });
+        }
+        return true;
+      }
+
+      // 5. APOCALYPSE-12 FLAK CANNON (SPAS-12 Shotgun Evolution)
+      case 'evo_apocalypse_flak': {
+        if (!target) return false;
+        sound.playShotgun();
+        this.triggerScreenShake(8, 0.2);
+        this.ejectShellCasing();
+
+        const baseAngle = Math.atan2(target.y - pY, target.x - pX);
+
+        // Fires 3 heavy cluster flak shells
+        for (let s = -1; s <= 1; s++) {
+          const shellAngle = baseAngle + s * 0.22;
+          this.state.projectiles.push({
+            id: ++this.projectileIdCounter,
+            x: pX,
+            y: pY,
+            vx: Math.cos(shellAngle) * 580,
+            vy: Math.sin(shellAngle) * 580,
+            radius: 12,
+            damage: baseDamage * 1.6,
+            isPlayer: true,
+            color: '#f97316',
+            life: 0.4,
+            maxLife: 0.4,
+            penetration: 1,
+            explosionRadius: 90,
+          });
+        }
+
+        // Plus 14 bouncing tungsten fragments
+        for (let f = 0; f < 14; f++) {
+          const fragAng = baseAngle + (Math.random() - 0.5) * 0.9;
+          this.state.projectiles.push({
+            id: ++this.projectileIdCounter,
+            x: pX,
+            y: pY,
+            vx: Math.cos(fragAng) * (700 + Math.random() * 200),
+            vy: Math.sin(fragAng) * (700 + Math.random() * 200),
+            radius: 4,
+            damage: baseDamage * 0.5,
+            isPlayer: true,
+            color: '#fbbf24',
+            life: 0.7,
+            maxLife: 0.7,
+            penetration: 3,
+            isBullet: true,
+          });
+        }
+        return true;
+      }
+
+      // 6. TITAN GATLING MINIGUN (M60 Vulcan Evolution)
+      case 'evo_titan_gatling': {
+        if (!target) return false;
+        sound.playMachineGun();
+        this.triggerScreenShake(3, 0.08);
+        this.ejectShellCasing();
+
+        const baseAngle = Math.atan2(target.y - pY, target.x - pX);
+
+        // 3 parallel streams of high-velocity incendiary explosive rounds
+        for (let stream = -1; stream <= 1; stream++) {
+          const spread = (Math.random() - 0.5) * 0.12 + stream * 0.08;
+          const ang = baseAngle + spread;
+          this.state.projectiles.push({
+            id: ++this.projectileIdCounter,
+            x: pX,
+            y: pY,
+            vx: Math.cos(ang) * 950,
+            vy: Math.sin(ang) * 950,
+            radius: 6,
+            damage: baseDamage * 1.2,
+            isPlayer: true,
+            color: '#06b6d4',
+            life: 0.65,
+            maxLife: 0.65,
+            penetration: 3,
+            isBullet: true,
+            explosionRadius: 40,
+          });
+        }
+        return true;
+      }
+
+      // 7. DOOMSDAY 26 CONVERGENCE (Mariko 26 Storm Evolution)
+      case 'evo_mariko_doomsday': {
+        sound.playLaser();
+        this.triggerScreenShake(9, 0.3);
+
+        // Vent overheat into raw firepower!
+        this.state.characterResource.current = 0;
+
+        // All 26 vectors pierce enemies simultaneously across full screen
+        const targets = enemiesInRange.slice(0, 26);
+        targets.forEach((tgt, idx) => {
+          const arm = this.state.vectorArms[idx % this.state.vectorArms.length];
+          if (arm) {
+            arm.striking = true;
+            arm.strikeProgress = 0;
+            arm.targetX = tgt.x;
+            arm.targetY = tgt.y;
+            arm.strikeType = 'pierce';
+          }
+          const dmg = baseDamage * 1.6;
+          this.damageEnemy(tgt, dmg, true, weapon);
+          this.spawnVectorImpact(tgt.x, tgt.y, Math.atan2(tgt.y - pY, tgt.x - pX), true, 'pierce');
+        });
+
+        // 8 sweeping radial plasma lasers covering entire arena
+        for (let k = 0; k < 8; k++) {
+          const beamAng = (Math.PI * 2 * k) / 8;
+          this.state.projectiles.push({
+            id: ++this.projectileIdCounter,
+            x: pX,
+            y: pY,
+            vx: Math.cos(beamAng) * 900,
+            vy: Math.sin(beamAng) * 900,
+            radius: 7,
+            damage: baseDamage * 1.4,
+            isPlayer: true,
+            color: '#eab308',
+            life: 0.8,
+            maxLife: 0.8,
+            penetration: 6,
+            isLaser: true,
+          });
+        }
+        return true;
+      }
+
+      // 8. LILIUM REQUIEM RESONANCE (Shockwave Pulse Evolution)
+      case 'evo_lilium_requiem': {
+        sound.playSurgeChime(3);
+        this.triggerScreenShake(7, 0.25);
+
+        // Stun aura & resonance decay on all enemies within 320px
+        const requiemRange = 320;
+        this.state.enemies.forEach((e) => {
+          const d = Math.hypot(e.x - pX, e.y - pY);
+          if (d <= requiemRange) {
+            // Harmonic damage
+            const dmg = baseDamage * 1.8;
+            this.damageEnemy(e, dmg, false, weapon);
+            this.spawnVectorImpact(e.x, e.y, Math.atan2(e.y - pY, e.x - pX), false, 'blunt');
+
+            // Stun and slow down enemy
+            e.attackCooldown = Math.max(e.attackCooldown, 2.0);
+
+            // Cascade corpse burst if defeated
+            if (e.hp <= 0) {
+              for (let p = 0; p < 6; p++) {
+                const pa = (Math.PI * 2 * p) / 6;
+                this.state.particles.push({
+                  x: e.x,
+                  y: e.y,
+                  vx: Math.cos(pa) * 160,
+                  vy: Math.sin(pa) * 160,
+                  radius: 4,
+                  color: '#ec4899',
+                  life: 0.6,
+                  maxLife: 0.6,
+                  type: 'spark',
+                });
+              }
+            }
+          }
+        });
+
+        // Musical shockwave rings
+        for (let i = 0; i < 24; i++) {
+          const ang = (Math.PI * 2 * i) / 24;
+          this.state.particles.push({
+            x: pX,
+            y: pY,
+            vx: Math.cos(ang) * 280,
+            vy: Math.sin(ang) * 280,
+            radius: 5,
+            color: '#f472b6',
+            life: 0.6,
+            maxLife: 0.6,
+            type: 'spark',
+          });
+        }
+        return true;
+      }
+
+      default:
+        return false;
+    }
+  }
+
   private ejectShellCasing() {
     if (this.state.shellCasings.length > 50) {
       this.state.shellCasings.shift();
@@ -2301,6 +3008,39 @@ export class GameEngine {
       const type = waveConfig.allowedEnemies[Math.floor(Math.random() * waveConfig.allowedEnemies.length)];
       this.spawnEnemy(type);
     }
+
+    // Mid-Wave Tactical Flanking Ambush (Waves 4+)
+    if (this.state.wave >= 4 && !this.state.bossSpawnedInWave) {
+      this.tacticalAmbushTimer -= dt;
+      if (this.tacticalAmbushTimer <= 0) {
+        this.tacticalAmbushTimer = 24 + Math.random() * 8;
+        this.triggerTacticalAmbushSquad();
+      }
+    }
+  }
+
+  private triggerTacticalAmbushSquad() {
+    sound.playRadioAlert();
+    this.triggerScreenShake(8, 0.35);
+    this.state.dropshipWarningText = getLanguage() === 'ru'
+      ? 'ВНИМАНИЕ: ТАКТИЧЕСКИЙ ПРОРЫВ SAT! ВРАГ АТАКУЕТ С ФЛАНГОВ!'
+      : 'ALERT: SAT TACTICAL SQUAD BREACH! FLANKING MANEUVER!';
+    this.state.dropshipWarningTimer = 3.2;
+
+    const pX = this.state.player.x;
+    const pY = this.state.player.y;
+    const squadTypes: Enemy['type'][] = this.state.wave >= 8
+      ? ['riot_shield', 'sat_shotgunner', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor']
+      : ['riot_shield', 'sat_shotgunner', 'sat_grunt', 'sat_grunt'];
+
+    // Spawn 4-5 flanking units distributed around player perimeter
+    squadTypes.forEach((type, idx) => {
+      const angle = (idx / squadTypes.length) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = 380 + Math.random() * 120;
+      const x = Math.max(30, Math.min(this.state.arenaWidth - 30, pX + Math.cos(angle) * dist));
+      const y = Math.max(30, Math.min(this.state.arenaHeight - 30, pY + Math.sin(angle) * dist));
+      this.spawnEnemy(type, x, y, idx === 0);
+    });
   }
 
   private spawnDropship() {
@@ -2587,6 +3327,131 @@ export class GameEngine {
     }
   }
 
+  private triggerTacticalArtilleryCrisis() {
+    this.state.crisisWarningText = 'ТРЕВОГА: МАССИРОВАННЫЙ АРТОБСТРЕЛ SAT! ПОКИНЬТЕ ЗОНЫ ПОРАЖЕНИЯ!';
+    this.state.crisisWarningTimer = 4.0;
+    sound.playHelicopterMinigun();
+    this.triggerScreenShake(12, 0.6);
+
+    const hazardCount = Math.min(8, 4 + Math.floor((this.state.wave - 7) * 0.7));
+    const pX = this.state.player.x;
+    const pY = this.state.player.y;
+
+    for (let i = 0; i < hazardCount; i++) {
+      // Cluster 2 shells close to player's current location, rest scatter across the arena
+      let targetX: number;
+      let targetY: number;
+
+      if (i < 2) {
+        const offsetAng = Math.random() * Math.PI * 2;
+        const offsetDist = 60 + Math.random() * 140;
+        targetX = Math.max(50, Math.min(this.state.arenaWidth - 50, pX + Math.cos(offsetAng) * offsetDist));
+        targetY = Math.max(50, Math.min(this.state.arenaHeight - 50, pY + Math.sin(offsetAng) * offsetDist));
+      } else {
+        targetX = 60 + Math.random() * (this.state.arenaWidth - 120);
+        targetY = 60 + Math.random() * (this.state.arenaHeight - 120);
+      }
+
+      // Stagger countdowns (2.2s to 3.6s) so blasts chain organically
+      const delay = 2.0 + i * 0.35 + Math.random() * 0.3;
+      this.state.artilleryHazards.push({
+        id: ++this.projectileIdCounter,
+        x: targetX,
+        y: targetY,
+        radius: 85 + Math.random() * 25,
+        timer: delay,
+        maxTimer: delay,
+        damage: Math.round(35 + this.state.wave * 3.5),
+        color: '#ef4444',
+        type: 'mortar_shell',
+        isTriggered: false,
+      });
+    }
+  }
+
+  private updateArtilleryHazards(dt: number) {
+    if (this.state.artilleryHazards.length === 0) return;
+    const pX = this.state.player.x;
+    const pY = this.state.player.y;
+
+    for (let i = this.state.artilleryHazards.length - 1; i >= 0; i--) {
+      const h = this.state.artilleryHazards[i];
+      h.timer -= dt;
+
+      // Whistle sparks during final 0.5s of incoming trajectory
+      if (h.timer < 0.5 && Math.random() < 0.3) {
+        this.state.particles.push({
+          x: h.x + (Math.random() - 0.5) * h.radius,
+          y: h.y + (Math.random() - 0.5) * h.radius,
+          vx: (Math.random() - 0.5) * 40,
+          vy: -60 - Math.random() * 40,
+          life: 0.3,
+          maxLife: 0.3,
+          size: 3,
+          color: '#f97316',
+          alpha: 0.9,
+          type: 'spark',
+        });
+      }
+
+      if (h.timer <= 0) {
+        // High explosive artillery detonation!
+        this.state.artilleryHazards.splice(i, 1);
+        sound.playExplosion();
+        this.triggerScreenShake(14, 0.45);
+
+        // Ground shockwave ring
+        this.state.particles.push({
+          x: h.x,
+          y: h.y,
+          vx: 0,
+          vy: 0,
+          life: 0.55,
+          maxLife: 0.55,
+          size: h.radius * 2,
+          color: '#f97316',
+          alpha: 0.95,
+          type: 'psychic_ring',
+        });
+
+        // Fiery blast fragments
+        for (let p = 0; p < 18; p++) {
+          const ang = Math.random() * Math.PI * 2;
+          const spd = 60 + Math.random() * 180;
+          this.state.particles.push({
+            x: h.x,
+            y: h.y,
+            vx: Math.cos(ang) * spd,
+            vy: Math.sin(ang) * spd,
+            life: 0.45 + Math.random() * 0.3,
+            maxLife: 0.75,
+            size: 8 + Math.random() * 10,
+            color: p % 2 === 0 ? '#ef4444' : '#f59e0b',
+            alpha: 0.8,
+            type: 'blood_mist',
+          });
+        }
+
+        // Damage Player if inside blast radius
+        const distToPlayer = Math.hypot(pX - h.x, pY - h.y);
+        if (distToPlayer <= h.radius) {
+          this.damagePlayer(h.damage);
+          const knockAngle = Math.atan2(pY - h.y, pX - h.x);
+          this.state.player.x += Math.cos(knockAngle) * 45;
+          this.state.player.y += Math.sin(knockAngle) * 45;
+        }
+
+        // Tactical Collateral Advantage: Artillery also shreds any caught enemies!
+        for (const e of this.state.enemies) {
+          const distToEnemy = Math.hypot(e.x - h.x, e.y - h.y);
+          if (distToEnemy <= h.radius) {
+            this.damageEnemy(e, Math.round(h.damage * 6.0), false);
+          }
+        }
+      }
+    }
+  }
+
   private spawnEnemy(type: Enemy['type'], customX?: number, customY?: number, forceElite?: boolean) {
     let x = 0;
     let y = 0;
@@ -2613,7 +3478,23 @@ export class GameEngine {
       }
     }
 
-    const waveScaling = 1 + (this.state.wave - 1) * 0.16;
+    // Accelerating curve for late-game tension (prevents late-game from falling flat)
+    let waveScaling: number;
+    if (this.state.wave <= 3) {
+      waveScaling = 1 + (this.state.wave - 1) * 0.25;
+    } else if (this.state.wave <= 6) {
+      waveScaling = 1.5 + (this.state.wave - 3) * 0.52;
+    } else if (this.state.wave <= 10) {
+      waveScaling = 3.06 + (this.state.wave - 6) * 0.95;
+    } else if (this.state.wave <= 15) {
+      waveScaling = 6.86 + (this.state.wave - 10) * 1.5;
+    } else {
+      waveScaling = 14.36 + (this.state.wave - 15) * 2.2;
+    }
+
+    const lateSpeedBonus = Math.min(35, Math.max(0, (this.state.wave - 4) * 3.5));
+    const eliteChance = Math.min(0.38, 0.12 + Math.max(0, this.state.wave - 4) * 0.035);
+    const isElite = forceElite || Math.random() < eliteChance;
 
     let enemyData: Partial<Enemy> = {
       id: ++this.enemyIdCounter,
@@ -2622,7 +3503,7 @@ export class GameEngine {
       y,
       hp: 30 * waveScaling,
       maxHp: 30 * waveScaling,
-      speed: 100,
+      speed: 100 + lateSpeedBonus,
       damage: 8 * waveScaling,
       radius: 14,
       color: '#64748b',
@@ -2630,8 +3511,6 @@ export class GameEngine {
       dnaDrop: 1,
       name: 'Охранник SAT',
     };
-
-    const isElite = forceElite || Math.random() < 0.15;
 
     switch (type) {
       case 'sat_grunt':
@@ -2869,13 +3748,53 @@ export class GameEngine {
         enemyData.maxAmmo = Math.round(enemyData.maxAmmo * 1.5);
         enemyData.currentAmmo = enemyData.maxAmmo;
       }
+
+      // Late-Game Tactical Affixes for Elites (Wave 7+)
+      if (this.state.wave >= 7) {
+        const affixes: Array<'armored' | 'berserker' | 'kinetic_shield' | 'phase_dash'> = [
+          'armored',
+          'berserker',
+          'kinetic_shield',
+          'phase_dash',
+        ];
+        const chosenAffix = affixes[Math.floor(Math.random() * affixes.length)];
+        enemyData.eliteAffix = chosenAffix;
+        if (chosenAffix === 'armored') {
+          enemyData.eliteAffixName = 'БРОНЯ';
+          enemyData.name = `[БРОНЯ] ${enemyData.name}`;
+        } else if (chosenAffix === 'berserker') {
+          enemyData.eliteAffixName = 'БЕРСЕРК';
+          enemyData.name = `[БЕРСЕРК] ${enemyData.name}`;
+        } else if (chosenAffix === 'kinetic_shield') {
+          enemyData.eliteAffixName = 'КИНЕТИКА';
+          enemyData.name = `[КИНЕТИКА] ${enemyData.name}`;
+          const shieldVal = Math.round((enemyData.maxHp || 100) * 0.45);
+          enemyData.shield = shieldVal;
+          enemyData.maxShield = shieldVal;
+        } else if (chosenAffix === 'phase_dash') {
+          enemyData.eliteAffixName = 'ФАЗОВЫЙ';
+          enemyData.name = `[ФАЗОВЫЙ] ${enemyData.name}`;
+          enemyData.phaseDashTimer = 2.5 + Math.random() * 1.5;
+        }
+      }
     }
 
     this.state.enemies.push(enemyData as Enemy);
   }
 
   private spawnBoss(type: Enemy['type']) {
-    const waveScaling = 1 + (this.state.wave - 1) * 0.28;
+    let waveScaling: number;
+    if (this.state.wave <= 3) {
+      waveScaling = 1 + (this.state.wave - 1) * 0.3;
+    } else if (this.state.wave <= 6) {
+      waveScaling = 1.6 + (this.state.wave - 3) * 0.6;
+    } else if (this.state.wave <= 10) {
+      waveScaling = 3.4 + (this.state.wave - 6) * 1.1;
+    } else if (this.state.wave <= 15) {
+      waveScaling = 7.8 + (this.state.wave - 10) * 1.7;
+    } else {
+      waveScaling = 16.3 + (this.state.wave - 15) * 2.5;
+    }
 
     interface BossSpec {
       name: string;
@@ -3903,6 +4822,50 @@ export class GameEngine {
         }
       }
 
+      // Movement speed calculation (incorporating Berserker affix enrage)
+      let moveSpeed = e.speed;
+      if (e.eliteAffix === 'berserker' && e.hp < e.maxHp * 0.55) {
+        moveSpeed *= 1.4;
+        if (Math.random() < 0.25) {
+          this.state.particles.push({
+            x: e.x + (Math.random() - 0.5) * e.radius * 2,
+            y: e.y + (Math.random() - 0.5) * e.radius * 2,
+            vx: (Math.random() - 0.5) * 30,
+            vy: -35,
+            life: 0.25,
+            maxLife: 0.25,
+            size: 3,
+            color: '#ef4444',
+            alpha: 0.8,
+            type: 'spark',
+          });
+        }
+      }
+
+      // Elite Phase Dash mechanic
+      if (e.eliteAffix === 'phase_dash' && dist > 110 && dist < 450) {
+        e.phaseDashTimer = (e.phaseDashTimer || 3.0) - dt;
+        if (e.phaseDashTimer <= 0) {
+          e.phaseDashTimer = 3.6 + Math.random() * 0.8;
+          const dashDist = Math.min(100, dist * 0.65);
+          this.state.particles.push({
+            x: e.x,
+            y: e.y,
+            vx: 0,
+            vy: 0,
+            life: 0.28,
+            maxLife: 0.28,
+            size: e.radius * 1.5,
+            color: '#c084fc',
+            alpha: 0.7,
+            type: 'slash_cut',
+          });
+          e.x += Math.cos(angle) * dashDist;
+          e.y += Math.sin(angle) * dashDist;
+          sound.playVectorSlash();
+        }
+      }
+
       if (e.vx !== undefined && e.vy !== undefined && (Math.abs(e.vx) > 1 || Math.abs(e.vy) > 1)) {
         e.x += e.vx * dt;
         e.y += e.vy * dt;
@@ -3911,13 +4874,13 @@ export class GameEngine {
       } else if (e.isReloading && (e.weaponType === 'rifle' || e.weaponType === 'shotgun' || e.weaponType === 'sniper')) {
         // Tactical backpedal/cover while reloading
         if (dist < 220) {
-          e.x -= Math.cos(angle) * e.speed * 0.75 * dt;
-          e.y -= Math.sin(angle) * e.speed * 0.75 * dt;
+          e.x -= Math.cos(angle) * moveSpeed * 0.75 * dt;
+          e.y -= Math.sin(angle) * moveSpeed * 0.75 * dt;
         } else {
           // Strafe defensively
           const strafeAngle = angle + Math.PI * 0.5;
-          e.x += Math.cos(strafeAngle) * e.speed * 0.5 * dt;
-          e.y += Math.sin(strafeAngle) * e.speed * 0.5 * dt;
+          e.x += Math.cos(strafeAngle) * moveSpeed * 0.5 * dt;
+          e.y += Math.sin(strafeAngle) * moveSpeed * 0.5 * dt;
         }
       } else if (e.type === 'sat_sniper') {
         // Sniper tactical positioning: keep long range distance (360-460px) & charge laser aim
@@ -3930,31 +4893,31 @@ export class GameEngine {
         }
 
         if (dist < 320) {
-          e.x -= Math.cos(angle) * e.speed * 1.3 * dt;
-          e.y -= Math.sin(angle) * e.speed * 1.3 * dt;
+          e.x -= Math.cos(angle) * moveSpeed * 1.3 * dt;
+          e.y -= Math.sin(angle) * moveSpeed * 1.3 * dt;
         } else if (dist > 460) {
-          e.x += Math.cos(angle) * e.speed * dt;
-          e.y += Math.sin(angle) * e.speed * dt;
+          e.x += Math.cos(angle) * moveSpeed * dt;
+          e.y += Math.sin(angle) * moveSpeed * dt;
         } else {
           const strafeAngle = angle + Math.PI * 0.5 * (e.id % 2 === 0 ? 1 : -1);
-          e.x += Math.cos(strafeAngle) * e.speed * 0.6 * dt;
-          e.y += Math.sin(strafeAngle) * e.speed * 0.6 * dt;
+          e.x += Math.cos(strafeAngle) * moveSpeed * 0.6 * dt;
+          e.y += Math.sin(strafeAngle) * moveSpeed * 0.6 * dt;
         }
       } else if (e.type === 'sat_shotgunner' || e.type === 'riot_shield' || e.type === 'sat_heavy_commando') {
         // Tactical squad flanking: angle offset creates an encirclement pincer
         const flankSign = (e.id % 2 === 0 ? 1 : -1);
         const flankOffset = dist < 260 ? flankSign * 0.45 : 0;
         const moveAng = angle + flankOffset;
-        e.x += Math.cos(moveAng) * e.speed * dt;
-        e.y += Math.sin(moveAng) * e.speed * dt;
+        e.x += Math.cos(moveAng) * moveSpeed * dt;
+        e.y += Math.sin(moveAng) * moveSpeed * dt;
       } else if (e.type === 'silpelit_clone' && dist > 100 && dist < 220 && Math.random() < 0.015) {
         // Clone tactical sidestep leap
         const leapAng = angle + (Math.random() < 0.5 ? Math.PI * 0.45 : -Math.PI * 0.45);
         e.vx = Math.cos(leapAng) * 260;
         e.vy = Math.sin(leapAng) * 260;
       } else {
-        e.x += Math.cos(angle) * e.speed * dt;
-        e.y += Math.sin(angle) * e.speed * dt;
+        e.x += Math.cos(angle) * moveSpeed * dt;
+        e.y += Math.sin(angle) * moveSpeed * dt;
       }
 
       for (let j = 0; j < this.state.enemies.length; j++) {
@@ -4307,6 +5270,10 @@ export class GameEngine {
     const critMult = isCrit ? this.state.stats.critDamage * (weapon?.critMultiplier || 1.5) : 1;
     let finalDamage = Math.round(rawDamage * critMult);
 
+    if (enemy.eliteAffix === 'armored') {
+      finalDamage = Math.max(1, Math.round(finalDamage * 0.7)); // 30% ballistic armor mitigation
+    }
+
     if (enemy.shield && enemy.shield > 0) {
       enemy.lastDamageTaken = 0;
       const absorbed = Math.round(finalDamage * 0.65);
@@ -4371,6 +5338,50 @@ export class GameEngine {
     this.state.kills++;
     this.createBloodExplosion(enemy.x, enemy.y, enemy.isBoss ? 35 : 12);
 
+    // Adrenaline Kill-Streak & Surge Flow progression
+    this.state.killStreak++;
+    this.state.killStreakTimer = 2.5; // 2.5s base combo window
+    if (enemy.isElite) {
+      this.state.killStreak += 2; // +2 bonus combo points for dispatching an elite
+      this.state.killStreakTimer = Math.min(3.5, this.state.killStreakTimer + 0.8);
+    }
+    if (this.state.killStreak > this.state.maxKillStreak) {
+      this.state.maxKillStreak = this.state.killStreak;
+    }
+
+    const prevSurge = this.state.surgeLevel;
+    if (this.state.killStreak >= 50) {
+      this.state.surgeLevel = 3; // Сингулярный Разрыв
+    } else if (this.state.killStreak >= 25) {
+      this.state.surgeLevel = 2; // Гипер-Транс
+    } else if (this.state.killStreak >= 10) {
+      this.state.surgeLevel = 1; // Пси-Резонанс
+    } else {
+      this.state.surgeLevel = 0;
+    }
+
+    if (this.state.surgeLevel > prevSurge) {
+      sound.playSurgeChime(this.state.surgeLevel);
+      this.triggerScreenShake(6 + this.state.surgeLevel * 2, 0.25);
+    }
+
+    // Near-death crisis adrenaline survival: clutch life siphon on kill
+    if (this.state.player.hp / Math.max(1, this.state.player.maxHp) <= 0.35 && this.state.player.hp > 0) {
+      this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 2);
+      this.state.particles.push({
+        x: this.state.player.x,
+        y: this.state.player.y,
+        vx: 0,
+        vy: -35,
+        life: 0.35,
+        maxLife: 0.35,
+        size: 14,
+        color: '#22c55e',
+        alpha: 0.85,
+        type: 'spark',
+      });
+    }
+
     if (enemy.isBoss) {
       sound.endBossBattle();
       this.state.activeBoss = null;
@@ -4399,8 +5410,13 @@ export class GameEngine {
       this.state.characterResource.current = Math.min(100, this.state.characterResource.current + 5);
     }
 
-    // Drop DNA - rebalanced and reduced
-    const harvestBonus = 1 + this.state.stats.dnaHarvest / 100;
+    // Drop DNA - rebalanced and dynamically boosted by Surge Flow
+    let surgeMultiplier = 1;
+    if (this.state.surgeLevel === 1) surgeMultiplier = 1.25;
+    else if (this.state.surgeLevel === 2) surgeMultiplier = 1.5;
+    else if (this.state.surgeLevel === 3) surgeMultiplier = 2.0;
+
+    const harvestBonus = (1 + this.state.stats.dnaHarvest / 100) * surgeMultiplier;
     const luckBonus = (this.state.stats.luck || 0) * 0.005;
 
     if (enemy.isBoss) {
@@ -4409,15 +5425,23 @@ export class GameEngine {
       const orbCount = 5;
       const valPerOrb = Math.max(1, Math.round(bossDnaTotal / orbCount));
       for (let i = 0; i < orbCount; i++) {
+        let baggedBonus = 0;
+        if (this.state.baggedDna > 0) {
+          baggedBonus = Math.min(this.state.baggedDna, valPerOrb);
+          this.state.baggedDna -= baggedBonus;
+        }
         this.state.dnaDrops.push({
           id: ++this.dnaIdCounter,
           x: enemy.x + (Math.random() * 40 - 20),
           y: enemy.y + (Math.random() * 40 - 20),
-          value: valPerOrb,
+          value: valPerOrb + baggedBonus,
           magnetized: false,
-          color: '#ec4899',
-          size: 8,
+          color: baggedBonus > 0 ? '#fbbf24' : '#ec4899',
+          size: baggedBonus > 0 ? 10 : 8,
         });
+      }
+      if (this.state.baggedDna > 0) {
+        sound.playBaggedCashback();
       }
     } else {
       // Normal enemies have a chance to drop DNA instead of guaranteed oversaturation
@@ -4442,14 +5466,34 @@ export class GameEngine {
           orbValue = Math.min(2, Math.max(1, Math.round(enemy.dnaDrop * 0.5 * harvestBonus)));
         }
 
+        // Bagged Materials Reserve Payout (2.Г.1): Uncollected materials from previous wave paid back 2x
+        let baggedBonus = 0;
+        if (this.state.baggedDna > 0) {
+          baggedBonus = Math.min(this.state.baggedDna, orbValue);
+          this.state.baggedDna -= baggedBonus;
+          sound.playBaggedCashback();
+          this.state.damageNumbers.push({
+            id: ++this.dmgNumIdCounter,
+            x: enemy.x,
+            y: enemy.y - 25,
+            text: getLanguage() === 'ru' ? `+${orbValue + baggedBonus} ДНК (2x МЕШОК)` : `+${orbValue + baggedBonus} DNA (2x BAGGED)`,
+            color: '#fbbf24',
+            opacity: 1,
+            isCrit: true,
+            vy: -35,
+          });
+        }
+
+        const finalValue = orbValue + baggedBonus;
+
         this.state.dnaDrops.push({
           id: ++this.dnaIdCounter,
           x: enemy.x + (Math.random() * 20 - 10),
           y: enemy.y + (Math.random() * 20 - 10),
-          value: orbValue,
+          value: finalValue,
           magnetized: false,
-          color: '#ec4899',
-          size: enemy.isElite ? 7 : 5,
+          color: baggedBonus > 0 ? '#fbbf24' : '#ec4899',
+          size: baggedBonus > 0 ? 8 : (enemy.isElite ? 7 : 5),
         });
       }
     }
@@ -4458,7 +5502,12 @@ export class GameEngine {
   }
 
   private addXp(amount: number) {
-    this.state.player.currentXp += amount;
+    let xpMultiplier = 1;
+    if (this.state.surgeLevel === 1) xpMultiplier = 1.2;
+    else if (this.state.surgeLevel === 2) xpMultiplier = 1.45;
+    else if (this.state.surgeLevel === 3) xpMultiplier = 1.8;
+
+    this.state.player.currentXp += Math.round(amount * xpMultiplier);
     while (this.state.player.currentXp >= this.state.player.xpToNextLevel) {
       this.state.player.currentXp -= this.state.player.xpToNextLevel;
       this.state.player.level++;
@@ -4473,6 +5522,9 @@ export class GameEngine {
 
   private damagePlayer(amount: number) {
     if (this.state.player.invincibleTimer > 0) return;
+
+    // Taking damage penalizes the kill streak combo timer
+    this.state.killStreakTimer = Math.max(0, this.state.killStreakTimer - 0.9);
 
     if (Math.random() < this.state.stats.dodge / 100) {
       this.state.damageNumbers.push({
@@ -4495,6 +5547,10 @@ export class GameEngine {
     this.state.player.invincibleTimer = 0.22; // Brief grace period prevents instant deletion from overlapping attacks
     this.triggerScreenShake(6, 0.2);
     sound.playGoreHit();
+
+    if (this.state.player.hp / Math.max(1, this.state.player.maxHp) <= 0.35 && this.state.player.hp > 0) {
+      sound.playHeartbeat();
+    }
 
     this.state.damageNumbers.push({
       id: ++this.dmgNumIdCounter,
@@ -4649,7 +5705,12 @@ export class GameEngine {
   private updateDnaDrops(dt: number) {
     const pX = this.state.player.x;
     const pY = this.state.player.y;
-    const magnetRadius = this.state.stats.pickupRange;
+    let magnetBonus = 1;
+    if (this.state.surgeLevel === 1) magnetBonus = 1.25;
+    else if (this.state.surgeLevel === 2) magnetBonus = 1.5;
+    else if (this.state.surgeLevel === 3) magnetBonus = 1.85;
+
+    const magnetRadius = this.state.stats.pickupRange * magnetBonus;
 
     for (let i = this.state.dnaDrops.length - 1; i >= 0; i--) {
       const drop = this.state.dnaDrops[i];
@@ -4876,13 +5937,51 @@ export class GameEngine {
   private finishWave() {
     this.resetInput();
     this.state.isWaveActive = false;
+
+    // 2.Г.1: Bagged Materials Reserve (Brotato Mechanics)
+    // All uncollected DNA crystals on the arena floor are absorbed into the hidden Bagged reserve.
+    // In the next combat phase, the first slain enemies drop double resources from this reserve.
+    let uncollectedGroundDna = 0;
     this.state.dnaDrops.forEach((d) => {
-      this.state.player.dna += d.value;
-      this.state.totalDnaCollected += d.value;
+      uncollectedGroundDna += d.value;
     });
     this.state.dnaDrops = [];
+    this.state.baggedDna += uncollectedGroundDna;
+    this.state.lastWaveBaggedSaved = uncollectedGroundDna;
+
     this.state.enemies = [];
     this.state.projectiles = [];
+
+    // 2.Г.2: Harvesting Parameter (Сбор урожая) - Compound Passive Income
+    // Grants instant DNA payout at end of wave based on dnaHarvest stat
+    const harvestPayout = Math.max(0, Math.floor(this.state.stats.dnaHarvest));
+    this.state.lastWaveHarvestPayout = harvestPayout;
+    if (harvestPayout > 0) {
+      this.state.player.dna += harvestPayout;
+      this.state.totalDnaCollected += harvestPayout;
+    }
+    // +10% compound interest growth on positive dnaHarvest stat for late-game economic scaling
+    if (this.state.stats.dnaHarvest > 0) {
+      const growth = Math.max(1, Math.round(this.state.stats.dnaHarvest * 0.10));
+      this.state.stats.dnaHarvest += growth;
+      this.state.baseStatBonuses.dnaHarvest = (this.state.baseStatBonuses.dnaHarvest || 0) + growth;
+    }
+
+    // Macro-economy: DNA Savings Dividend (Piggy Bank mechanics)
+    // 8% base interest on remaining unspent DNA, up to +25 DNA.
+    // If player has 'cryo_dna_vault', upgraded to 15% interest, up to +50 DNA.
+    const hasCryoVault = this.state.passiveItems.some((p) => p.id === 'cryo_dna_vault');
+    const dividendRate = hasCryoVault ? 0.15 : 0.08;
+    const maxDividend = hasCryoVault ? 50 : 25;
+    const dividend = Math.min(maxDividend, Math.floor(this.state.player.dna * dividendRate));
+    this.state.lastWaveDividend = dividend;
+    if (dividend > 0) {
+      this.state.player.dna += dividend;
+      this.state.totalDnaCollected += dividend;
+    }
+
+    // Check free reroll voucher ('specops_requisition')
+    this.state.freeRerollAvailable = this.state.passiveItems.some((p) => p.id === 'specops_requisition');
 
     sound.playLevelUp();
 

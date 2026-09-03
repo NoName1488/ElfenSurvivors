@@ -30,6 +30,24 @@ export type WeaponType =
   | 'sat_barrett_sniper'
   | 'sat_vector_cutter';
 
+export interface WeaponEvolution {
+  id: string;
+  name: string;
+  russianName: string;
+  baseWeaponType: WeaponType;
+  requiredPassiveId: string;
+  requiredPassiveName?: string;
+  requiredPassiveRussianName?: string;
+  evolvedWeaponName: string;
+  evolvedRussianName: string;
+  evolvedDescription: string;
+  evolvedRussianDescription: string;
+  color: string;
+  icon: string;
+  powerSpikeSummary: string;
+  russianPowerSpikeSummary: string;
+}
+
 export interface Weapon {
   id: string;
   name: string;
@@ -37,7 +55,7 @@ export interface Weapon {
   type: WeaponType;
   category: WeaponCategory;
   rarity: WeaponRarity;
-  tier: number; // 1 to 4 (Common, Rare, Epic, Legendary fusion)
+  tier: number; // 1 to 4 (Common, Rare, Epic, Legendary fusion), 5 for Catalytic Evolution
   description: string;
   damage: number;
   cooldown: number; // in seconds
@@ -50,6 +68,11 @@ export interface Weapon {
   icon: string;
   color: string;
   cost: number;
+  isEvolved?: boolean;
+  evolutionId?: string;
+  evolvedName?: string;
+  evolvedRussianName?: string;
+  evolvedDescription?: string;
 }
 
 export interface PassiveItem {
@@ -63,8 +86,26 @@ export interface PassiveItem {
   icon: string;
   stats: Partial<PlayerStats>;
   lore?: string;
-  tags?: ('blood' | 'tech' | 'vector' | 'stasis' | 'kinetic' | 'dna' | 'firearm')[];
+  tags?: ('blood' | 'tech' | 'vector' | 'stasis' | 'kinetic' | 'dna' | 'firearm' | 'risk')[];
   restrictedToKind?: CharacterKind; // Some items only for Diclonius or Cyborg
+  isExperimental?: boolean; // High Risk / High Reward Prototype
+  positiveEffect?: string;
+  negativeEffect?: string;
+}
+
+export type ArchetypeId = 'vector_butcher' | 'ballistic_commando' | 'psi_storm' | 'bio_mutant';
+
+export interface ActiveArchetype {
+  id: ArchetypeId;
+  name: string;
+  russianName: string;
+  count: number;
+  threshold: number;
+  isActive: boolean;
+  bonusText: string;
+  russianBonusText: string;
+  color: string;
+  icon: string;
 }
 
 export interface ItemSynergy {
@@ -138,11 +179,15 @@ export interface Character {
 export interface StatUpgradeOption {
   id: string;
   name: string;
+  russianName: string;
   description: string;
+  descriptionEn?: string;
   statKey: keyof PlayerStats;
   amount: number;
   rarity: WeaponRarity;
   icon: string;
+  value?: number;
+  unit?: string;
 }
 
 export type ArenaType = 'lab_containment' | 'enoshima_coast' | 'military_highway' | 'kakuzawa_citadel' | 'singularity_epicenter';
@@ -282,6 +327,9 @@ export interface Enemy {
   lastMelee?: number;
   isBoss?: boolean;
   isElite?: boolean;
+  eliteAffix?: 'armored' | 'berserker' | 'kinetic_shield' | 'phase_dash';
+  eliteAffixName?: string;
+  phaseDashTimer?: number;
   name: string;
   bossTitle?: string;
   shield?: number;
@@ -449,4 +497,18 @@ export interface WaveConfig {
   boss?: Enemy['type'];
   name: string;
   subtitle: string;
+}
+
+export interface ArtilleryHazard {
+  id: number;
+  x: number;
+  y: number;
+  radius: number;
+  timer: number;
+  maxTimer: number;
+  damage: number;
+  color?: string;
+  type?: string;
+  isTriggered?: boolean;
+  exploded?: boolean;
 }

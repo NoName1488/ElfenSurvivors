@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { GameEngine } from '../utils/engine';
 import { Weapon, PassiveItem, StatUpgradeOption, WeaponRarity } from '../types';
-import { WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS, ITEM_SYNERGIES } from '../data/gameData';
+import { WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS, ITEM_SYNERGIES, WEAPON_EVOLUTIONS } from '../data/gameData';
 import { sound } from '../utils/sound';
 import { useLanguage } from '../utils/i18n';
 import { PsychicMutationTree } from './PsychicMutationTree';
@@ -65,12 +65,18 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
 
   const [shopItems, setShopItems] = useState<ShopItem[]>([]);
   const [rerollCount, setRerollCount] = useState<number>(0);
+  const [purchaseCounts, setPurchaseCounts] = useState<Record<string, number>>({});
   const [statChoices, setStatChoices] = useState<StatUpgradeOption[]>([]);
   const [currentDna, setCurrentDna] = useState<number>(engine.state.player.dna);
   const [levelUpTab, setLevelUpTab] = useState<'stats' | 'mutation_tree'>('stats');
   const [showShopMutationModal, setShowShopMutationModal] = useState<boolean>(false);
   const [showAudioModal, setShowAudioModal] = useState<boolean>(false);
   const [autoMergeToast, setAutoMergeToast] = useState<string | null>(null);
+
+  const hasCryoVault = engine.state.passiveItems.some((p) => p.id === 'dna_vault');
+  const dividendRate = hasCryoVault ? 0.20 : 0.08;
+  const maxDividend = hasCryoVault ? 100 : 35;
+  const projectedDividend = Math.min(maxDividend, Math.floor(currentDna * dividendRate));
 
   // Auto-merge weapons and passives on mount
   useEffect(() => {
@@ -116,9 +122,19 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
 
     const newOfferings: ShopItem[] = [];
 
+    // Check if we have preserved locked items from previous state or wave transition
+    const preservedItems: ShopItem[] = keepLocked
+      ? shopItems.filter((i) => i.isLocked)
+      : (engine.state.savedLockedShopItems || []).filter((i: any) => i.isLocked);
+
+    // If restoring from engine state, clear the buffer
+    if (!keepLocked && engine.state.savedLockedShopItems && engine.state.savedLockedShopItems.length > 0) {
+      engine.state.savedLockedShopItems = [];
+    }
+
     for (let i = 0; i < 4; i++) {
-      if (keepLocked && shopItems[i] && shopItems[i].isLocked) {
-        newOfferings.push(shopItems[i]);
+      if (preservedItems[i]) {
+        newOfferings.push(preservedItems[i]);
         continue;
       }
 
@@ -144,7 +160,9 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
       if (isWeapon) {
         const randomWeaponKey = availableWeaponKeys[Math.floor(Math.random() * availableWeaponKeys.length)];
         const template = WEAPONS_DATABASE[randomWeaponKey];
-        const cost = Math.round(template.cost * (1 + (tier - 1) * 0.65));
+        const boughtCount = purchaseCounts[randomWeaponKey] || 0;
+        const dynamicCostMult = 1 + boughtCount * 0.08;
+        const cost = Math.round(template.cost * (1 + (tier - 1) * 0.65) * dynamicCostMult);
 
         newOfferings.push({
           id: `shop_w_${Math.random().toString(36).substr(2, 9)}`,
@@ -157,7 +175,9 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
         });
       } else {
         const randomPassive = eligiblePassives[Math.floor(Math.random() * eligiblePassives.length)];
-        const cost = Math.round((randomPassive.cost || 25) * (1 + (tier - 1) * 0.5));
+        const boughtCount = purchaseCounts[randomPassive.id] || 0;
+        const dynamicCostMult = 1 + boughtCount * 0.08;
+        const cost = Math.round((randomPassive.cost || 25) * (1 + (tier - 1) * 0.5) * dynamicCostMult);
 
         newOfferings.push({
           id: `shop_p_${Math.random().toString(36).substr(2, 9)}`,
@@ -178,12 +198,17 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
     generateShopOfferings(false);
   }, []);
 
-  const rerollCost = Math.round(5 + rerollCount * 4 + engine.state.wave * 1.5);
+  const hasFreeReroll = engine.state.freeRerollAvailable && rerollCount === 0;
+  const rerollCost = hasFreeReroll ? 0 : Math.round(5 + rerollCount * 4 + engine.state.wave * 1.5);
 
   const handleReroll = () => {
-    if (currentDna < rerollCost) return;
-    engine.state.player.dna -= rerollCost;
-    setCurrentDna(engine.state.player.dna);
+    if (!hasFreeReroll && currentDna < rerollCost) return;
+    if (hasFreeReroll) {
+      engine.state.freeRerollAvailable = false;
+    } else {
+      engine.state.player.dna -= rerollCost;
+      setCurrentDna(engine.state.player.dna);
+    }
     setRerollCount((prev) => prev + 1);
     sound.playUiClick();
     generateShopOfferings(true);
@@ -192,6 +217,12 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
   const toggleLockItem = (id: string) => {
     sound.playUiClick();
     setShopItems((prev) => prev.map((item) => (item.id === id ? { ...item, isLocked: !item.isLocked } : item)));
+  };
+
+  const handleProceedNextWave = () => {
+    // Preserve locked items across wave transitions!
+    engine.state.savedLockedShopItems = shopItems.filter((i) => i.isLocked);
+    onNextWave();
   };
 
   const buyItem = (item: ShopItem) => {
@@ -262,6 +293,9 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
 
     engine.state.player.dna -= item.cost;
     setCurrentDna(engine.state.player.dna);
+
+    const itemKey = item.type === 'weapon' ? item.weaponKey! : item.passiveData!.id;
+    setPurchaseCounts((prev) => ({ ...prev, [itemKey]: (prev[itemKey] || 0) + 1 }));
 
     setShopItems((prev) => prev.filter((i) => i.id !== item.id));
   };
@@ -376,22 +410,24 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                   <button
                     key={opt.id}
                     onClick={() => {
-                      opt.apply(engine.state.stats);
-                      engine.recalculateStats();
+                      engine.applyStatUpgrade(opt);
                       sound.playLevelUp();
                       onLevelUpChosen();
                     }}
                     className="glass-panel p-4 rounded-xl border border-white/10 hover:border-red-500 hover:bg-red-950/30 transition-all cursor-pointer flex items-center gap-4 text-left group shadow-lg active:scale-98"
                   >
-                    <div className="p-3 rounded-lg bg-red-950/60 border border-red-600/40 text-red-400 group-hover:scale-110 transition-transform">
+                    <div className="p-3 rounded-lg bg-red-950/60 border border-red-600/40 text-red-400 group-hover:scale-110 transition-transform shrink-0">
                       <Sparkles className="w-5 h-5" />
                     </div>
-                    <div>
-                      <div className="font-cinzel font-bold text-base text-white group-hover:text-red-300">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-cinzel font-bold text-base text-white group-hover:text-red-300 truncate">
                         {isRu ? opt.russianName : opt.name}
                       </div>
-                      <div className="text-xs text-emerald-400 font-mono font-bold mt-0.5">
-                        +{opt.value} {opt.unit}
+                      <div className="text-xs text-gray-400 font-sans mt-0.5 line-clamp-1">
+                        {isRu ? opt.description : (opt.descriptionEn || opt.description)}
+                      </div>
+                      <div className="text-xs text-emerald-400 font-mono font-bold mt-1">
+                        +{opt.amount} {t(opt.statKey as any)}
                       </div>
                     </div>
                   </button>
@@ -514,17 +550,44 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
             )}
           </button>
 
-          {/* DNA Balance */}
-          <div className="flex items-center gap-2 glass-panel px-3.5 py-1.5 rounded-lg border-white/10 shadow-inner">
-            <Dna className="w-4 h-4 text-red-400" />
-            <span className="font-mono text-lg font-bold text-red-400">{currentDna}</span>
-            <span className="text-[10px] text-gray-500 font-mono font-bold">{t('dna')}</span>
+          {/* DNA Balance & Incubator Dividend */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 glass-panel px-3.5 py-1.5 rounded-lg border-white/10 shadow-inner">
+              <Dna className="w-4 h-4 text-red-400" />
+              <span className="font-mono text-lg font-bold text-red-400">{currentDna}</span>
+              <span className="text-[10px] text-gray-500 font-mono font-bold">{t('dna')}</span>
+            </div>
+
+            {/* Micro Incubator Dividend Display */}
+            <div
+              className="hidden sm:flex items-center gap-1.5 glass-panel px-2.5 py-1.5 rounded-lg border-emerald-500/30 bg-emerald-950/20 text-xs font-mono"
+              title={
+                isRu
+                  ? `Дивиденд хранилища: ${Math.round(dividendRate * 100)}% от остатка ДНК (макс +${maxDividend})`
+                  : `DNA Vault Dividend: ${Math.round(dividendRate * 100)}% of unspent DNA (max +${maxDividend})`
+              }
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <div className="flex flex-col leading-tight">
+                <span className="text-[9px] text-gray-400 uppercase tracking-wider">
+                  {isRu ? 'Инкубация' : 'Dividend'}
+                </span>
+                <span className="text-emerald-300 font-bold text-[11px]">
+                  +{projectedDividend} ДНК
+                </span>
+              </div>
+              {hasCryoVault && (
+                <span className="text-[8px] bg-emerald-500/30 text-emerald-300 px-1 py-0.5 rounded font-bold">
+                  VAULT
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Next Wave Button */}
           <button
             id="start-next-wave-btn"
-            onClick={onNextWave}
+            onClick={handleProceedNextWave}
             className="flex items-center gap-2 px-5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-cinzel font-black tracking-widest text-xs shadow-[0_0_20px_rgba(220,38,38,0.5)] border border-red-400 hover:scale-105 active:scale-95 transition-all cursor-pointer animate-vector-pulse"
           >
             <span>{t('nextWave')}</span>
@@ -532,6 +595,54 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Economic Engine & Stress Elimination Briefing (2.Г.1 & 2.Г.2) */}
+      {(engine.state.lastWaveBaggedSaved > 0 || engine.state.lastWaveHarvestPayout > 0 || engine.state.baggedDna > 0) && (
+        <div className="mb-4 p-3 rounded-xl bg-gradient-to-r from-amber-950/40 via-neutral-900/60 to-red-950/40 border border-amber-500/40 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-400 animate-spin flex-shrink-0" />
+            <span className="text-[10px] uppercase font-mono tracking-widest font-black text-amber-300">
+              {isRu ? 'ЭКОНОМИЧЕСКИЙ ОТЧЕТ СНАБЖЕНИЯ' : 'SUPPLY ECONOMY DEBRIEF'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-4 flex-wrap text-xs font-mono">
+            {(engine.state.lastWaveBaggedSaved > 0 || engine.state.baggedDna > 0) && (
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-200"
+                title={
+                  isRu
+                    ? 'Все кристаллы, оставшиеся на арене, поглощены в мешок сбережений. В следующей волне первые убитые враги дадут двойной ресурс (2x)!'
+                    : 'Uncollected arena crystals are saved in the bag reserve. First enemies slain next wave will drop doubled materials (2x)!'
+                }
+              >
+                <span>🎒</span>
+                <span className="text-gray-400">{isRu ? 'Мешок сбережений:' : 'Bag Reserve:'}</span>
+                <span className="font-bold text-amber-300">
+                  +{engine.state.lastWaveBaggedSaved || engine.state.baggedDna} ДНК (2x дроп)
+                </span>
+              </div>
+            )}
+
+            {engine.state.lastWaveHarvestPayout > 0 && (
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-200"
+                title={
+                  isRu
+                    ? 'Инвестиционный сбор урожая принес пассивный доход и вырос на +10% по формуле сложного процента!'
+                    : 'Harvesting stat generated passive income and grew +10% compound interest!'
+                }
+              >
+                <span>🌾</span>
+                <span className="text-gray-400">{isRu ? 'Сбор урожая:' : 'Harvest Payout:'}</span>
+                <span className="font-bold text-emerald-300">
+                  +{engine.state.lastWaveHarvestPayout} ДНК (+10% рост)
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1">
         {/* Left Column: Player Stats & Equipped Items (4 cols) */}
@@ -643,29 +754,85 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
             )}
 
             <div className="flex flex-col gap-2">
-              {engine.state.weapons.map((w) => (
-                <div key={w.id} className="p-2.5 rounded-lg glass-panel border-white/5 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: w.color }} />
-                    <div>
-                      <div className="font-cinzel text-xs font-bold text-gray-200">
-                        {isRu ? w.russianName : w.name} <span className="font-mono text-[10px] text-red-400">T{w.tier}</span>
-                      </div>
-                      <div className="text-[10px] font-mono text-gray-500">
-                        {t('damage')}: {Math.round(w.damage * (1 + (w.tier - 1) * 0.4))} | {t('cdShort')}: {w.cooldown}s
-                      </div>
-                    </div>
-                  </div>
+              {engine.state.weapons.map((w) => {
+                const isEvo = w.isEvolved || w.tier === 5;
+                const evoInfo = WEAPON_EVOLUTIONS.find((e) => e.baseWeaponType === w.type);
+                const hasCatalyst = evoInfo && engine.state.passiveItems.some((p) => p.id === evoInfo.requiredPassiveId);
 
-                  <button
-                    onClick={() => recycleWeapon(w.id)}
-                    className="p-1.5 rounded glass-panel hover:bg-red-950/50 hover:text-red-400 text-gray-400 transition-colors cursor-pointer"
-                    title={t('recycleForDna', { amount: Math.round(w.cost * (1 + (w.tier - 1) * 0.5) * 0.7) })}
+                return (
+                  <div
+                    key={w.id}
+                    className={`p-2.5 rounded-lg glass-panel border flex flex-col gap-1.5 transition-all ${
+                      isEvo
+                        ? 'border-amber-400 bg-gradient-to-r from-amber-950/40 via-red-950/30 to-purple-950/40 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
+                        : w.tier === 4 && hasCatalyst
+                        ? 'border-amber-500/60 bg-amber-950/20'
+                        : 'border-white/5'
+                    }`}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: isEvo ? '#f59e0b' : w.color }} />
+                        <div>
+                          <div className="font-cinzel text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                            <span className={isEvo ? 'text-amber-300 font-black' : ''}>
+                              {isRu ? (w.russianName || w.name) : w.name}
+                            </span>
+                            <span
+                              className={`font-mono text-[10px] px-1.5 py-0.2 rounded font-black ${
+                                isEvo
+                                  ? 'bg-amber-400 text-black shadow-[0_0_8px_rgba(245,158,11,0.8)]'
+                                  : 'text-red-400 bg-red-950/50'
+                              }`}
+                            >
+                              {isEvo ? 'EVO T5' : `T${w.tier}`}
+                            </span>
+                          </div>
+                          <div className="text-[10px] font-mono text-gray-400">
+                            {t('damage')}: {Math.round(w.damage * (1 + (w.tier - 1) * 0.4))} | {t('cdShort')}: {w.cooldown}s
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => recycleWeapon(w.id)}
+                        className="p-1.5 rounded glass-panel hover:bg-red-950/50 hover:text-red-400 text-gray-400 transition-colors cursor-pointer"
+                        title={t('recycleForDna', { amount: Math.round(w.cost * (1 + (w.tier - 1) * 0.5) * 0.7) })}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Evolution Status Badge */}
+                    {isEvo && (
+                      <div className="text-[10px] font-sans text-amber-200 bg-black/40 p-1.5 rounded border border-amber-500/20 leading-tight">
+                        ✨ {isRu ? (w.description || 'Ультимативная качественная трансформация атаки!') : w.description}
+                      </div>
+                    )}
+
+                    {!isEvo && w.tier === 4 && evoInfo && (
+                      <div
+                        className={`text-[9.5px] font-mono px-2 py-1 rounded border flex items-center gap-1.5 ${
+                          hasCatalyst
+                            ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-bold animate-pulse'
+                            : 'bg-neutral-900 border-neutral-700 text-gray-400'
+                        }`}
+                      >
+                        <span>{hasCatalyst ? '🔥' : '⚡'}</span>
+                        <span>
+                          {hasCatalyst
+                            ? (isRu
+                                ? `ГОТОВО К ЭВОЛЮЦИИ! Катализатор [${evoInfo.requiredPassiveName}] экипирован`
+                                : `READY TO EVOLVE! Catalyst [${evoInfo.requiredPassiveName}] equipped`)
+                            : (isRu
+                                ? `Катализатор для Тир 5: [${evoInfo.requiredPassiveName}] -> ${evoInfo.evolvedRussianName}`
+                                : `Tier 5 Catalyst: [${evoInfo.requiredPassiveName}] -> ${evoInfo.evolvedWeaponName}`)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -706,16 +873,80 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
             <button
               id="reroll-shop-btn"
               onClick={handleReroll}
-              disabled={currentDna < rerollCost}
+              disabled={!hasFreeReroll && currentDna < rerollCost}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-mono font-bold text-xs transition-all cursor-pointer ${
-                currentDna >= rerollCost
+                hasFreeReroll
+                  ? 'bg-amber-500 hover:bg-amber-400 text-black border border-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.6)] active:scale-95 animate-pulse'
+                  : currentDna >= rerollCost
                   ? 'bg-neutral-800 hover:bg-neutral-700 text-white border border-white/10 shadow-md active:scale-95'
                   : 'bg-neutral-900/50 text-gray-600 border border-white/5 cursor-not-allowed'
               }`}
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>{t('reroll')} ({rerollCost} {t('dna')})</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${hasFreeReroll ? 'text-black animate-spin' : ''}`} />
+              {hasFreeReroll ? (
+                <span>{isRu ? 'БЕСПЛАТНЫЙ РЕРОЛЛ (РЕКВИЗИЦИЯ)' : 'FREE REROLL (REQUISITION)'}</span>
+              ) : (
+                <span>{t('reroll')} ({rerollCost} {t('dna')})</span>
+              )}
             </button>
+          </div>
+
+          {/* Archetype Build Tracker (Macro-Synergies) */}
+          <div className="glass-panel p-3 rounded-xl border-white/10 shadow-md flex flex-col gap-2">
+            <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.2em] text-gray-400 font-bold border-b border-white/5 pb-1.5">
+              <div className="flex items-center gap-1.5 text-red-400">
+                <Layers className="w-3.5 h-3.5" />
+                <span>{isRu ? 'АРХЕТИПЫ БОЕВОГО БИЛДА' : 'COMBAT BUILD ARCHETYPES'}</span>
+              </div>
+              <span className="text-[10px] text-gray-500 font-normal">
+                {isRu ? 'Бонус при 3+ предметах/оружиях' : 'Bonus at 3+ items/weapons'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {engine.state.activeArchetypes.map((arch) => {
+                const isMaxed = arch.isActive;
+                return (
+                  <div
+                    key={arch.id}
+                    className={`p-2 rounded-lg border flex flex-col justify-between gap-1 transition-all ${
+                      isMaxed
+                        ? 'bg-neutral-900/90 shadow-md'
+                        : 'bg-black/30 border-white/5 opacity-75'
+                    }`}
+                    style={{
+                      borderColor: isMaxed ? arch.color : 'rgba(255,255,255,0.08)',
+                      boxShadow: isMaxed ? `0 0 14px ${arch.color}44` : 'none',
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span
+                        className="font-cinzel text-xs font-bold truncate"
+                        style={{ color: isMaxed ? arch.color : '#cbd5e1' }}
+                      >
+                        {isRu ? arch.russianName : arch.name}
+                      </span>
+                      <span
+                        className={`text-[10px] font-mono font-black px-1.5 py-0.2 rounded ${
+                          isMaxed ? 'bg-white text-black' : 'bg-neutral-800 text-gray-400'
+                        }`}
+                      >
+                        {arch.count}/{arch.threshold}
+                      </span>
+                    </div>
+                    <div className="text-[9px] font-mono leading-tight" style={{ color: isMaxed ? '#e2e8f0' : '#64748b' }}>
+                      {isRu ? arch.russianBonusText : arch.bonusText}
+                    </div>
+                    {isMaxed && (
+                      <div className="text-[8px] font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                        <Check className="w-2.5 h-2.5 text-emerald-400" />
+                        <span>{isRu ? 'АКТИВЕН (+БОНУС)' : 'ACTIVE (+BONUS)'}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Shop Items 2x2 Grid */}
@@ -740,6 +971,8 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
               );
               const willPassiveMerge = !!matchingPassive;
 
+              const isExperimental = !!item.passiveData?.isExperimental;
+
               const title = isWeapon
                 ? (isRu ? WEAPONS_DATABASE[item.weaponKey!].russianName : WEAPONS_DATABASE[item.weaponKey!].name)
                 : (isRu ? item.passiveData!.russianName : item.passiveData!.name);
@@ -753,12 +986,22 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                 return s.requiredItems?.includes(item.passiveData.id);
               });
 
+              // Catalytic Evolution Synergy Detection (2.В.2)
+              const catalystEvo = !isWeapon && item.passiveData ? WEAPON_EVOLUTIONS.find(
+                (evo) => evo.requiredPassiveId === item.passiveData!.id && engine.state.weapons.some((w) => w.type === evo.baseWeaponType)
+              ) : null;
+              const catalystWeapon = catalystEvo ? engine.state.weapons.find((w) => w.type === catalystEvo.baseWeaponType) : null;
+
               return (
                 <div
                   key={item.id}
                   className={`glass-panel rounded-xl p-4 border flex flex-col justify-between gap-4 transition-all relative overflow-hidden ${
                     canMerge || willPassiveMerge
                       ? 'border-amber-500/70 bg-gradient-to-b from-amber-950/20 to-neutral-950/60 shadow-[0_0_20px_rgba(245,158,11,0.25)]'
+                      : catalystEvo
+                      ? 'border-amber-400/90 bg-gradient-to-b from-amber-950/40 via-purple-950/20 to-neutral-950 shadow-[0_0_20px_rgba(245,158,11,0.3)]'
+                      : isExperimental
+                      ? 'border-amber-500/80 bg-gradient-to-b from-red-950/30 via-amber-950/20 to-neutral-950 shadow-[0_0_16px_rgba(245,158,11,0.2)]'
                       : item.rarity === 'legendary'
                       ? 'border-amber-500/40 bg-amber-950/10'
                       : item.rarity === 'epic'
@@ -768,20 +1011,31 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                       : 'border-white/10 hover:border-white/20'
                   }`}
                 >
-                  {/* Auto-Merge Badge Banner */}
-                  {(canMerge || willPassiveMerge) && (
+                  {/* Auto-Merge or Catalyst Evolution Badge Banner */}
+                  {(canMerge || willPassiveMerge) ? (
                     <div className="absolute top-0 right-0 bg-amber-500 text-black px-2.5 py-0.5 rounded-bl-lg font-mono text-[9px] font-black tracking-wider flex items-center gap-1 shadow-md">
                       <Sparkles className="w-3 h-3 text-black" />
                       <span>{t('buyAndMerge', { tier: item.tier + 1 })}</span>
                     </div>
-                  )}
+                  ) : catalystEvo ? (
+                    <div className="absolute top-0 right-0 bg-gradient-to-r from-amber-500 to-purple-500 text-black px-2.5 py-0.5 rounded-bl-lg font-mono text-[9px] font-black tracking-wider flex items-center gap-1 shadow-md animate-pulse">
+                      <Sparkles className="w-3 h-3 text-black animate-spin" />
+                      <span>
+                        {isRu
+                          ? `КАТАЛИЗАТОР ДЛЯ ${catalystWeapon?.russianName?.toUpperCase() || 'ОРУЖИЯ'}`
+                          : `CATALYST FOR ${catalystWeapon?.name?.toUpperCase() || 'WEAPON'}`}
+                      </span>
+                    </div>
+                  ) : null}
 
                   {/* Header Row */}
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
                       <span
                         className={`text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
-                          item.rarity === 'legendary'
+                          isExperimental
+                            ? 'text-amber-300 border-amber-500/60 bg-amber-950/50'
+                            : item.rarity === 'legendary'
                             ? 'text-amber-400 border-amber-500/40 bg-amber-950/30'
                             : item.rarity === 'epic'
                             ? 'text-purple-400 border-purple-500/40 bg-purple-950/30'
@@ -790,7 +1044,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                             : 'text-gray-400 border-white/10 bg-black/30'
                         }`}
                       >
-                        {isWeapon ? `${t('tier')} ${item.tier}` : (isRu ? 'Аугментация' : 'Augment')}
+                        {isExperimental ? (isRu ? 'ПРОТОТИП' : 'PROTOTYPE') : isWeapon ? `${t('tier')} ${item.tier}` : (isRu ? 'Аугментация' : 'Augment')}
                       </span>
                       <span className="text-[10px] uppercase font-mono text-gray-500 font-bold">
                         {isWeapon ? (isRu ? 'Оружие' : 'Weapon') : (isRu ? `Тир ${item.tier}` : `Tier ${item.tier}`)}
@@ -817,6 +1071,28 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                       <span className="text-xs font-mono text-red-400 font-bold">T{item.tier}</span>
                     </h3>
                     <p className="text-xs text-gray-400 font-mono mt-1 leading-relaxed">{desc}</p>
+
+                    {/* Experimental Item Detailed Risk/Reward breakdown */}
+                    {isExperimental && item.passiveData && (
+                      <div className="mt-2.5 p-2 rounded-lg bg-black/50 border border-amber-500/30 flex flex-col gap-1 text-[10px] font-mono">
+                        <div className="text-amber-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                          <Flame className="w-3 h-3 text-amber-400" />
+                          <span>{isRu ? 'ЭКСПЕРИМЕНТ С ВЫСОКИМ РИСКОМ' : 'HIGH-RISK PROTOTYPE'}</span>
+                        </div>
+                        {item.passiveData.positiveEffect && (
+                          <div className="text-emerald-300 flex items-center gap-1 font-semibold">
+                            <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                            <span>{item.passiveData.positiveEffect}</span>
+                          </div>
+                        )}
+                        {item.passiveData.negativeEffect && (
+                          <div className="text-rose-400 flex items-center gap-1 font-semibold">
+                            <X className="w-3 h-3 text-rose-400 shrink-0" />
+                            <span>{item.passiveData.negativeEffect}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Synergy Hint */}
                     {relatedSynergies.length > 0 && (

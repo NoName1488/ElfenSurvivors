@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { GameEngine } from '../utils/engine';
 import { Shield, Zap, Sparkles, Heart, Clock, Dna, Swords, Volume2, VolumeX, Pause, Play, Crosshair, Flame, Activity, Sparkle, AlertTriangle, Music, Skull, MapPin, Wind, Sliders } from 'lucide-react';
 import { sound } from '../utils/sound';
-import { ItemSynergy, ArenaType } from '../types';
+import { ItemSynergy, ArenaType, WeaponEvolution } from '../types';
 import { useLanguage } from '../utils/i18n';
 import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
@@ -52,6 +52,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
     } | null,
     bossWarningText: '',
     dropshipWarningText: '',
+    crisisWarningText: '',
+    killStreak: 0,
+    maxKillStreak: 0,
+    killStreakTimer: 0,
+    surgeLevel: 0,
     vectorGuard: 150,
     maxVectorGuard: 150,
     isPlayerStunned: false,
@@ -59,6 +64,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
     maxMobilityCooldown: 2.8,
     mobilityName: 'Рывок',
     mobilityDesc: '',
+    baggedDna: 0,
+    recentEvolutionPopup: null as (WeaponEvolution & { timer: number }) | null,
   });
 
   const { t, lang } = useLanguage();
@@ -148,6 +155,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         } : null,
         bossWarningText: s.bossWarningText,
         dropshipWarningText: s.dropshipWarningText,
+        crisisWarningText: s.crisisWarningText,
+        killStreak: s.killStreak || 0,
+        maxKillStreak: s.maxKillStreak || 0,
+        killStreakTimer: s.killStreakTimer || 0,
+        surgeLevel: s.surgeLevel || 0,
+        baggedDna: s.baggedDna || 0,
+        recentEvolutionPopup: s.recentEvolutionPopup ? { ...s.recentEvolutionPopup } : null,
       });
 
       const canvas = canvasRef.current;
@@ -388,13 +402,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
 
           <div className="hidden sm:block h-7 w-[1px] bg-white/10" />
 
-          {/* DNA Collected */}
-          <div className="flex flex-col">
-            <span className="text-[9px] uppercase tracking-[0.2em] text-gray-500 font-bold">ДНК</span>
-            <div className="flex items-center gap-1 text-red-400 font-mono font-bold text-xs md:text-sm">
-              <Dna className="w-3.5 h-3.5 text-red-400" />
-              <span>{hudState.dna}</span>
+          {/* DNA Collected & Bagged Materials Reserve */}
+          <div className="flex items-center gap-2">
+            <div className="flex flex-col">
+              <span className="text-[9px] uppercase tracking-[0.2em] text-gray-500 font-bold">ДНК</span>
+              <div className="flex items-center gap-1 text-red-400 font-mono font-bold text-xs md:text-sm">
+                <Dna className="w-3.5 h-3.5 text-red-400" />
+                <span>{hudState.dna}</span>
+              </div>
             </div>
+
+            {hudState.baggedDna > 0 && (
+              <div
+                className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono text-[10px] font-bold shadow-[0_0_8px_rgba(245,158,11,0.4)] animate-pulse"
+                title="Мешок сбережений: несобранные кристаллы сохраняются в резерве и выпадают с удвоенным номиналом (2x) из первых убитых врагов волны!"
+              >
+                <Sparkles className="w-3 h-3 text-amber-400 animate-spin" />
+                <span>+{hudState.baggedDna} 2x МЕШОК</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -427,6 +453,43 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
 
         {/* Right: Kills & Control Buttons */}
         <div className="flex items-center gap-3 md:gap-5">
+          {/* Adrenaline Kill-Streak & Surge Flow Combo Gauge */}
+          {hudState.killStreak > 0 && (
+            <div className="flex flex-col items-end">
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[9px] md:text-[11px] font-mono font-black tracking-wider px-2 py-0.5 rounded border transition-all ${
+                  hudState.surgeLevel === 3
+                    ? 'bg-purple-950/90 border-purple-400 text-purple-200 shadow-[0_0_12px_rgba(192,132,252,0.85)] animate-pulse'
+                    : hudState.surgeLevel === 2
+                    ? 'bg-amber-950/90 border-amber-400 text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.75)]'
+                    : hudState.surgeLevel === 1
+                    ? 'bg-sky-950/90 border-sky-400 text-sky-200 shadow-[0_0_8px_rgba(56,189,248,0.65)]'
+                    : 'bg-zinc-900/90 border-zinc-700 text-zinc-300'
+                }`}>
+                  {hudState.surgeLevel === 3 && 'СИНГУЛЯРНОСТЬ x'}
+                  {hudState.surgeLevel === 2 && 'ГИПЕР-ТРАНС x'}
+                  {hudState.surgeLevel === 1 && 'РЕЗОНАНС x'}
+                  {hudState.surgeLevel === 0 && 'СЕРИЯ x'}
+                  {hudState.killStreak}
+                </span>
+              </div>
+              <div className="w-20 md:w-24 h-1.5 bg-black/70 rounded-full overflow-hidden border border-white/10 mt-0.5">
+                <div
+                  className={`h-full transition-all duration-75 ${
+                    hudState.surgeLevel === 3
+                      ? 'bg-purple-500 shadow-[0_0_6px_rgba(168,85,247,0.9)]'
+                      : hudState.surgeLevel === 2
+                      ? 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.8)]'
+                      : hudState.surgeLevel === 1
+                      ? 'bg-sky-400 shadow-[0_0_6px_rgba(56,189,248,0.8)]'
+                      : 'bg-red-500'
+                  }`}
+                  style={{ width: `${Math.min(100, (hudState.killStreakTimer / 2.5) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="hidden md:flex flex-col text-right">
             <span className="text-[9px] uppercase tracking-[0.2em] text-gray-500 font-bold">{t('neutralized')}</span>
             <span className="text-xs md:text-sm font-mono text-red-400 font-bold">{hudState.kills}</span>
@@ -561,6 +624,57 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         </div>
       )}
 
+      {/* SAT Artillery Crisis Warning Banner */}
+      {hudState.crisisWarningText && !hudState.bossWarningText && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center animate-bounce">
+          <div className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-red-950 via-zinc-950 to-red-950 border-2 border-red-500 shadow-[0_0_35px_rgba(239,68,68,0.9)] backdrop-blur-md flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-500 animate-pulse flex-shrink-0" />
+            <span className="text-xs md:text-sm font-mono font-black uppercase tracking-wider text-red-200">
+              {hudState.crisisWarningText}
+            </span>
+            <AlertTriangle className="w-5 h-5 text-red-500 animate-pulse flex-shrink-0" />
+          </div>
+        </div>
+      )}
+
+      {/* Catalytic Weapon Evolution Ascension Celebration Popup (2.В.2 Power Spike) */}
+      {hudState.recentEvolutionPopup && (
+        <div className="absolute top-28 left-1/2 -translate-x-1/2 z-40 pointer-events-none flex flex-col items-center animate-in zoom-in duration-300">
+          <div className="px-7 py-4 rounded-2xl bg-gradient-to-b from-amber-950/95 via-black/95 to-red-950/95 border-2 border-amber-400 shadow-[0_0_50px_rgba(245,158,11,0.85)] backdrop-blur-lg flex flex-col items-center text-center max-w-lg">
+            <div className="flex items-center gap-2 text-[10px] md:text-xs font-mono font-black uppercase tracking-[0.25em] text-amber-400">
+              <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
+              <span>КАТАЛИТИЧЕСКАЯ ЭВОЛЮЦИЯ ОРУЖИЯ • ТИР 5</span>
+              <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
+            </div>
+
+            <div className="text-lg md:text-2xl font-cinzel font-black text-white text-glow tracking-wider mt-1 flex items-center gap-2">
+              <span className="text-2xl">{hudState.recentEvolutionPopup.icon}</span>
+              <span style={{ color: hudState.recentEvolutionPopup.color }}>
+                {hudState.recentEvolutionPopup.evolvedRussianName.toUpperCase()}
+              </span>
+            </div>
+
+            <div className="text-[11px] font-mono text-amber-300 mt-0.5 flex items-center gap-1.5">
+              <span className="text-gray-400">Катализатор:</span>
+              <span className="font-bold text-white bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40">
+                {hudState.recentEvolutionPopup.requiredPassiveName}
+              </span>
+            </div>
+
+            <p className="text-xs font-sans text-gray-200 mt-2 px-2 leading-relaxed">
+              {hudState.recentEvolutionPopup.evolvedRussianDescription}
+            </p>
+
+            <div className="w-full h-1 bg-black/70 rounded-full mt-3 overflow-hidden border border-amber-500/30">
+              <div
+                className="h-full bg-gradient-to-r from-amber-400 to-red-500"
+                style={{ width: `${(hudState.recentEvolutionPopup.timer / 5.0) * 100}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Active Synergies Notification Bar */}
       {hudState.activeSynergies.length > 0 && (
         <div className="relative z-10 w-full px-4 md:px-8 py-1 bg-amber-950/40 border-b border-amber-500/20 backdrop-blur-xs flex items-center justify-center gap-2 overflow-x-auto pointer-events-none">
@@ -630,17 +744,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           <div className="hidden sm:flex items-center gap-1.5 glass-panel p-1 rounded-lg border-white/10">
             {Array.from({ length: 6 }).map((_, index) => {
               const w = hudState.weapons[index];
-              const tierBorders = ['border-white/10 bg-white/5', 'border-blue-500/50 bg-blue-950/30', 'border-purple-500/50 bg-purple-950/30', 'border-amber-500/50 bg-amber-950/30'];
-              const borderClass = w ? tierBorders[Math.min(3, (w.tier || 1) - 1)] : 'border-dashed border-white/5 bg-black/40';
+              const tierBorders = [
+                'border-white/10 bg-white/5',
+                'border-blue-500/50 bg-blue-950/30',
+                'border-purple-500/50 bg-purple-950/30',
+                'border-amber-500/50 bg-amber-950/30',
+                'border-amber-400 bg-gradient-to-br from-amber-500/30 via-red-500/20 to-amber-600/30 shadow-[0_0_12px_rgba(245,158,11,0.85)] animate-pulse',
+              ];
+              const isEvo = w?.isEvolved || (w?.tier && w.tier >= 5);
+              const borderClass = w
+                ? isEvo
+                  ? tierBorders[4]
+                  : tierBorders[Math.min(3, (w.tier || 1) - 1)]
+                : 'border-dashed border-white/5 bg-black/40';
 
               return (
                 <div
                   key={index}
                   className={`w-7 h-7 rounded border flex items-center justify-center ${borderClass}`}
-                  title={w ? `${w.russianName} (T${w.tier || 1})` : 'Пустой слот'}
+                  title={w ? `${w.russianName} ${isEvo ? '(ТИР 5 ЭВОЛЮЦИЯ)' : `(T${w.tier || 1})`}` : 'Пустой слот'}
                 >
                   {w ? (
-                    <span className="text-[9px] font-mono font-bold text-red-300">T{w.tier || 1}</span>
+                    <span className={`text-[9px] font-mono font-black ${isEvo ? 'text-amber-300' : 'text-red-300'}`}>
+                      {isEvo ? 'EVO' : `T${w.tier || 1}`}
+                    </span>
                   ) : (
                     <span className="text-gray-600 text-[10px]">+</span>
                   )}
@@ -1397,6 +1524,55 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     }
   }
 
+  // 6.5. Draw Tactical Artillery Hazard Zones (Warning crosshairs, expanding countdown rings)
+  if (s.artilleryHazards && s.artilleryHazards.length > 0) {
+    for (const h of s.artilleryHazards) {
+      ctx.save();
+      const progress = 1 - Math.max(0, h.timer / (h.maxTimer || 2.5));
+      const pulse = 0.5 + Math.sin(Date.now() * 0.02) * 0.35;
+
+      // 1. Danger boundary circle
+      ctx.strokeStyle = `rgba(239, 68, 68, ${0.7 + pulse * 0.3})`;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, h.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 2. Translucent danger fill (deepens as impact nears)
+      ctx.fillStyle = `rgba(239, 68, 68, ${0.12 + progress * 0.32})`;
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, h.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 3. Expanding countdown radial arc
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, h.radius * progress, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 4. Center Crosshair
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(h.x - 14, h.y);
+      ctx.lineTo(h.x + 14, h.y);
+      ctx.moveTo(h.x, h.y - 14);
+      ctx.lineTo(h.x, h.y + 14);
+      ctx.stroke();
+
+      // 5. Countdown text tag
+      ctx.fillStyle = '#fef08a';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`АРТОБСТРЕЛ ${Math.max(0.1, h.timer).toFixed(1)}s`, h.x, h.y - h.radius - 6);
+
+      ctx.restore();
+    }
+  }
+
   // 7. Draw Enemies
   for (const enemy of s.enemies) {
     ctx.save();
@@ -1799,7 +1975,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     }
 
     // Enemy Health & Shield Bar
-    if (enemy.hp < enemy.maxHp) {
+    if (enemy.hp < enemy.maxHp || (enemy.shield && enemy.shield > 0)) {
       const barWidth = Math.max(26, enemy.radius * 2.2);
       const barHeight = enemy.isBoss ? 5 : 3.5;
       const barX = enemy.x - barWidth / 2;
@@ -1815,6 +1991,37 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
 
       ctx.fillStyle = enemy.isBoss ? '#ef4444' : '#dc2626';
       ctx.fillRect(barX, barY, (enemy.hp / enemy.maxHp) * barWidth, barHeight);
+    }
+
+    // Elite Enemy Affix Badge
+    if (enemy.isElite && enemy.eliteAffixName) {
+      ctx.save();
+      const badgeY = enemy.y - enemy.radius - (enemy.hp < enemy.maxHp ? 18 : 12);
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.fillRect(enemy.x - 24, badgeY - 5, 48, 11);
+      ctx.strokeStyle =
+        enemy.eliteAffix === 'berserker'
+          ? '#ef4444'
+          : enemy.eliteAffix === 'kinetic_shield'
+          ? '#38bdf8'
+          : enemy.eliteAffix === 'phase_dash'
+          ? '#c084fc'
+          : '#f59e0b';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(enemy.x - 24, badgeY - 5, 48, 11);
+      ctx.fillStyle =
+        enemy.eliteAffix === 'berserker'
+          ? '#fca5a5'
+          : enemy.eliteAffix === 'kinetic_shield'
+          ? '#bae6fd'
+          : enemy.eliteAffix === 'phase_dash'
+          ? '#e9d5ff'
+          : '#fde68a';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(enemy.eliteAffixName, enemy.x, badgeY);
+      ctx.restore();
     }
 
     // Ammo & Reload UI: Visual feedback for limited ammunition
@@ -2538,6 +2745,50 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     ctx.shadowColor = '#ef4444';
     ctx.shadowBlur = 10;
     ctx.fillText(`⚠ ${s.dropshipWarningText} ⚠`, s.arenaWidth / 2, bannerY);
+    ctx.restore();
+  }
+
+  // 12. Near-Death Adrenaline Rush Vignette & Clutch Survival Overlay
+  const hpRatio = p.hp / Math.max(1, p.maxHp);
+  if (hpRatio <= 0.35 && p.hp > 0) {
+    ctx.save();
+    const pulse = 0.5 + Math.sin(Date.now() * 0.009) * 0.35;
+    const intensity = (1 - hpRatio / 0.35) * pulse;
+    const vigGrad = ctx.createRadialGradient(
+      width / 2,
+      height / 2,
+      Math.min(width, height) * 0.3,
+      width / 2,
+      height / 2,
+      Math.max(width, height) * 0.75
+    );
+    vigGrad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vigGrad.addColorStop(0.7, `rgba(127, 29, 29, ${0.35 * intensity})`);
+    vigGrad.addColorStop(1, `rgba(185, 28, 28, ${0.75 * intensity})`);
+    ctx.fillStyle = vigGrad;
+    ctx.fillRect(0, 0, width, height);
+
+    // Tactical Crisis indicator on bottom of viewport
+    ctx.fillStyle = `rgba(248, 113, 113, ${0.9 * intensity})`;
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#ef4444';
+    ctx.shadowBlur = 8;
+    ctx.fillText('⚡ КРИЗИСНЫЙ ПРОРЫВ: +15% СКОРОСТЬ & ВАМПИРИЗМ С УБИЙСТВ ⚡', width / 2, height - 16);
+    ctx.restore();
+  }
+
+  // 13. Surge Flow Overdrive Border Glow (High Kill-Streak)
+  if (s.surgeLevel && s.surgeLevel >= 2) {
+    ctx.save();
+    const surgeAlpha = s.surgeLevel === 3 ? 0.35 : 0.2;
+    const pulse = 1 + Math.sin(Date.now() * 0.012) * 0.2;
+    ctx.strokeStyle = s.surgeLevel === 3 ? '#ec4899' : '#38bdf8';
+    ctx.lineWidth = 3.5 * pulse;
+    ctx.shadowColor = s.surgeLevel === 3 ? '#ec4899' : '#38bdf8';
+    ctx.shadowBlur = 12;
+    ctx.globalAlpha = surgeAlpha;
+    ctx.strokeRect(3, 3, width - 6, height - 6);
     ctx.restore();
   }
 

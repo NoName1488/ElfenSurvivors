@@ -1621,6 +1621,163 @@ class SoundEngine {
       });
     } catch (e) {}
   }
+
+  // Near-Death Crisis Adrenaline Heartbeat Pulse (Lub-Dub sub-bass thump)
+  private lastHeartbeatTime: number = 0;
+  public playHeartbeat() {
+    if (!this.canPlaySfx()) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const nowTime = Date.now();
+    if (nowTime - this.lastHeartbeatTime < 750) return; // Prevent spam
+    this.lastHeartbeatTime = nowTime;
+
+    try {
+      const t = this.ctx.currentTime;
+      // First thump (lub)
+      const osc1 = this.ctx.createOscillator();
+      const gain1 = this.ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(65, t);
+      osc1.frequency.exponentialRampToValueAtTime(32, t + 0.14);
+
+      gain1.gain.setValueAtTime(0.45 * this.sfxVolume, t);
+      gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+
+      osc1.connect(gain1);
+      gain1.connect(this.ctx.destination);
+      osc1.start(t);
+      osc1.stop(t + 0.16);
+
+      // Second thump (dub) slightly delayed
+      const osc2 = this.ctx.createOscillator();
+      const gain2 = this.ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(55, t + 0.18);
+      osc2.frequency.exponentialRampToValueAtTime(28, t + 0.34);
+
+      gain2.gain.setValueAtTime(0.35 * this.sfxVolume, t + 0.18);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.36);
+
+      osc2.connect(gain2);
+      gain2.connect(this.ctx.destination);
+      osc2.start(t + 0.18);
+      osc2.stop(t + 0.36);
+    } catch (e) {}
+  }
+
+  // Tactical SAT Squad Radio Alert / Ambush Squelch
+  public playRadioAlert() {
+    if (!this.canPlaySfx()) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(1400, t);
+      osc.frequency.setValueAtTime(950, t + 0.05);
+      osc.frequency.setValueAtTime(1600, t + 0.1);
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1200, t);
+      filter.Q.setValueAtTime(4, t);
+
+      gain.gain.setValueAtTime(0.18 * this.sfxVolume, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(t);
+      osc.stop(t + 0.22);
+    } catch (e) {}
+  }
+
+  // Adrenaline Surge Flow Pitch-Scaled Chime (10, 25, 50 combo)
+  public playSurgeChime(level: number) {
+    if (!this.canPlaySfx()) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const baseFreq = level === 1 ? 523.25 : level === 2 ? 659.25 : 880; // C5, E5, A5
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(baseFreq, t);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.5, t + 0.25);
+
+      gain.gain.setValueAtTime(0.3 * this.sfxVolume, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(t);
+      osc.stop(t + 0.35);
+    } catch (e) {}
+  }
+
+  // Catalytic Weapon Evolution Fanfare (Ascension Power Spike)
+  public playEvolutionFanfare() {
+    if (!this.canPlaySfx()) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const freqs = [220, 277.18, 329.63, 440, 554.37, 659.25, 880];
+      freqs.forEach((f, idx) => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = idx % 2 === 0 ? 'triangle' : 'sawtooth';
+        osc.frequency.setValueAtTime(f, t + idx * 0.08);
+        osc.frequency.exponentialRampToValueAtTime(f * 1.25, t + idx * 0.08 + 0.8);
+
+        gain.gain.setValueAtTime(0.001, t);
+        gain.gain.linearRampToValueAtTime(0.22 * this.sfxVolume, t + idx * 0.08 + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + idx * 0.08 + 1.2);
+
+        osc.connect(gain);
+        gain.connect(this.ctx!.destination);
+
+        osc.start(t + idx * 0.08);
+        osc.stop(t + idx * 0.08 + 1.25);
+      });
+    } catch (e) {}
+  }
+
+  // Bagged Materials Cashback Sound (Brotato Reserve Double DNA Payout)
+  public playBaggedCashback() {
+    if (!this.canPlaySfx()) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, t);
+      osc.frequency.exponentialRampToValueAtTime(1760, t + 0.12);
+
+      gain.gain.setValueAtTime(0.25 * this.sfxVolume, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(t);
+      osc.stop(t + 0.18);
+    } catch (e) {}
+  }
 }
 
 export const sound = new SoundEngine();
