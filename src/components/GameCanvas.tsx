@@ -101,6 +101,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
   useEffect(() => {
     let animationFrameId: number;
     let lastTime = performance.now();
+    let lastHudSync = 0;
 
     const render = (time: number) => {
       const dt = Math.min(0.1, (time - lastTime) / 1000);
@@ -110,9 +111,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         engine.update(dt);
       }
 
-      // Sync HUD state every frame
-      const s = engine.state;
-      setHudState({
+      // Sync HUD state throttled to ~16 FPS to eliminate DOM reconciliation overhead
+      // while canvas renders at full silky 60-120 FPS
+      if (time - lastHudSync >= 60 || engine.state.isWaveEnding || engine.state.player.hp <= 0) {
+        lastHudSync = time;
+        const s = engine.state;
+        setHudState({
         hp: Math.max(0, Math.round(s.player.hp)),
         maxHp: Math.round(s.player.maxHp),
         level: s.player.level,
@@ -171,6 +175,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         deflectorsCount: s.vectorArms.filter((a) => a.role === 'deflector').length,
         recentEvolutionPopup: s.recentEvolutionPopup ? { ...s.recentEvolutionPopup } : null,
       });
+      }
 
       const canvas = canvasRef.current;
       if (canvas) {
@@ -193,6 +198,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
     if (!sound.getIsMusicMuted() && !sound.getIsMuted()) {
       sound.startMusic();
     }
+    return () => {
+      sound.stopMusic();
+    };
   }, [engine]);
 
   // Stable ref for onPauseToggle to avoid re-binding keyboard listeners
@@ -1100,6 +1108,7 @@ function drawArenaFloor(ctx: CanvasRenderingContext2D, width: number, height: nu
 // Canvas drawing functions for Elegant Dark
 function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number, engine: GameEngine) {
   const s = engine.state;
+  const now = Date.now() * 0.001;
 
   ctx.save();
   if (s.shakeTimer > 0) {
@@ -1585,11 +1594,33 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       }
     }
 
-    // Shadow
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    // Shadow calculation based on elevation (airborne grab or thrown projectile)
+    const grabElevation = enemy.isGrabbed ? (enemy.grabAltitude || 24) : 0;
+    const shadowScale = enemy.isGrabbed ? 0.55 : 1.0;
+    ctx.fillStyle = enemy.isGrabbed ? 'rgba(0, 0, 0, 0.35)' : 'rgba(0, 0, 0, 0.55)';
     ctx.beginPath();
-    ctx.ellipse(enemy.x, enemy.y + enemy.radius * 0.75, enemy.radius * 0.95, enemy.radius * 0.4, 0, 0, Math.PI * 2);
+    ctx.ellipse(
+      enemy.x,
+      enemy.y + grabElevation + enemy.radius * 0.75,
+      enemy.radius * 0.95 * shadowScale,
+      enemy.radius * 0.4 * shadowScale,
+      0,
+      0,
+      Math.PI * 2
+    );
     ctx.fill();
+
+    // Physical Vector airborne elevation
+    if (enemy.isGrabbed && grabElevation > 0) {
+      ctx.translate(0, -grabElevation);
+    }
+
+    // Ballistic Thrown Enemy tumbling rotation
+    if (enemy.isThrown) {
+      ctx.translate(enemy.x, enemy.y);
+      ctx.rotate(enemy.throwRotation || 0);
+      ctx.translate(-enemy.x, -enemy.y);
+    }
 
     const facingAngle = Math.atan2(p.y - enemy.y, p.x - enemy.x);
 
@@ -2050,6 +2081,84 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
         ctx.fillStyle = isLoaded ? '#facc15' : '#475569';
         ctx.fillRect(startX + pIdx * (pipW + pipGap), pipsY, pipW, 3);
       }
+      ctx.restore();
+    }
+
+    // Physical Vector Interaction Visual FX & Tactical Readability Badges
+    if (enemy.isGrabbed) {
+      // Ethereal constriction rings around neck/torso
+      ctx.save();
+      ctx.strokeStyle = '#f43f5e';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = '#f43f5e';
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.ellipse(enemy.x, enemy.y - 4, enemy.radius * 1.25, enemy.radius * 0.55, Math.sin(now * 8) * 0.3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      // Readability badge: GRABBED
+      const badgeY = enemy.y - enemy.radius - 20;
+      ctx.fillStyle = 'rgba(244, 63, 94, 0.9)';
+      ctx.fillRect(enemy.x - 28, badgeY - 6, 56, 12);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(enemy.x - 28, badgeY - 6, 56, 12);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚡ GRABBED', enemy.x, badgeY);
+      ctx.restore();
+    } else if (enemy.isThrown) {
+      // Readability badge: THROWN HUMAN PROJECTILE
+      ctx.save();
+      const badgeY = enemy.y - enemy.radius - 18;
+      ctx.fillStyle = 'rgba(192, 132, 252, 0.9)';
+      ctx.fillRect(enemy.x - 26, badgeY - 6, 52, 12);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('☄️ THROWN', enemy.x, badgeY);
+      ctx.restore();
+    } else if (enemy.internalRuptureTimer !== undefined && enemy.internalRuptureTimer > 0) {
+      // Pulsing internal organ rupture tremor and X-ray glow
+      ctx.save();
+      const pulseAlpha = 0.45 + Math.sin(now * 32) * 0.35;
+      ctx.fillStyle = `rgba(220, 38, 38, ${pulseAlpha})`;
+      ctx.shadowColor = '#dc2626';
+      ctx.shadowBlur = 16;
+      ctx.beginPath();
+      ctx.arc(enemy.x, enemy.y, enemy.radius * 1.15, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Readability badge: RUPTURE
+      const badgeY = enemy.y - enemy.radius - 20;
+      ctx.fillStyle = 'rgba(220, 38, 38, 0.95)';
+      ctx.fillRect(enemy.x - 26, badgeY - 6, 52, 12);
+      ctx.strokeStyle = '#fca5a5';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(enemy.x - 26, badgeY - 6, 52, 12);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('💥 RUPTURE', enemy.x, badgeY);
+      ctx.restore();
+    } else if (enemy.isStunned) {
+      // Readability badge: STUNNED
+      ctx.save();
+      const badgeY = enemy.y - enemy.radius - 18;
+      ctx.fillStyle = 'rgba(234, 179, 8, 0.9)';
+      ctx.fillRect(enemy.x - 26, badgeY - 6, 52, 12);
+      ctx.fillStyle = '#000000';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚡ STUNNED', enemy.x, badgeY);
       ctx.restore();
     }
 
@@ -2611,6 +2720,28 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     ctx.restore();
   }
 
+  // EMP Vector Disruption Aura
+  if (p.vectorSuppressedTimer && p.vectorSuppressedTimer > 0) {
+    ctx.save();
+    const pulsePhase = (now * 10) % (Math.PI * 2);
+    ctx.strokeStyle = '#06b6d4';
+    ctx.lineWidth = 2.0;
+    ctx.setLineDash([4, 4]);
+    ctx.lineDashOffset = -now * 25;
+    ctx.shadowColor = '#06b6d4';
+    ctx.shadowBlur = 12;
+    ctx.globalAlpha = 0.8 + Math.sin(pulsePhase) * 0.2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius + 12 + Math.sin(pulsePhase) * 3, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#06b6d4';
+    ctx.fillText('⚠️ ЭМИ ПОДАВЛЕНИЕ', p.x, p.y + p.radius + 16);
+    ctx.restore();
+  }
+
   ctx.restore();
 
   // 9. Draw Vectors (ONLY FOR DICLONIUS, BANDO HAS 0 VECTORS)
@@ -2623,8 +2754,11 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       const isStriking = arm.striking;
       const vibration = arm.vibrationHz || 250;
       const isHighResonance = vibration >= 750;
+      const isBound = arm.boundTimer && arm.boundTimer > 0;
 
-      let vectorColor = isOverheated
+      let vectorColor = isBound
+        ? '#eab308'
+        : isOverheated
         ? '#f59e0b'
         : isBerserk
         ? '#dc2626'
@@ -2634,6 +2768,10 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
         vectorColor = '#c084fc';
       } else if (arm.strikeType === 'fling') {
         vectorColor = '#38bdf8';
+      } else if (arm.strikeType === 'grab') {
+        vectorColor = '#f43f5e';
+      } else if (arm.strikeType === 'rupture') {
+        vectorColor = '#ef4444';
       } else if (isHighResonance) {
         vectorColor = '#e0e7ff'; // Super-frequency white-cyan resonance glow
       }
@@ -2665,6 +2803,22 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       ctx.lineWidth = isStriking ? 2.2 : (isHighResonance ? 1.8 : 1.2);
       ctx.globalAlpha = isStriking ? 1.0 : (isHighResonance ? 0.95 : 0.85);
       ctx.stroke();
+
+      // Monofilament Net Trap snare coils wrapping the bound vector
+      if (isBound && arm.segments.length > 0) {
+        ctx.strokeStyle = '#eab308';
+        ctx.lineWidth = 1.8;
+        ctx.shadowColor = '#eab308';
+        ctx.shadowBlur = 8;
+        ctx.globalAlpha = 0.9;
+        for (let sIdx = 1; sIdx < arm.segments.length; sIdx++) {
+          const seg = arm.segments[sIdx];
+          const coilR = 6 + Math.sin(now * 14 + sIdx) * 2;
+          ctx.beginPath();
+          ctx.arc(seg.x, seg.y, coilR, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
 
       // Tip with light flare & specialized action graphics
       if (arm.segments.length > 0) {
@@ -2727,6 +2881,47 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
             ctx.lineWidth = 2.2;
             ctx.beginPath();
             ctx.arc(tip.x, tip.y, tipRadius + 8, 0, Math.PI * 2);
+            ctx.stroke();
+          } else if (arm.strikeType === 'grab') {
+            // Ethereal Vector Claw & Constriction Vice
+            ctx.strokeStyle = '#f43f5e';
+            ctx.lineWidth = 2.2;
+            const clawAngle = arm.currentAngle;
+            // 3 articulated psychokinetic talons
+            for (const offset of [-0.4, 0, 0.4]) {
+              const baseTalonX = tip.x + Math.cos(clawAngle + offset) * 6;
+              const baseTalonY = tip.y + Math.sin(clawAngle + offset) * 6;
+              const tipTalonX = tip.x + Math.cos(clawAngle + offset * 0.5) * 16;
+              const tipTalonY = tip.y + Math.sin(clawAngle + offset * 0.5) * 16;
+              ctx.beginPath();
+              ctx.moveTo(tip.x, tip.y);
+              ctx.lineTo(baseTalonX, baseTalonY);
+              ctx.lineTo(tipTalonX, tipTalonY);
+              ctx.stroke();
+            }
+            if (arm.grabPhase === 'holding') {
+              // Constriction energy loop
+              ctx.strokeStyle = '#ffffff';
+              ctx.lineWidth = 1.8;
+              ctx.beginPath();
+              ctx.arc(tip.x, tip.y, tipRadius + 9, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+          } else if (arm.strikeType === 'rupture') {
+            // High-frequency organ rupture harmonic vibration
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2.0;
+            const pulseR = tipRadius + 4 + Math.sin(now * 30) * 4;
+            ctx.beginPath();
+            ctx.arc(tip.x, tip.y, pulseR, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.moveTo(tip.x - 12, tip.y - 12);
+            ctx.lineTo(tip.x + 12, tip.y + 12);
+            ctx.moveTo(tip.x + 12, tip.y - 12);
+            ctx.lineTo(tip.x - 12, tip.y + 12);
             ctx.stroke();
           }
         }

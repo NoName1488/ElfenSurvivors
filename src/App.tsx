@@ -11,7 +11,8 @@ import { AudioSettingsModal } from './components/AudioSettingsModal';
 import { LanguageFlagButton } from './components/LanguageFlagButton';
 import { useLanguage } from './utils/i18n';
 import { sound } from './utils/sound';
-import { recordWave10Victory } from './utils/progression';
+import { recordWave10Victory, checkAndUnlockSecretRunFeats } from './utils/progression';
+import { recordAchievementProgress } from './utils/metaProgression';
 import { Sliders } from 'lucide-react';
 
 export default function App() {
@@ -52,7 +53,29 @@ export default function App() {
 
     newEngine.onGameOverCallback = (victory: boolean) => {
       setIsVictory(victory);
-      if (victory) {
+
+      // 1. Check secret feat conditions
+      const secretUnlocked = checkAndUnlockSecretRunFeats({
+        characterId: character.id,
+        wave: newEngine.state.wave,
+        isVictory: victory,
+        equippedWeapons: newEngine.state.weapons.map((w) => ({
+          category: w.category,
+          isEvolved: w.isEvolved,
+          tier: w.tier,
+        })),
+        bulletsDeflected: newEngine.state.bulletsDeflected || 0,
+        finalHpPercent: newEngine.state.player.hp / Math.max(1, newEngine.state.player.maxHp),
+        isEndless: newEngine.state.isEndlessMode,
+      });
+
+      if (secretUnlocked) {
+        setNewlyUnlockedCharacter(secretUnlocked);
+        sound.playCharacterUnlocked();
+        if (secretUnlocked.id === 'restrained_lucy') recordAchievementProgress('ach_secret_restrained_lucy', 1);
+        if (secretUnlocked.id === 'kurama') recordAchievementProgress('ach_secret_kurama', 1);
+        if (secretUnlocked.id === 'anna_kakuzawa') recordAchievementProgress('ach_secret_anna', 1);
+      } else if (victory) {
         const unlockResult = recordWave10Victory(character.id);
         setNewlyUnlockedCharacter(unlockResult.newlyUnlockedCharacter);
         if (unlockResult.newlyUnlockedCharacter) {

@@ -2,6 +2,7 @@ import { CHARACTERS } from '../data/gameData';
 import { Character } from '../types';
 
 const STORAGE_UNLOCKED_KEY = 'elfen_lied_unlocked_characters_v1';
+const STORAGE_SECRET_UNLOCKED_KEY = 'elfen_lied_secret_characters_v1';
 const STORAGE_WINS_KEY = 'elfen_lied_total_wave10_wins_v1';
 
 // Unlock requirements:
@@ -16,6 +17,9 @@ export const UNLOCK_REQUIREMENTS: Record<string, { requiredWins: number; descrip
   nyu: { requiredWins: 2, description: 'Завершите 10 волн 2 раза (2 победы)' },
   mariko: { requiredWins: 3, description: 'Завершите 10 волн 3 раза (3 победы)' },
   bando: { requiredWins: 4, description: 'Завершите 10 волн 4 раза (4 победы)' },
+  restrained_lucy: { requiredWins: -1, description: 'СЕКРЕТ НИИ: Пройдите 10 волн за Люси без огнестрела и кибернетики' },
+  kurama: { requiredWins: -1, description: 'СЕКРЕТ НИИ: Отразите 150+ пуль за Нану и победите с >=80% HP' },
+  anna_kakuzawa: { requiredWins: -1, description: 'СЕКРЕТ НИИ: Достигните 15 волны в бесконечном режиме или победите с T5 эволюцией' },
 };
 export const CHARACTER_UNLOCK_REQUIREMENTS = UNLOCK_REQUIREMENTS;
 
@@ -25,6 +29,36 @@ export function getTotalWins(): number {
     return raw ? Math.max(0, parseInt(raw, 10) || 0) : 0;
   } catch (e) {
     return 0;
+  }
+}
+
+export function getSecretUnlockedCharacterIds(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_SECRET_UNLOCKED_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function isSecretCharacterUnlocked(charId: string): boolean {
+  return getSecretUnlockedCharacterIds().includes(charId);
+}
+
+export function unlockSecretCharacter(charId: string): boolean {
+  try {
+    const unlocked = getSecretUnlockedCharacterIds();
+    if (!unlocked.includes(charId)) {
+      unlocked.push(charId);
+      localStorage.setItem(STORAGE_SECRET_UNLOCKED_KEY, JSON.stringify(unlocked));
+    }
+    // Also mirror to global unlocked
+    unlockCharacterManually(charId);
+    return true;
+  } catch (e) {
+    return false;
   }
 }
 
@@ -42,6 +76,12 @@ export function getUnlockedCharacterIds(): string[] {
     if (wins >= 3 && !unlocked.includes('mariko')) unlocked.push('mariko');
     if (wins >= 4 && !unlocked.includes('bando')) unlocked.push('bando');
 
+    // Merge unlocked secret characters
+    const secrets = getSecretUnlockedCharacterIds();
+    secrets.forEach((s) => {
+      if (!unlocked.includes(s)) unlocked.push(s);
+    });
+
     return unlocked;
   } catch (e) {
     return ['lucy'];
@@ -52,6 +92,63 @@ export function isCharacterUnlocked(charId: string): boolean {
   if (charId === 'lucy') return true;
   const unlocked = getUnlockedCharacterIds();
   return unlocked.includes(charId);
+}
+
+export interface SecretFeatCheckParams {
+  characterId: string;
+  wave: number;
+  isVictory: boolean;
+  equippedWeapons: { category: string; isEvolved?: boolean; tier?: number }[];
+  bulletsDeflected: number;
+  finalHpPercent: number;
+  isEndless: boolean;
+}
+
+export function checkAndUnlockSecretRunFeats(params: SecretFeatCheckParams): Character | null {
+  const secrets = getSecretUnlockedCharacterIds();
+
+  // 1. Restrained Lucy (Субъект 00):
+  // Wave 10 Victory as Lucy with NO firearm and NO cyberware weapons (pure Diclonius)
+  if (
+    params.isVictory &&
+    params.characterId === 'lucy' &&
+    !secrets.includes('restrained_lucy')
+  ) {
+    const hasFirearmOrCyberware = params.equippedWeapons.some(
+      (w) => w.category === 'firearm' || w.category === 'cyberware'
+    );
+    if (!hasFirearmOrCyberware) {
+      unlockSecretCharacter('restrained_lucy');
+      return CHARACTERS.find((c) => c.id === 'restrained_lucy') || null;
+    }
+  }
+
+  // 2. Chief Kurama (Шеф Курама):
+  // Wave 10 Victory as Nana with >=150 bullet deflections and >=80% HP remaining
+  if (
+    params.isVictory &&
+    params.characterId === 'nana' &&
+    !secrets.includes('kurama')
+  ) {
+    if (params.bulletsDeflected >= 150 && params.finalHpPercent >= 0.8) {
+      unlockSecretCharacter('kurama');
+      return CHARACTERS.find((c) => c.id === 'kurama') || null;
+    }
+  }
+
+  // 3. Anna Kakuzawa (Анна Какудзава - Мозговой Левиафан):
+  // Wave 15 reached in Endless Mode OR victory with a Tier 5 evolved weapon
+  if (!secrets.includes('anna_kakuzawa')) {
+    const hasTier5Evolution = params.equippedWeapons.some(
+      (w) => w.isEvolved || (w.tier && w.tier >= 5)
+    );
+    if ((params.isEndless && params.wave >= 15) || (params.isVictory && hasTier5Evolution)) {
+      unlockSecretCharacter('anna_kakuzawa');
+      return CHARACTERS.find((c) => c.id === 'anna_kakuzawa') || null;
+    }
+  }
+
+  return null;
 }
 
 export function recordWave10Victory(completedWithCharId: string): {

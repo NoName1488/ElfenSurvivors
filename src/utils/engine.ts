@@ -30,7 +30,7 @@ import { sound } from './sound';
 import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG } from '../data/gameData';
 import { PSYCHIC_MUTATION_TREES, PsychicMutationNode } from '../data/psychicMutationsData';
 import { getLanguage } from './i18n';
-import { getAppliedMetaStats, recordRunCompleted, checkAchievements } from './metaProgression';
+import { getAppliedMetaStats, recordRunCompleted, checkAchievements, recordAchievementProgress } from './metaProgression';
 
 export interface GameEngineState {
   player: {
@@ -58,6 +58,9 @@ export interface GameEngineState {
     isDashing: boolean;
     dashVx: number;
     dashVy: number;
+    // Bot Anti-Vector Countermeasures: EMP / Sonic Resonance Disruption
+    vectorSuppressedTimer: number;
+    vectorSuppressedMax: number;
   };
   mutationState: PsychicMutationState;
   baseStatBonuses: Partial<Record<keyof PlayerStats, number>>;
@@ -94,6 +97,7 @@ export interface GameEngineState {
   kills: number;
   totalDnaCollected: number;
   damageDealt: number;
+  bulletsDeflected: number;
   shakeTimer: number;
   shakeIntensity: number;
   arenaWidth: number;
@@ -193,6 +197,8 @@ export class GameEngine {
         isDashing: false,
         dashVx: 0,
         dashVy: 0,
+        vectorSuppressedTimer: 0,
+        vectorSuppressedMax: 0,
       },
       mutationState: {
         mutationPoints: 0, // Mutation points must be earned through milestones and boss fights
@@ -238,6 +244,7 @@ export class GameEngine {
       kills: 0,
       totalDnaCollected: 0,
       damageDealt: 0,
+      bulletsDeflected: 0,
       shakeTimer: 0,
       shakeIntensity: 0,
       arenaWidth: this.WORLD_WIDTH,
@@ -488,6 +495,8 @@ export class GameEngine {
           if (!this.state.evolvedWeapons.includes(match.id)) {
             this.state.evolvedWeapons.push(match.id);
           }
+
+          recordAchievementProgress('ach_catalytic_evo', 1);
 
           this.state.recentEvolutionPopup = {
             ...match,
@@ -909,6 +918,8 @@ export class GameEngine {
     this.state.player.stunTimer = 0;
     this.state.player.isDashing = false;
     this.state.player.mobilityActiveTimer = 0;
+    this.state.player.vectorSuppressedTimer = 0;
+    this.state.player.vectorSuppressedMax = 0;
     this.lastEnemySpawn = 0;
     this.tacticalAmbushTimer = 12 + Math.random() * 4;
     this.recalculateStats();
@@ -1271,6 +1282,106 @@ export class GameEngine {
             isRocket: true,
           });
         }
+      } else if (this.state.character.id === 'restrained_lucy') {
+        // Shackle Detonation: blows open the helmet locks, omnidirectional vector fury
+        sound.playSpecialAbility();
+        this.triggerScreenShake(24, 0.6);
+        this.state.characterResource.current = 100;
+        this.state.characterResource.isActive = true;
+
+        // Dissolve enemy bullets
+        this.state.projectiles.forEach((p) => {
+          if (!p.isPlayer) p.life = 0;
+        });
+
+        // 4 massive kinetic shockwaves
+        for (let i = 0; i < 4; i++) {
+          const angle = (i / 4) * Math.PI * 2;
+          for (let step = 1; step <= 6; step++) {
+            const dist = step * 60;
+            this.state.particles.push({
+              x: this.state.player.x + Math.cos(angle) * dist,
+              y: this.state.player.y + Math.sin(angle) * dist,
+              vx: Math.cos(angle) * 150,
+              vy: Math.sin(angle) * 150,
+              life: 0.6,
+              maxLife: 0.6,
+              size: 50 + step * 10,
+              color: '#f43f5e',
+              alpha: 0.9,
+              type: 'psychic_ring',
+            });
+          }
+        }
+
+        // Damage and knockback all enemies in wide radius
+        this.state.enemies.forEach((e) => {
+          const dist = Math.hypot(e.x - this.state.player.x, e.y - this.state.player.y);
+          if (dist < 500) {
+            this.damageEnemy(e, 220 * (1 + this.state.stats.psiPower / 100), true);
+            const ang = Math.atan2(e.y - this.state.player.y, e.x - this.state.player.x);
+            e.x += Math.cos(ang) * 150;
+            e.y += Math.sin(ang) * 150;
+          }
+        });
+      } else if (this.state.character.id === 'kurama') {
+        // Kurama's Anti-Vector Inhibitor Serum: disables vector attacks of all enemies for 5s
+        sound.playSpecialAbility();
+        this.state.characterResource.current = 100;
+        this.state.characterResource.isActive = true;
+        this.triggerScreenShake(8, 0.3);
+
+        this.state.particles.push({
+          x: this.state.player.x,
+          y: this.state.player.y,
+          vx: 0,
+          vy: 0,
+          life: 0.8,
+          maxLife: 0.8,
+          size: 380,
+          color: '#38bdf8',
+          alpha: 0.85,
+          type: 'psychic_ring',
+        });
+
+        this.state.enemies.forEach((e) => {
+          const dist = Math.hypot(e.x - this.state.player.x, e.y - this.state.player.y);
+          if (dist < 400) {
+            e.stunTimer = 5.0;
+            e.attackTimer = 5.0;
+            this.damageEnemy(e, 70, false);
+          }
+        });
+      } else if (this.state.character.id === 'anna_kakuzawa') {
+        // Chrono-Stasis of the Brain: freeze all enemies & dissolve bullets
+        sound.playSpecialAbility();
+        this.triggerScreenShake(18, 0.5);
+        this.state.characterResource.current = 100;
+        this.state.characterResource.isActive = true;
+
+        this.state.enemies.forEach((e) => {
+          e.stunTimer = 5.0;
+        });
+        this.state.projectiles.forEach((p) => {
+          if (!p.isPlayer) p.life = 0;
+        });
+
+        for (let i = 0; i < 20; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = Math.random() * 300;
+          this.state.particles.push({
+            x: this.state.player.x + Math.cos(angle) * dist,
+            y: this.state.player.y + Math.sin(angle) * dist,
+            vx: -Math.cos(angle) * 80,
+            vy: -Math.sin(angle) * 80,
+            life: 0.8,
+            maxLife: 0.8,
+            size: 25,
+            color: '#c084fc',
+            alpha: 0.9,
+            type: 'spark',
+          });
+        }
       }
     }
   }
@@ -1478,6 +1589,80 @@ export class GameEngine {
           type: 'smoke',
         });
       }
+    } else if (char.id === 'restrained_lucy') {
+      // Kinetic Shackle Dash
+      p.mobilityActiveTimer = 0.28;
+      const dashSpeed = 900;
+      p.dashVx = dx * dashSpeed;
+      p.dashVy = dy * dashSpeed;
+      this.triggerScreenShake(7, 0.2);
+
+      for (const e of this.state.enemies) {
+        const d = Math.hypot(e.x - p.x, e.y - p.y);
+        if (d < 160) {
+          const pushAng = Math.atan2(e.y - p.y, e.x - p.x);
+          e.x += Math.cos(pushAng) * 140;
+          e.y += Math.sin(pushAng) * 140;
+          this.damageEnemy(e, 45);
+        }
+      }
+      for (let s = 0; s < 6; s++) {
+        this.state.particles.push({
+          x: p.x,
+          y: p.y,
+          vx: -dx * 80 + (Math.random() - 0.5) * 40,
+          vy: -dy * 80 + (Math.random() - 0.5) * 40,
+          life: 0.35,
+          maxLife: 0.35,
+          size: 14,
+          color: '#f43f5e',
+          alpha: 0.8,
+          type: 'spark',
+        });
+      }
+    } else if (char.id === 'kurama') {
+      // Tactical Cover & Smoke
+      p.mobilityActiveTimer = 0.24;
+      const dashSpeed = 820;
+      p.dashVx = dx * dashSpeed;
+      p.dashVy = dy * dashSpeed;
+      this.state.player.invincibleTimer = 1.2;
+
+      for (let s = 0; s < 8; s++) {
+        this.state.particles.push({
+          x: p.x + (Math.random() - 0.5) * 25,
+          y: p.y + (Math.random() - 0.5) * 25,
+          vx: (Math.random() - 0.5) * 30,
+          vy: (Math.random() - 0.5) * 30,
+          life: 0.8,
+          maxLife: 0.8,
+          size: 24,
+          color: '#94a3b8',
+          alpha: 0.6,
+          type: 'smoke',
+        });
+      }
+    } else if (char.id === 'anna_kakuzawa') {
+      // Gravitational Collapse-Shift (instant short teleport)
+      p.mobilityActiveTimer = 0.15;
+      p.dashVx = 0;
+      p.dashVy = 0;
+      p.x = Math.max(100, Math.min(this.state.arenaWidth - 100, p.x + dx * 200));
+      p.y = Math.max(100, Math.min(this.state.arenaHeight - 100, p.y + dy * 200));
+      this.triggerScreenShake(10, 0.25);
+
+      this.state.particles.push({
+        x: p.x,
+        y: p.y,
+        vx: 0,
+        vy: 0,
+        life: 0.5,
+        maxLife: 0.5,
+        size: 160,
+        color: '#c084fc',
+        alpha: 0.9,
+        type: 'psychic_ring',
+      });
     }
   }
 
@@ -1845,6 +2030,78 @@ export class GameEngine {
         }
       }
     }
+
+    // 6. RESTRAINED LUCY: Pressure in mask
+    if (this.state.character.id === 'restrained_lucy') {
+      if (this.state.characterResource.isActive) {
+        this.state.characterResource.current = Math.max(0, this.state.characterResource.current - dt * 10);
+        if (this.state.characterResource.current <= 0) {
+          this.state.characterResource.isActive = false;
+        }
+      } else if (this.state.characterResource.current > 0) {
+        this.state.characterResource.current = Math.max(0, this.state.characterResource.current - dt * 2.5);
+      }
+    }
+
+    // 7. KURAMA: Inhibitor Field aura (220px)
+    if (this.state.character.id === 'kurama') {
+      const auraRadius = 220;
+      for (const e of this.state.enemies) {
+        const d = Math.hypot(e.x - pX, e.y - pY);
+        if (d < auraRadius) {
+          e.speed = (e.speed || 100) * 0.75;
+          if (e.attackTimer < 1.0) e.attackTimer = Math.min(2.0, e.attackTimer + dt * 0.8);
+        }
+      }
+      if (Math.random() < 0.08) {
+        this.state.particles.push({
+          x: pX,
+          y: pY,
+          vx: 0,
+          vy: 0,
+          life: 0.5,
+          maxLife: 0.5,
+          size: auraRadius,
+          color: '#38bdf8',
+          alpha: 0.25,
+          type: 'psychic_ring',
+        });
+      }
+    }
+
+    // 8. ANNA KAKUZAWA: Gravitational Core Singularity (Absorb bullets & pull enemies)
+    if (this.state.character.id === 'anna_kakuzawa') {
+      const pullRadius = 360;
+      for (const e of this.state.enemies) {
+        const d = Math.hypot(e.x - pX, e.y - pY);
+        if (d < pullRadius && d > 40) {
+          const pullAngle = Math.atan2(pY - e.y, pX - e.x);
+          e.x += Math.cos(pullAngle) * 55 * dt;
+          e.y += Math.sin(pullAngle) * 55 * dt;
+        }
+      }
+
+      // Absorb enemy bullets in 240px
+      for (const p of this.state.projectiles) {
+        if (!p.isPlayer && Math.hypot(p.x - pX, p.y - pY) < 240) {
+          p.life = 0;
+          this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 0.4);
+          this.state.characterResource.current = Math.min(100, this.state.characterResource.current + 3);
+          this.state.particles.push({
+            x: p.x,
+            y: p.y,
+            vx: 0,
+            vy: -20,
+            life: 0.3,
+            maxLife: 0.3,
+            size: 6,
+            color: '#c084fc',
+            alpha: 0.9,
+            type: 'spark',
+          });
+        }
+      }
+    }
   }
 
   private updatePlayerMovement(dt: number) {
@@ -1945,10 +2202,23 @@ export class GameEngine {
     if (this.state.vectorArms.length === 0) return;
 
     const time = performance.now() * 0.003;
+
+    // Bot Anti-Vector Disruption: Ultrasonic / EMP resonance suppression
+    const isSuppressed = this.state.player.vectorSuppressedTimer > 0;
+    if (isSuppressed) {
+      this.state.player.vectorSuppressedTimer = Math.max(0, this.state.player.vectorSuppressedTimer - dt);
+    }
+
     const reachMultiplier = 1 + this.state.stats.vectorReach / 100;
-    const baseReach = (this.state.character.id === 'nana' ? 145 : this.state.character.id === 'mariko' ? 165 : 110) * reachMultiplier;
+    let baseReach = (this.state.character.id === 'nana' ? 145 : this.state.character.id === 'mariko' ? 165 : 110) * reachMultiplier;
+    if (isSuppressed) {
+      baseReach *= 0.65; // Ultrasonic frequency interference collapses reach by 35%
+    }
 
     let atkSpeedMod = 1 + this.state.stats.attackSpeed / 100;
+    if (isSuppressed) {
+      atkSpeedMod *= 0.70; // 30% attack delay penalty during frequency jamming
+    }
     if (this.state.character.id === 'lucy' && this.state.characterResource.isActive) {
       atkSpeedMod *= 1.6; // Bloodlust frenzy
     } else if (this.state.character.id === 'nyu' && this.state.characterResource.isActive) {
@@ -1986,6 +2256,13 @@ export class GameEngine {
       arm.length = baseReach;
       arm.attackCooldown -= dt;
 
+      // Monofilament Net Trap Countermeasure: arm is entangled and cutting itself free
+      if (arm.boundTimer && arm.boundTimer > 0) {
+        arm.boundTimer = Math.max(0, arm.boundTimer - dt);
+        arm.striking = false;
+        return; // Arm cannot perform actions while bound by taser net
+      }
+
       // Vibration frequency dynamics
       if (arm.vibrationHz === undefined) arm.vibrationHz = 250;
       if (!arm.striking) {
@@ -2001,13 +2278,150 @@ export class GameEngine {
 
       // 1. Advance strike animation
       if (arm.striking && arm.targetX !== undefined && arm.targetY !== undefined) {
-        const strikeSpeed = (arm.strikeType === 'pierce' ? 7.5 : arm.strikeType === 'fling' ? 8.5 : 6.0) * atkSpeedMod;
-        arm.strikeProgress += dt * strikeSpeed;
+        if (arm.strikeType === 'grab') {
+          // Physical Vector Grab & Throw State Machine
+          if (arm.grabPhase === 'reaching') {
+            arm.strikeProgress += dt * 4.5 * atkSpeedMod;
+            const targetE = this.state.enemies.find((e) => e.id === arm.grabbedEnemyId);
+            if (targetE && targetE.hp > 0) {
+              arm.targetX = targetE.x;
+              arm.targetY = targetE.y;
+            }
+            if (arm.strikeProgress >= 1) {
+              // Reached target enemy! Latch on and grab!
+              if (targetE && targetE.hp > 0) {
+                // Anti-Vector Countermeasure: Ballistic Riot Shield blocks direct vector grab!
+                if (targetE.shield && targetE.shield > 0) {
+                  sound.playVectorClash();
+                  this.spawnVectorClash(targetE.x, targetE.y, Math.atan2(targetE.y - pY, targetE.x - pX), '#94a3b8');
+                  this.state.damageNumbers.push({
+                    id: ++this.dmgNumIdCounter,
+                    x: targetE.x,
+                    y: targetE.y - 18,
+                    text: getLanguage() === 'ru' ? 'БЛОК ЩИТОМ: ЗАХВАТ СОРВАН!' : 'SHIELD BLOCK: GRAB DEFLECTED!',
+                    color: '#94a3b8',
+                    opacity: 1,
+                    isCrit: false,
+                    vy: -35,
+                  });
+                  arm.striking = false;
+                  arm.strikeProgress = 0;
+                  arm.grabPhase = undefined;
+                  arm.grabbedEnemyId = undefined;
+                  arm.attackCooldown = 0.35;
+                  return;
+                }
 
-        if (arm.strikeProgress >= 1) {
-          arm.striking = false;
-          arm.strikeProgress = 0;
-          arm.targetEnemyId = undefined;
+                // Anti-Vector Countermeasure: Heavy Mass / Hydraulic Anchors cannot be lifted into air
+                const isHeavy = targetE.isHeavyMass || targetE.isBoss || targetE.type === 'sat_heavy_commando' || targetE.type === 'mutant_beast';
+                if (isHeavy) {
+                  arm.grabPhase = undefined;
+                  arm.grabbedEnemyId = undefined;
+                  arm.striking = false;
+                  arm.strikeProgress = 0;
+                  arm.attackCooldown = 0.45;
+                  const crushDmg = Math.round((arm.flingObj?.damage || 65) * 1.6 * psiMultiplier);
+                  this.damageEnemy(targetE, crushDmg, true);
+                  sound.playMetalClank();
+                  this.triggerScreenShake(7, 0.2);
+                  this.state.damageNumbers.push({
+                    id: ++this.dmgNumIdCounter,
+                    x: targetE.x,
+                    y: targetE.y - 20,
+                    text: getLanguage() === 'ru' ? `⚓ ТЯЖЕЛАЯ МАССА: ПРИЖАТ! -${crushDmg}` : `⚓ HEAVY MASS PINNED! -${crushDmg}`,
+                    color: '#f59e0b',
+                    opacity: 1,
+                    isCrit: true,
+                    vy: -40,
+                  });
+                  return;
+                }
+
+                arm.grabPhase = 'holding';
+                arm.grabTimer = 0.35; // Hold target suspended in air
+                arm.vibrationHz = 850;
+                targetE.isGrabbed = true;
+                targetE.grabbedByArmIndex = i;
+                targetE.hitstopTimer = 0.35;
+                sound.playGoreHit();
+                this.triggerScreenShake(3, 0.1);
+              } else {
+                arm.striking = false;
+                arm.strikeProgress = 0;
+                arm.grabPhase = undefined;
+                arm.grabbedEnemyId = undefined;
+              }
+            }
+          } else if (arm.grabPhase === 'holding') {
+            arm.grabTimer = (arm.grabTimer || 0) - dt;
+            const targetE = this.state.enemies.find((e) => e.id === arm.grabbedEnemyId);
+            if (targetE && targetE.hp > 0) {
+              // Lock enemy position to arm tip!
+              targetE.x = arm.segments[3]?.x || arm.targetX;
+              targetE.y = arm.segments[3]?.y || arm.targetY;
+              targetE.isGrabbed = true;
+              targetE.grabAltitude = Math.min(28, (targetE.grabAltitude || 0) + dt * 100);
+
+              if ((arm.grabTimer || 0) <= 0) {
+                // Transition to THROW phase!
+                arm.grabPhase = 'throwing';
+                arm.strikeProgress = 0;
+
+                // Find cluster of other hostiles to fling into
+                let bestThrowAngle = Math.atan2(targetE.y - pY, targetE.x - pX);
+                const otherEnemies = this.state.enemies.filter((oe) => oe.id !== targetE.id && !oe.isGrabbed);
+                if (otherEnemies.length > 0) {
+                  const nearestOther = otherEnemies[0];
+                  bestThrowAngle = Math.atan2(nearestOther.y - targetE.y, nearestOther.x - targetE.x);
+                }
+
+                targetE.isGrabbed = false;
+                targetE.isThrown = true;
+                const throwSpeed = 740;
+                targetE.throwVx = Math.cos(bestThrowAngle) * throwSpeed;
+                targetE.throwVy = Math.sin(bestThrowAngle) * throwSpeed;
+                targetE.throwRotation = 0;
+                targetE.throwDamage = arm.flingObj?.damage || 60;
+                targetE.throwImpactRadius = 95;
+
+                sound.playVectorSlash();
+                this.triggerScreenShake(6, 0.18);
+
+                arm.strikeType = 'fling';
+                arm.strikeProgress = 0;
+                arm.grabPhase = undefined;
+                arm.grabbedEnemyId = undefined;
+              }
+            } else {
+              arm.striking = false;
+              arm.strikeProgress = 0;
+              arm.grabPhase = undefined;
+              arm.grabbedEnemyId = undefined;
+            }
+          }
+        } else if (arm.strikeType === 'rupture') {
+          // Internal organ rupture hold
+          arm.strikeProgress += dt * 3.5 * atkSpeedMod;
+          const targetE = this.state.enemies.find((e) => e.id === arm.targetEnemyId);
+          if (targetE && targetE.hp > 0) {
+            arm.targetX = targetE.x;
+            arm.targetY = targetE.y;
+          }
+          if (arm.strikeProgress >= 1) {
+            arm.striking = false;
+            arm.strikeProgress = 0;
+            arm.targetEnemyId = undefined;
+          }
+        } else {
+          // Standard / pierce / slash / deflect / fling
+          const strikeSpeed = (arm.strikeType === 'pierce' ? 6.8 : arm.strikeType === 'fling' ? 7.8 : arm.strikeType === 'slash' ? 5.2 : 5.8) * atkSpeedMod;
+          arm.strikeProgress += dt * strikeSpeed;
+
+          if (arm.strikeProgress >= 1) {
+            arm.striking = false;
+            arm.strikeProgress = 0;
+            arm.targetEnemyId = undefined;
+          }
         }
       }
 
@@ -2046,10 +2460,14 @@ export class GameEngine {
                 proj.damage = Math.round((45 + this.state.stats.psiPower * 0.85) * psiMultiplier);
                 proj.penetration = 3;
 
-                // Nana Kinetic Battery Heal
+                // Nana Kinetic Battery Heal & Impenetrable Anchor Achievement (2.Е.2)
                 if (this.hasMutation('nana_kinetic_battery')) {
                   this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 3);
                 }
+                if (this.state.character.id === 'nana') {
+                  recordAchievementProgress('ach_kinetic_shield', 1);
+                }
+                this.state.bulletsDeflected = (this.state.bulletsDeflected || 0) + 1;
 
                 proj.color = '#c084fc';
                 sound.playDeflection();
@@ -2231,36 +2649,35 @@ export class GameEngine {
           }
 
           const strikeAngle = Math.atan2(bestTarget.y - pY, bestTarget.x - pX);
-          const isBossVectorDuel =
-            bestTarget.isBoss &&
+          const isVectorDuel =
             (bestTarget.vectorCount || 0) > 0 &&
             !bestTarget.isStunned &&
             (bestTarget.vectorGuard || 0) > 0;
 
-          if (isBossVectorDuel) {
-            // Direction from boss to player (angle from which attack arrives at boss)
-            const incomingAngleAtBoss = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
+          if (isVectorDuel) {
+            // Direction from enemy to player (angle from which attack arrives at enemy)
+            const incomingAngleAtTarget = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
 
-            // Vector Duel: Check if boss has an available vector arm positioned to intercept this angle
-            let interceptingBossArm: BossVectorArm | null = null;
+            // Vector Duel: Check if target has an available vector arm positioned to intercept this angle
+            let interceptingArm: BossVectorArm | null = null;
             if (bestTarget.vectorArms && bestTarget.vectorArms.length > 0) {
               let minAngleDiff = Infinity;
               for (const bArm of bestTarget.vectorArms) {
-                let diff = Math.abs(bArm.currentAngle - incomingAngleAtBoss);
+                let diff = Math.abs(bArm.currentAngle - incomingAngleAtTarget);
                 if (diff > Math.PI) diff = Math.PI * 2 - diff;
                 if (diff < minAngleDiff) {
                   minAngleDiff = diff;
-                  interceptingBossArm = bArm;
+                  interceptingArm = bArm;
                 }
               }
-              // Boss guarding arc: coverage of ~85° (Math.PI * 0.48). If outside, it's an unguarded flank/rear strike!
+              // Guarding arc: coverage of ~85° (Math.PI * 0.48). If outside, it's an unguarded flank/rear strike!
               if (minAngleDiff > Math.PI * 0.48) {
-                interceptingBossArm = null;
+                interceptingArm = null;
               }
             }
 
-            if (interceptingBossArm) {
-              // Diclonius Vector Duel: Boss vector intercepts and clashes midair in 2D space!
+            if (interceptingArm) {
+              // Diclonius Vector Duel: Target vector intercepts and clashes midair in 2D space!
               arm.clashing = true;
               arm.clashTimer = 0.22;
               sound.playVectorClash();
@@ -2271,18 +2688,18 @@ export class GameEngine {
               arm.targetX = clashX;
               arm.targetY = clashY;
 
-              interceptingBossArm.striking = true;
-              interceptingBossArm.strikeProgress = 0.5;
-              interceptingBossArm.strikeType = 'deflect';
-              interceptingBossArm.targetX = clashX;
-              interceptingBossArm.targetY = clashY;
-              interceptingBossArm.clashing = true;
-              interceptingBossArm.clashTimer = 0.22;
+              interceptingArm.striking = true;
+              interceptingArm.strikeProgress = 0.5;
+              interceptingArm.strikeType = 'deflect';
+              interceptingArm.targetX = clashX;
+              interceptingArm.targetY = clashY;
+              interceptingArm.clashing = true;
+              interceptingArm.clashTimer = 0.22;
 
               this.spawnVectorClash(clashX, clashY, strikeAngle, bestTarget.color || '#38bdf8');
               this.triggerScreenShake(5, 0.12);
 
-              // 100% of damage to boss HP is BLOCKED; posture (vectorGuard) is depleted instead
+              // 100% of damage to HP is BLOCKED; posture (vectorGuard) is depleted instead
               const guardDmg = Math.round((28 + this.state.stats.psiPower * 0.4) * (isCrit ? 1.5 : 1.0));
               bestTarget.vectorGuard = Math.max(0, (bestTarget.vectorGuard || 0) - guardDmg);
               bestTarget.guardBreakRecoverTimer = 2.5;
@@ -2330,7 +2747,7 @@ export class GameEngine {
                 });
               }
             } else {
-              // FLANK / REAR STRIKE! Boss vectors were facing away or occupied!
+              // FLANK / REAR STRIKE! Enemy vectors were facing away or occupied!
               const flankDmg = Math.round(finalDmg * 1.4);
               this.damageEnemy(bestTarget, flankDmg, true);
               sound.playVectorSlash();
@@ -2348,6 +2765,73 @@ export class GameEngine {
               });
             }
           } else {
+            // Check for Ballistic Riot Shield Directional Defense
+            const hasShield = (bestTarget.type === 'riot_shield' || (bestTarget.shield !== undefined && bestTarget.shield > 0)) && !bestTarget.isStunned;
+            if (hasShield) {
+              const facingAngle = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
+              const incomingAngle = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
+              let angleDiff = Math.abs(facingAngle - incomingAngle);
+              if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+
+              // Frontal coverage arc (~70 degrees, 1.22 radians)
+              if (angleDiff < 1.22) {
+                // Frontal Ballistic Shield Block!
+                const absorbed = Math.round(finalDmg * 0.85);
+                const bleedThrough = finalDmg - absorbed;
+                bestTarget.shield = Math.max(0, (bestTarget.shield || 0) - absorbed);
+                bestTarget.hp -= bleedThrough;
+                sound.playVectorClash();
+                this.spawnVectorClash(bestTarget.x, bestTarget.y, strikeAngle, '#94a3b8');
+                this.triggerScreenShake(3, 0.08);
+
+                this.state.damageNumbers.push({
+                  id: ++this.dmgNumIdCounter,
+                  x: bestTarget.x,
+                  y: bestTarget.y - 20,
+                  text: getLanguage() === 'ru' ? `БЛОК ЩИТОМ! -${absorbed}` : `SHIELD BLOCK! -${absorbed}`,
+                  color: '#94a3b8',
+                  opacity: 1,
+                  isCrit: false,
+                  vy: -35,
+                });
+
+                if (bestTarget.shield <= 0) {
+                  sound.playGuardBreak();
+                  bestTarget.isStunned = true;
+                  bestTarget.stunTimer = 1.4;
+                  this.state.damageNumbers.push({
+                    id: ++this.dmgNumIdCounter,
+                    x: bestTarget.x,
+                    y: bestTarget.y - 32,
+                    text: getLanguage() === 'ru' ? 'ЩИТ РАЗБИТ!' : 'SHIELD BROKEN!',
+                    color: '#facc15',
+                    opacity: 1,
+                    isCrit: true,
+                    vy: -50,
+                  });
+                }
+                return;
+              } else {
+                // FLANK / REAR BYPASS! Attack hits exposed side/back of shielded unit!
+                const flankDmg = Math.round(finalDmg * 1.5);
+                this.damageEnemy(bestTarget, flankDmg, true);
+                sound.playVectorSlash();
+                this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, true, arm.strikeType);
+
+                this.state.damageNumbers.push({
+                  id: ++this.dmgNumIdCounter,
+                  x: bestTarget.x,
+                  y: bestTarget.y - 24,
+                  text: getLanguage() === 'ru' ? `ОБХОД ЩИТА! -${flankDmg}` : `FLANK BYPASS! -${flankDmg}`,
+                  color: '#f59e0b',
+                  opacity: 1,
+                  isCrit: true,
+                  vy: -45,
+                });
+                return;
+              }
+            }
+
             // Direct vector slash (Normal enemy OR boss with broken posture / stunned!)
             let bonusDmg = finalDmg;
             if (bestTarget.isBoss && bestTarget.isStunned) {
@@ -2552,10 +3036,39 @@ export class GameEngine {
       };
 
       if (arm.striking && arm.targetX !== undefined && arm.targetY !== undefined) {
-        const strikeEase = Math.sin(arm.strikeProgress * Math.PI);
-        const strikeX = pX + (arm.targetX - pX) * strikeEase;
-        const strikeY = pY + (arm.targetY - pY) * strikeEase;
-        arm.segments[3] = { x: strikeX + vibMicro, y: strikeY + vibMicro };
+        if (arm.strikeType === 'grab' && arm.grabPhase === 'holding') {
+          // Arm tip holds enemy firmly, with subtle hovering pulsation
+          const heaveAngle = arm.baseAngle + Math.sin(time * 6) * 0.12;
+          const heaveDist = Math.min(armLen * 0.85, Math.hypot(arm.targetX - pX, arm.targetY - pY));
+          arm.segments[3] = {
+            x: pX + Math.cos(heaveAngle) * heaveDist,
+            y: pY + Math.sin(heaveAngle) * heaveDist,
+          };
+        } else if (arm.strikeType === 'grab' && arm.grabPhase === 'reaching') {
+          // Direct reach towards target
+          const reachEase = Math.min(1, arm.strikeProgress);
+          const reachX = pX + (arm.targetX - pX) * reachEase;
+          const reachY = pY + (arm.targetY - pY) * reachEase;
+          arm.segments[3] = { x: reachX + vibMicro, y: reachY + vibMicro };
+        } else if (arm.strikeType === 'slash') {
+          // Wide cutting crescent blade arc
+          const sweepAngle = targetAngle - 0.75 + arm.strikeProgress * 1.5;
+          arm.segments[3] = {
+            x: pX + Math.cos(sweepAngle) * armLen + vibMicro,
+            y: pY + Math.sin(sweepAngle) * armLen + vibMicro,
+          };
+        } else if (arm.strikeType === 'rupture') {
+          // Vibrates intensely inside target body
+          arm.segments[3] = {
+            x: arm.targetX + vibMicro * 1.5,
+            y: arm.targetY + vibMicro * 1.5,
+          };
+        } else {
+          const strikeEase = Math.sin(arm.strikeProgress * Math.PI);
+          const strikeX = pX + (arm.targetX - pX) * strikeEase;
+          const strikeY = pY + (arm.targetY - pY) * strikeEase;
+          arm.segments[3] = { x: strikeX + vibMicro, y: strikeY + vibMicro };
+        }
       } else {
         arm.segments[3] = {
           x: pX + Math.cos(angle) * armLen + vibMicro,
@@ -2984,21 +3497,95 @@ export class GameEngine {
 
       case 'organ_rupture': {
         if (!target) return false;
-        sound.playGoreHit();
-        this.damageEnemy(target, baseDamage * 2.0, true, weapon);
-        this.createBloodExplosion(target.x, target.y, 16);
+
+        const targetAngle = Math.atan2(target.y - pY, target.x - pX);
+        const availableArm = this.state.vectorArms.find((a) => !a.striking && Math.abs(a.baseAngle - targetAngle) < Math.PI * 0.8)
+          || this.state.vectorArms.find((a) => !a.striking)
+          || this.state.vectorArms[0];
+
+        if (availableArm) {
+          availableArm.striking = true;
+          availableArm.strikeProgress = 0;
+          availableArm.strikeType = 'rupture';
+          availableArm.targetEnemyId = target.id;
+          availableArm.targetX = target.x;
+          availableArm.targetY = target.y;
+          availableArm.vibrationHz = 950;
+        }
+
+        target.internalRuptureTimer = 0.32;
+        target.internalRuptureDuration = 0.32;
+        target.hitstopTimer = 0.32;
+        sound.playVectorSlash();
+
+        // Spawn localized resonant vibration sparks inside target
+        for (let s = 0; s < 8; s++) {
+          const spAngle = Math.random() * Math.PI * 2;
+          this.state.particles.push({
+            x: target.x,
+            y: target.y,
+            vx: Math.cos(spAngle) * 60,
+            vy: Math.sin(spAngle) * 60,
+            life: 0.3,
+            maxLife: 0.3,
+            size: 3,
+            color: '#dc2626',
+            alpha: 0.9,
+            type: 'spark',
+          });
+        }
+
+        const ruptureDmg = baseDamage * 2.2;
+        setTimeout(() => {
+          if (target && target.hp > 0) {
+            sound.playGoreHit();
+            this.triggerScreenShake(7, 0.22);
+            this.damageEnemy(target, ruptureDmg, true, weapon);
+            this.createBloodExplosion(target.x, target.y, 20);
+          }
+        }, 320);
+
         return true;
       }
 
       case 'vector_snatch': {
         if (!target) return false;
-        sound.playGoreHit();
-        this.damageEnemy(target, baseDamage * 1.4, false, weapon);
-        // Throw enemy towards random cluster
-        const throwAngle = Math.random() * Math.PI * 2;
-        target.x += Math.cos(throwAngle) * 120;
-        target.y += Math.sin(throwAngle) * 120;
-        this.createBloodExplosion(target.x, target.y, 8);
+
+        const targetAngle = Math.atan2(target.y - pY, target.x - pX);
+        const availableArm = this.state.vectorArms.find((a) => !a.striking && Math.abs(a.baseAngle - targetAngle) < Math.PI * 0.8)
+          || this.state.vectorArms.find((a) => !a.striking)
+          || this.state.vectorArms[0];
+
+        if (availableArm) {
+          sound.playVectorSlash();
+          availableArm.striking = true;
+          availableArm.strikeProgress = 0;
+          availableArm.strikeType = 'grab';
+          availableArm.grabPhase = 'reaching';
+          availableArm.targetEnemyId = target.id;
+          availableArm.grabbedEnemyId = target.id;
+          availableArm.targetX = target.x;
+          availableArm.targetY = target.y;
+          availableArm.flingObj = {
+            x: target.x,
+            y: target.y,
+            vx: 0,
+            vy: 0,
+            life: 1.0,
+            radius: 95,
+            damage: baseDamage * (1.6 + (weapon.tier - 1) * 0.3),
+          };
+        } else {
+          // Bando or armless fallback: kinetic shotgun grapple kick
+          sound.playGoreHit();
+          target.isThrown = true;
+          target.throwVx = Math.cos(targetAngle) * 650;
+          target.throwVy = Math.sin(targetAngle) * 650;
+          target.throwRotation = 0;
+          target.throwDamage = baseDamage * 1.5;
+          target.throwImpactRadius = 85;
+          this.createBloodExplosion(target.x, target.y, 10);
+        }
         return true;
       }
 
@@ -3029,6 +3616,19 @@ export class GameEngine {
         if (!target) return false;
         sound.playExplosion();
         this.triggerScreenShake(8, 0.25);
+
+        // Find 2 free arms to clamp down like a psychic hydraulic vice
+        const targetAngle = Math.atan2(target.y - pY, target.x - pX);
+        const freeArms = this.state.vectorArms.filter((a) => !a.striking).slice(0, 2);
+        freeArms.forEach((arm, idx) => {
+          const sideOffset = (idx === 0 ? 1 : -1) * 50;
+          arm.striking = true;
+          arm.strikeProgress = 0;
+          arm.strikeType = 'slash';
+          arm.targetX = target.x + Math.cos(targetAngle + Math.PI * 0.5) * sideOffset;
+          arm.targetY = target.y + Math.sin(targetAngle + Math.PI * 0.5) * sideOffset;
+        });
+
         this.state.particles.push({
           x: target.x,
           y: target.y,
@@ -3042,7 +3642,105 @@ export class GameEngine {
           type: 'psychic_ring',
         });
         enemiesInRange.slice(0, 6).forEach((e) => {
+          e.hitstopTimer = 0.1;
           this.damageEnemy(e, baseDamage, true, weapon);
+        });
+        return true;
+      }
+
+      // === SECRET WEAPONS ===
+      case 'restrained_shockwave': {
+        sound.playSpecialAbility();
+        this.triggerScreenShake(7, 0.2);
+
+        this.state.particles.push({
+          x: pX,
+          y: pY,
+          vx: 0,
+          vy: 0,
+          life: 0.45,
+          maxLife: 0.45,
+          size: 260,
+          color: '#f43f5e',
+          alpha: 0.85,
+          type: 'psychic_ring',
+        });
+
+        enemiesInRange.forEach((e) => {
+          const d = Math.hypot(e.x - pX, e.y - pY);
+          if (d <= 260) {
+            const angle = Math.atan2(e.y - pY, e.x - pX);
+            e.x += Math.cos(angle) * (weapon.knockback || 40);
+            e.y += Math.sin(angle) * (weapon.knockback || 40);
+            this.damageEnemy(e, baseDamage, true, weapon);
+          }
+        });
+
+        this.state.projectiles.forEach((p) => {
+          if (!p.isPlayer && Math.hypot(p.x - pX, p.y - pY) <= 240) {
+            p.life = 0;
+          }
+        });
+        return true;
+      }
+
+      case 'kurama_revolver': {
+        if (!target) return false;
+        sound.playPistol();
+        this.ejectShellCasing();
+        const angle = Math.atan2(target.y - pY, target.x - pX);
+        const speed = 760;
+
+        this.state.projectiles.push({
+          id: ++this.projectileIdCounter,
+          x: pX,
+          y: pY,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          radius: 5,
+          damage: baseDamage,
+          isPlayer: true,
+          color: '#38bdf8',
+          life: 0.65,
+          maxLife: 0.65,
+          penetration: weapon.penetration || 2,
+          isBullet: true,
+        });
+        return true;
+      }
+
+      case 'gravity_singularity': {
+        if (!target) return false;
+        sound.playVectorSwarm();
+        const angle = Math.atan2(target.y - pY, target.x - pX);
+        const speed = 280;
+
+        this.state.projectiles.push({
+          id: ++this.projectileIdCounter,
+          x: pX,
+          y: pY,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          radius: 18,
+          damage: Math.round(baseDamage * 0.6),
+          isPlayer: true,
+          color: '#a855f7',
+          life: 1.8,
+          maxLife: 1.8,
+          penetration: 99,
+        });
+
+        this.state.particles.push({
+          x: pX,
+          y: pY,
+          vx: 0,
+          vy: 0,
+          life: 0.6,
+          maxLife: 0.6,
+          size: 80,
+          color: '#a855f7',
+          alpha: 0.75,
+          type: 'psychic_ring',
         });
         return true;
       }
@@ -3979,7 +4677,7 @@ export class GameEngine {
       waveScaling = 14.36 + (this.state.wave - 15) * 2.2;
     }
 
-    const lateSpeedBonus = Math.min(35, Math.max(0, (this.state.wave - 4) * 3.5));
+    const lateSpeedBonus = Math.min(18, Math.max(0, (this.state.wave - 4) * 2.0));
     const eliteChance = Math.min(0.38, 0.12 + Math.max(0, this.state.wave - 4) * 0.035);
     const isElite = forceElite || Math.random() < eliteChance;
 
@@ -3990,7 +4688,7 @@ export class GameEngine {
       y,
       hp: 30 * waveScaling,
       maxHp: 30 * waveScaling,
-      speed: 100 + lateSpeedBonus,
+      speed: 75 + lateSpeedBonus,
       damage: 8 * waveScaling,
       radius: 14,
       color: '#64748b',
@@ -4005,7 +4703,7 @@ export class GameEngine {
           ...enemyData,
           hp: 32 * waveScaling,
           maxHp: 32 * waveScaling,
-          speed: 110,
+          speed: 82 + lateSpeedBonus * 0.6,
           damage: 9 * waveScaling,
           radius: 13,
           color: '#475569',
@@ -4028,7 +4726,7 @@ export class GameEngine {
           ...enemyData,
           hp: 52 * waveScaling,
           maxHp: 52 * waveScaling,
-          speed: 80,
+          speed: 68 + lateSpeedBonus * 0.5,
           damage: 6 * waveScaling,
           radius: 15,
           color: '#334155',
@@ -4051,7 +4749,7 @@ export class GameEngine {
           ...enemyData,
           hp: 68 * waveScaling,
           maxHp: 68 * waveScaling,
-          speed: 80,
+          speed: 62 + lateSpeedBonus * 0.4,
           damage: 12 * waveScaling,
           radius: 16,
           color: '#334155',
@@ -4068,7 +4766,7 @@ export class GameEngine {
           ...enemyData,
           hp: 52 * waveScaling,
           maxHp: 52 * waveScaling,
-          speed: 95,
+          speed: 74 + lateSpeedBonus * 0.5,
           damage: 13 * waveScaling,
           radius: 15,
           color: '#eab308',
@@ -4091,7 +4789,7 @@ export class GameEngine {
           ...enemyData,
           hp: 26 * waveScaling,
           maxHp: 26 * waveScaling,
-          speed: 140,
+          speed: 105 + lateSpeedBonus * 0.5,
           damage: 9 * waveScaling,
           radius: 12,
           color: '#0284c7',
@@ -4114,7 +4812,7 @@ export class GameEngine {
           ...enemyData,
           hp: 38 * waveScaling,
           maxHp: 38 * waveScaling,
-          speed: 70,
+          speed: 55,
           damage: 22 * waveScaling,
           radius: 13,
           color: '#1e293b',
@@ -4137,7 +4835,7 @@ export class GameEngine {
           ...enemyData,
           hp: 36 * waveScaling,
           maxHp: 36 * waveScaling,
-          speed: 130,
+          speed: 95 + lateSpeedBonus * 0.5,
           damage: 10 * waveScaling,
           radius: 12,
           color: '#06b6d4',
@@ -4185,7 +4883,7 @@ export class GameEngine {
           ...enemyData,
           hp: 60 * waveScaling,
           maxHp: 60 * waveScaling,
-          speed: 150,
+          speed: 110 + lateSpeedBonus * 0.5,
           damage: 16 * waveScaling,
           radius: 14,
           color: '#f43f5e',
@@ -4204,6 +4902,55 @@ export class GameEngine {
         break;
       }
 
+      case 'sat_anti_vector_infiltrator':
+        enemyData = {
+          ...enemyData,
+          hp: 46 * waveScaling,
+          maxHp: 46 * waveScaling,
+          speed: 105 + lateSpeedBonus * 0.5,
+          damage: 13 * waveScaling,
+          radius: 14,
+          color: '#eab308',
+          name: 'Диверсант SAT (Сеткомёт)',
+          weaponType: 'shotgun',
+          maxAmmo: 2,
+          currentAmmo: 2,
+          isReloading: false,
+          maxReloadTime: 2.8,
+          reloadTimer: 0,
+          shootCooldown: 3.0,
+          lastShoot: 0,
+          scoreValue: 5,
+          dnaDrop: 3,
+        };
+        break;
+
+      case 'sat_heavy_commando':
+        enemyData = {
+          ...enemyData,
+          hp: 140 * waveScaling,
+          maxHp: 140 * waveScaling,
+          speed: 56 + lateSpeedBonus * 0.3,
+          damage: 22 * waveScaling,
+          radius: 19,
+          color: '#475569',
+          name: 'Тяжёлый Джаггернаут SAT',
+          weaponType: 'heavy_minigun',
+          isHeavyMass: true,
+          shield: 60 * waveScaling,
+          maxShield: 60 * waveScaling,
+          maxAmmo: 12,
+          currentAmmo: 12,
+          isReloading: false,
+          maxReloadTime: 3.2,
+          reloadTimer: 0,
+          shootCooldown: 2.4,
+          lastShoot: 0,
+          scoreValue: 7,
+          dnaDrop: 4,
+        };
+        break;
+
       case 'mutant_beast':
         enemyData = {
           ...enemyData,
@@ -4215,6 +4962,7 @@ export class GameEngine {
           color: '#7c2d12',
           name: 'Мутант лаборатории',
           chargeTimer: 3.0,
+          isHeavyMass: true,
           scoreValue: 9,
           dnaDrop: 3,
         };
@@ -4304,7 +5052,7 @@ export class GameEngine {
         baseHp: 2400,
         baseShield: 800,
         baseDamage: 22,
-        speed: 135,
+        speed: 105,
         radius: 26,
         vectorCount: 4,
         vectorReach: 150,
@@ -4316,7 +5064,7 @@ export class GameEngine {
         baseHp: 3200,
         baseShield: 1100,
         baseDamage: 25,
-        speed: 140,
+        speed: 108,
         radius: 26,
         vectorCount: 6,
         vectorReach: 165,
@@ -4328,7 +5076,7 @@ export class GameEngine {
         baseHp: 4200,
         baseShield: 1500,
         baseDamage: 28,
-        speed: 130,
+        speed: 102,
         radius: 28,
         vectorCount: 8,
         vectorReach: 180,
@@ -4340,7 +5088,7 @@ export class GameEngine {
         baseHp: 5400,
         baseShield: 2000,
         baseDamage: 32,
-        speed: 150,
+        speed: 115,
         radius: 26,
         vectorCount: 8,
         vectorReach: 195,
@@ -4352,7 +5100,7 @@ export class GameEngine {
         baseHp: 6800,
         baseShield: 2600,
         baseDamage: 36,
-        speed: 125,
+        speed: 95,
         radius: 32,
         vectorCount: 0,
         vectorReach: 0,
@@ -4365,7 +5113,7 @@ export class GameEngine {
         baseHp: 8200,
         baseShield: 3200,
         baseDamage: 40,
-        speed: 130,
+        speed: 102,
         radius: 28,
         vectorCount: 12,
         vectorReach: 215,
@@ -4377,7 +5125,7 @@ export class GameEngine {
         baseHp: 9800,
         baseShield: 4000,
         baseDamage: 45,
-        speed: 110,
+        speed: 85,
         radius: 35,
         vectorCount: 12,
         vectorReach: 230,
@@ -4389,7 +5137,7 @@ export class GameEngine {
         baseHp: 11800,
         baseShield: 4800,
         baseDamage: 48,
-        speed: 145,
+        speed: 112,
         radius: 28,
         vectorCount: 14,
         vectorReach: 250,
@@ -4401,7 +5149,7 @@ export class GameEngine {
         baseHp: 13800,
         baseShield: 5600,
         baseDamage: 50,
-        speed: 130,
+        speed: 100,
         radius: 27,
         vectorCount: 12,
         vectorReach: 265,
@@ -4413,7 +5161,7 @@ export class GameEngine {
         baseHp: 16000,
         baseShield: 6500,
         baseDamage: 54,
-        speed: 140,
+        speed: 108,
         radius: 28,
         vectorCount: 16,
         vectorReach: 285,
@@ -4599,6 +5347,7 @@ export class GameEngine {
       dnaDrop: 18 + this.state.wave * 2,
       name: spec.name,
       isBoss: true,
+      isHeavyMass: true,
       vectorCount: spec.vectorCount,
       vectorReach: spec.vectorReach,
       vectorArms,
@@ -4630,6 +5379,104 @@ export class GameEngine {
 
     for (let i = this.state.enemies.length - 1; i >= 0; i--) {
       const e = this.state.enemies[i];
+
+      // 0. Hitstop pause check (micro-pause for impactful combat weight and tactile readability)
+      if (e.hitstopTimer !== undefined && e.hitstopTimer > 0) {
+        e.hitstopTimer -= dt;
+        continue;
+      }
+
+      // 0.1. Grabbed by Vector check: immobilized and suspended in air!
+      if (e.isGrabbed) {
+        // Position is locked to the vector arm tip holding it
+        continue;
+      }
+
+      // 0.2. Thrown Projectile Enemy check: flying through the air as kinetic human projectile!
+      if (e.isThrown) {
+        e.x += (e.throwVx || 0) * dt;
+        e.y += (e.throwVy || 0) * dt;
+        e.throwRotation = (e.throwRotation || 0) + 16 * dt;
+
+        // Visual kinetic trail particles
+        if (Math.random() < 0.45) {
+          this.state.particles.push({
+            x: e.x + (Math.random() - 0.5) * e.radius,
+            y: e.y + (Math.random() - 0.5) * e.radius,
+            vx: -(e.throwVx || 0) * 0.15,
+            vy: -(e.throwVy || 0) * 0.15,
+            life: 0.28,
+            maxLife: 0.28,
+            size: 4,
+            color: '#c084fc',
+            alpha: 0.8,
+            type: 'vector_trail',
+          });
+        }
+
+        // Mid-air collision with other hostiles (Bowling Pin Impact!)
+        for (let j = 0; j < this.state.enemies.length; j++) {
+          const other = this.state.enemies[j];
+          if (other.id !== e.id && !other.isThrown && !other.isGrabbed) {
+            const d = Math.hypot(other.x - e.x, other.y - e.y);
+            if (d < e.radius + other.radius + 6) {
+              // Collide with hostile soldier!
+              const colDmg = (e.throwDamage || 45) * 0.75;
+              this.damageEnemy(other, colDmg, false);
+              other.vx = (e.throwVx || 0) * 0.45;
+              other.vy = (e.throwVy || 0) * 0.45;
+              other.hitstopTimer = 0.08;
+              sound.playMetalClank();
+              sound.playGoreHit();
+              this.createBloodExplosion(other.x, other.y, 6);
+              e.throwVx = (e.throwVx || 0) * 0.75;
+              e.throwVy = (e.throwVy || 0) * 0.75;
+            }
+          }
+        }
+
+        // Friction and landing
+        e.throwVx = (e.throwVx || 0) * 0.93;
+        e.throwVy = (e.throwVy || 0) * 0.93;
+        const currentSpeed = Math.hypot(e.throwVx || 0, e.throwVy || 0);
+
+        if (currentSpeed < 90 || e.x < 30 || e.x > this.state.arenaWidth - 30 || e.y < 30 || e.y > this.state.arenaHeight - 30) {
+          // SLAM IMPACT ON GROUND!
+          e.isThrown = false;
+          sound.playExplosion();
+          sound.playGoreHit();
+          this.triggerScreenShake(8, 0.25);
+          const impactRadius = e.throwImpactRadius || 95;
+          this.createBloodExplosion(e.x, e.y, 22);
+
+          // AoE shockwave damage to all nearby enemies in impact crater
+          for (const nearEnemy of this.state.enemies) {
+            if (nearEnemy.id !== e.id && !nearEnemy.isGrabbed) {
+              const dNear = Math.hypot(nearEnemy.x - e.x, nearEnemy.y - e.y);
+              if (dNear <= impactRadius) {
+                const splashDmg = (e.throwDamage || 45) * 0.85;
+                this.damageEnemy(nearEnemy, splashDmg, true);
+                const pushAng = Math.atan2(nearEnemy.y - e.y, nearEnemy.x - e.x);
+                nearEnemy.vx = Math.cos(pushAng) * 220;
+                nearEnemy.vy = Math.sin(pushAng) * 220;
+              }
+            }
+          }
+
+          // Damage to the thrown enemy itself
+          this.damageEnemy(e, (e.throwDamage || 45) * 1.5, true);
+        }
+        continue;
+      }
+
+      // 0.3. Internal Rupture Tremor check
+      if (e.internalRuptureTimer !== undefined && e.internalRuptureTimer > 0) {
+        e.internalRuptureTimer -= dt;
+        // Minor visual displacement tremor while vector vibrator pierces organs
+        e.x += (Math.random() - 0.5) * 3;
+        e.y += (Math.random() - 0.5) * 3;
+      }
+
       const dist = Math.hypot(pX - e.x, pY - e.y);
       const angle = Math.atan2(pY - e.y, pX - e.x);
 
@@ -5391,6 +6238,65 @@ export class GameEngine {
           e.x += Math.cos(strafeAngle) * moveSpeed * 0.6 * dt;
           e.y += Math.sin(strafeAngle) * moveSpeed * 0.6 * dt;
         }
+      } else if (e.type === 'emp_disruptor') {
+        // Sonic Vector Jammer Drone: Periodically triggers an expanding EMP suppression shockwave
+        e.sonicPulseTimer = (e.sonicPulseTimer || 0) + dt;
+        if (e.sonicPulseTimer >= 3.4) {
+          e.sonicPulseTimer = 0;
+          sound.playLaser();
+          this.state.particles.push({
+            x: e.x,
+            y: e.y,
+            vx: 0,
+            vy: 0,
+            life: 0.5,
+            maxLife: 0.5,
+            size: 210,
+            color: '#06b6d4',
+            alpha: 0.85,
+            type: 'psychic_ring',
+          });
+          if (dist <= 210) {
+            this.state.player.vectorSuppressedTimer = 2.4;
+            this.state.player.vectorSuppressedMax = 2.4;
+            this.triggerScreenShake(4, 0.12);
+            this.state.damageNumbers.push({
+              id: ++this.dmgNumIdCounter,
+              x: pX,
+              y: pY - 26,
+              text: getLanguage() === 'ru' ? '⚠️ ЭМИ: СБОЙ ВЕКТОРОВ!' : '⚠️ EMP: VECTORS SUPPRESSED!',
+              color: '#06b6d4',
+              opacity: 1,
+              isCrit: true,
+              vy: -40,
+            });
+          }
+        }
+        // Skirmish orbit pattern
+        if (dist < 180) {
+          e.x -= Math.cos(angle) * moveSpeed * 1.1 * dt;
+          e.y -= Math.sin(angle) * moveSpeed * 1.1 * dt;
+        } else if (dist > 270) {
+          e.x += Math.cos(angle) * moveSpeed * dt;
+          e.y += Math.sin(angle) * moveSpeed * dt;
+        } else {
+          const orbitAngle = angle + Math.PI * 0.5 * (e.id % 2 === 0 ? 1 : -1);
+          e.x += Math.cos(orbitAngle) * moveSpeed * 0.7 * dt;
+          e.y += Math.sin(orbitAngle) * moveSpeed * 0.7 * dt;
+        }
+      } else if (e.type === 'sat_anti_vector_infiltrator') {
+        // Anti-Vector Infiltrator: maintains 200-290px perimeter to fire monofilament snare nets
+        if (dist < 190) {
+          e.x -= Math.cos(angle) * moveSpeed * 1.15 * dt;
+          e.y -= Math.sin(angle) * moveSpeed * 1.15 * dt;
+        } else if (dist > 290) {
+          e.x += Math.cos(angle) * moveSpeed * dt;
+          e.y += Math.sin(angle) * moveSpeed * dt;
+        } else {
+          const strafeAng = angle + Math.PI * 0.5 * (e.id % 2 === 0 ? 1 : -1);
+          e.x += Math.cos(strafeAng) * moveSpeed * 0.65 * dt;
+          e.y += Math.sin(strafeAng) * moveSpeed * 0.65 * dt;
+        }
       } else if (e.type === 'sat_shotgunner' || e.type === 'riot_shield' || e.type === 'sat_heavy_commando') {
         // Tactical squad flanking: angle offset creates an encirclement pincer
         const flankSign = (e.id % 2 === 0 ? 1 : -1);
@@ -5528,17 +6434,54 @@ export class GameEngine {
           id: ++this.projectileIdCounter,
           x: enemy.x,
           y: enemy.y,
-          vx: Math.cos(empAngle) * 240,
-          vy: Math.sin(empAngle) * 240,
-          radius: 5.5,
+          vx: Math.cos(empAngle) * 250,
+          vy: Math.sin(empAngle) * 250,
+          radius: 6,
           damage: Math.round(enemy.damage * 0.6),
           isPlayer: false,
           color: '#06b6d4',
           life: 2.0,
           maxLife: 2.0,
           penetration: 1,
+          isEmp: true,
         });
       }
+    } else if (enemy.type === 'sat_anti_vector_infiltrator') {
+      sound.playShotgun();
+      this.triggerScreenShake(3, 0.1);
+      this.state.projectiles.push({
+        id: ++this.projectileIdCounter,
+        x: enemy.x,
+        y: enemy.y,
+        vx: Math.cos(angle) * 360,
+        vy: Math.sin(angle) * 360,
+        radius: 8.5,
+        damage: Math.round(enemy.damage * 0.5),
+        isPlayer: false,
+        color: '#eab308',
+        life: 2.2,
+        maxLife: 2.2,
+        penetration: 1,
+        isNetTrap: true,
+      });
+    } else if (enemy.type === 'sat_heavy_commando') {
+      sound.playHelicopterMinigun();
+      const spreadAngle = angle + (Math.random() - 0.5) * 0.18;
+      this.state.projectiles.push({
+        id: ++this.projectileIdCounter,
+        x: enemy.x,
+        y: enemy.y,
+        vx: Math.cos(spreadAngle) * 440,
+        vy: Math.sin(spreadAngle) * 440,
+        radius: 5,
+        damage: Math.round(enemy.damage * 0.45),
+        isPlayer: false,
+        color: '#f59e0b',
+        life: 1.6,
+        maxLife: 1.6,
+        penetration: 1,
+        isBullet: true,
+      });
     } else if (enemy.type === 'hazmat_flamer') {
       sound.playPistol();
       this.state.projectiles.push({
@@ -5723,6 +6666,42 @@ export class GameEngine {
         const dist = Math.hypot(pX - p.x, pY - p.y);
         if (dist < this.state.player.radius + p.radius) {
           this.damagePlayer(p.damage);
+
+          if (p.isEmp) {
+            this.state.player.vectorSuppressedTimer = 2.4;
+            this.state.player.vectorSuppressedMax = 2.4;
+            this.triggerScreenShake(4, 0.12);
+            this.state.damageNumbers.push({
+              id: ++this.dmgNumIdCounter,
+              x: pX,
+              y: pY - 26,
+              text: getLanguage() === 'ru' ? '⚠️ ЭМИ: СБОЙ ВЕКТОРОВ!' : '⚠️ EMP: VECTOR GLITCH!',
+              color: '#06b6d4',
+              opacity: 1,
+              isCrit: true,
+              vy: -40,
+            });
+          }
+
+          if (p.isNetTrap) {
+            const freeArm = this.state.vectorArms.find((a) => !a.boundTimer || a.boundTimer <= 0);
+            if (freeArm) {
+              freeArm.boundTimer = 2.4;
+              freeArm.boundMax = 2.4;
+              this.triggerScreenShake(5, 0.15);
+              this.state.damageNumbers.push({
+                id: ++this.dmgNumIdCounter,
+                x: pX,
+                y: pY - 26,
+                text: getLanguage() === 'ru' ? '⚡ СЕТКА: ВЕКТОР СВЯЗАН!' : '⚡ NET TRAP: ARM BOUND!',
+                color: '#eab308',
+                opacity: 1,
+                isCrit: true,
+                vy: -40,
+              });
+            }
+          }
+
           this.state.projectiles.splice(i, 1);
         }
       }
@@ -5848,12 +6827,25 @@ export class GameEngine {
 
     this.state.damageDealt += finalDamage;
 
+    // Tactical micro-hitstop for tangible combat weight
+    enemy.hitstopTimer = Math.max(enemy.hitstopTimer || 0, isCrit ? 0.08 : 0.03);
+
+    // Color-coded damage numbers based on weapon identity (clarity of causality)
+    let dmgColor = isCrit ? '#facc15' : '#ffffff';
+    if (weapon) {
+      if (weapon.category === 'vector') {
+        dmgColor = isCrit ? '#fde047' : (weapon.color || '#f43f5e');
+      } else if (weapon.category === 'telekinesis' || (weapon.category as string) === 'psychic') {
+        dmgColor = isCrit ? '#fde047' : '#c084fc';
+      }
+    }
+
     this.state.damageNumbers.push({
       id: ++this.dmgNumIdCounter,
       x: enemy.x + (Math.random() * 20 - 10),
       y: enemy.y - 12,
       text: finalDamage.toString() + (isCrit ? '!' : ''),
-      color: isCrit ? '#facc15' : '#ffffff',
+      color: dmgColor,
       opacity: 1,
       isCrit,
       vy: -60,
@@ -5877,6 +6869,15 @@ export class GameEngine {
 
     this.state.kills++;
     this.createBloodExplosion(enemy.x, enemy.y, enemy.isBoss ? 35 : 12);
+
+    // Achievement Progress Hooks (2.Е.2)
+    recordAchievementProgress('ach_first_blood', 1);
+    if (this.state.character.id === 'mariko' && (this.state.characterResource?.current || 0) >= 80) {
+      recordAchievementProgress('ach_overheat_survivor', 1);
+    }
+    if (this.state.character.id === 'lucy' && this.state.killStreak >= 25) {
+      recordAchievementProgress('ach_speed_predator', 1);
+    }
 
     // Adrenaline Kill-Streak & Surge Flow progression
     this.state.killStreak++;
@@ -6106,6 +7107,7 @@ export class GameEngine {
     if (this.state.player.hp <= 0) {
       this.state.player.hp = 0;
       this.state.isWaveActive = false;
+      checkAchievements(this.state);
       recordRunCompleted(false, this.state.wave, this.state.kills, this.state.totalDnaCollected, this.state.character.id, this.state.maxKillStreak);
       if (this.onGameOverCallback) {
         this.onGameOverCallback(false);
@@ -6544,6 +7546,7 @@ export class GameEngine {
     this.state.freeRerollAvailable = this.state.passiveItems.some((p) => p.id === 'specops_requisition');
 
     sound.playLevelUp();
+    checkAchievements(this.state);
 
     if (this.state.wave >= 15 && !this.state.isEndlessMode) {
       recordRunCompleted(true, this.state.wave, this.state.kills, this.state.totalDnaCollected, this.state.character.id, this.state.maxKillStreak);

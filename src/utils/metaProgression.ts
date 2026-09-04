@@ -183,6 +183,45 @@ export const ACHIEVEMENTS_CONFIG: Achievement[] = [
     progress: 0,
     maxProgress: 1,
   },
+  {
+    id: 'ach_secret_restrained_lucy',
+    title: 'Containment Protocol Breached',
+    russianTitle: 'Гриф Секретно: Прорыв Оков',
+    description: 'Survive 10 waves as Lucy using only vectors and telekinesis (no firearms or cyberware).',
+    russianDescription: 'Пройдите 10 волн за Люси без огнестрела и кибернетики. Разблокирует Субъекта 00.',
+    rewardDesc: '+80 Lab DNA & Subject 00',
+    russianRewardDesc: '+80 ДНК НИИ & Персонаж: Субъект 00',
+    icon: 'Layers',
+    isUnlocked: false,
+    progress: 0,
+    maxProgress: 1,
+  },
+  {
+    id: 'ach_secret_kurama',
+    title: 'Sins of the Father: Penance',
+    russianTitle: 'Гриф Секретно: Искупление Курамы',
+    description: 'Deflect 150+ bullets and win with >=80% HP as Nana. Unlocks Chief Kurama.',
+    russianDescription: 'Отразите 150+ пуль и победите за Нану с >=80% HP. Разблокирует Шефа Кураму.',
+    rewardDesc: '+80 Lab DNA & Chief Kurama',
+    russianRewardDesc: '+80 ДНК НИИ & Персонаж: Шеф Курама',
+    icon: 'Crosshair',
+    isUnlocked: false,
+    progress: 0,
+    maxProgress: 1,
+  },
+  {
+    id: 'ach_secret_anna',
+    title: 'Leviathan of the Void',
+    russianTitle: 'Гриф Секретно: Мозговой Левиафан',
+    description: 'Reach Wave 15 in Endless Mode or win with a Tier 5 Catalytic Weapon. Unlocks Anna Kakuzawa.',
+    russianDescription: 'Достигните 15 волны в бесконечном режиме или победите с T5 эволюцией. Разблокирует Анну Какудзаву.',
+    rewardDesc: '+100 Lab DNA & Anna Kakuzawa',
+    russianRewardDesc: '+100 ДНК НИИ & Персонаж: Анна Какудзава',
+    icon: 'Flame',
+    isUnlocked: false,
+    progress: 0,
+    maxProgress: 1,
+  },
 ];
 
 export function getMetaDna(): number {
@@ -355,14 +394,15 @@ export function recordRunCompleted(
 
 export function checkAchievements(state: any): void {
   if (!state) return;
-  if (state.kills >= 100) {
-    recordAchievementProgress('ach_first_blood', 1);
-  }
-  if (state.character?.id === 'bando' && state.characterResource?.value >= 99) {
+  const resVal = state.characterResource?.current ?? state.characterResource?.value ?? 0;
+  if (state.character?.id === 'bando' && resVal >= 99) {
     recordAchievementProgress('ach_sat_fury', 1);
   }
-  if (state.character?.id === 'mariko' && state.characterResource?.value >= 80) {
+  if (state.character?.id === 'mariko' && resVal >= 80) {
     recordAchievementProgress('ach_overheat_survivor', 1);
+  }
+  if (state.character?.id === 'lucy' && ((state.killStreak || 0) >= 25 || (state.maxKillStreak || 0) >= 25)) {
+    recordAchievementProgress('ach_speed_predator', 1);
   }
   if (state.character?.id === 'nyu' && state.characterResource?.isActive) {
     recordAchievementProgress('ach_nyu_awakening', 5);

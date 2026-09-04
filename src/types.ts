@@ -4,7 +4,7 @@
 
 export type WeaponRarity = 'common' | 'rare' | 'epic' | 'legendary' | 'ascended';
 
-export type CharacterKind = 'diclonius' | 'human_cyborg' | 'silpelit';
+export type CharacterKind = 'diclonius' | 'human_cyborg' | 'silpelit' | 'human' | 'neo_diclonius';
 
 export type WeaponCategory = 'vector' | 'firearm' | 'cyberware' | 'telekinesis';
 
@@ -28,7 +28,11 @@ export type WeaponType =
   | 'sat_anti_vector_laser'
   | 'sat_claymore_mine'
   | 'sat_barrett_sniper'
-  | 'sat_vector_cutter';
+  | 'sat_vector_cutter'
+  // Classified / Secret Archetype Weapons
+  | 'restrained_shockwave'
+  | 'kurama_revolver'
+  | 'gravity_singularity';
 
 export interface WeaponEvolution {
   id: string;
@@ -159,7 +163,7 @@ export interface PlayerStats {
 }
 
 export interface CharacterMechanic {
-  type: 'bloodlust' | 'split_psyche' | 'vector_shield' | 'swarm_26' | 'sat_adrenaline';
+  type: 'bloodlust' | 'split_psyche' | 'vector_shield' | 'swarm_26' | 'sat_adrenaline' | 'restrained_fury' | 'kurama_penance' | 'gravitational_core';
   resourceName: string;
   resourceMax: number;
   description: string;
@@ -190,6 +194,11 @@ export interface Character {
   mobilitySkillDesc?: string;
   mobilitySkillCooldown?: number;
   mechanic: CharacterMechanic;
+  isSecret?: boolean;
+  secretHintRu?: string;
+  secretHintEn?: string;
+  secretRequirementRu?: string;
+  secretRequirementEn?: string;
 }
 
 export interface StatUpgradeOption {
@@ -343,6 +352,7 @@ export interface Enemy {
   lastMelee?: number;
   isBoss?: boolean;
   isElite?: boolean;
+  attackTimer?: number;
   eliteAffix?: 'armored' | 'berserker' | 'kinetic_shield' | 'phase_dash';
   eliteAffixName?: string;
   phaseDashTimer?: number;
@@ -392,6 +402,25 @@ export interface Enemy {
   reloadTimer?: number;
   maxReloadTime?: number;
   weaponType?: 'rifle' | 'shotgun' | 'sniper' | 'flamer' | 'drone_laser' | 'heavy_minigun' | 'anti_vector_emp';
+  // Physical Vector Grab & Throw States
+  isGrabbed?: boolean;
+  grabbedByArmIndex?: number;
+  grabAltitude?: number;
+  isThrown?: boolean;
+  throwVx?: number;
+  throwVy?: number;
+  throwRotation?: number;
+  throwDamage?: number;
+  throwImpactRadius?: number;
+  hitstopTimer?: number;
+  internalRuptureTimer?: number;
+  internalRuptureDuration?: number;
+  // Anti-Vector Countermeasures & Bot Defenses
+  isHeavyMass?: boolean; // Hydraulic anchors / Heavy armored mech - unliftable by vector grab
+  isSonicPulsing?: boolean; // EMP / Acoustic resonance charge
+  sonicPulseTimer?: number;
+  netTrapCooldown?: number;
+  shieldAngle?: number; // Directional ballistic shield orientation
 }
 
 export interface Projectile {
@@ -414,6 +443,8 @@ export interface Projectile {
   isRocket?: boolean;
   isLaser?: boolean;
   isMine?: boolean;
+  isEmp?: boolean; // Sonic/EMP wave that suppresses vectors
+  isNetTrap?: boolean; // Monofilament taser net that binds vector arms
 }
 
 export interface DnaDrop {
@@ -484,13 +515,23 @@ export interface VectorArmVisual {
   slashing: boolean;
   attackCooldown: number;
   targetEnemyId?: number;
-  strikeType: 'pierce' | 'slash' | 'deflect' | 'whip' | 'fling';
+  strikeType: 'pierce' | 'slash' | 'deflect' | 'whip' | 'fling' | 'grab' | 'rupture' | 'throw' | 'orbit';
   lastHitTime?: number;
   clashing?: boolean;
   clashTimer?: number;
   vibrationHz?: number; // 200 to 1000 Hz high-frequency vibration for armor tearing
   role?: 'assault' | 'deflector' | 'flinger';
   flingObj?: { x: number; y: number; vx: number; vy: number; life: number; radius: number; damage: number };
+  grabbedEnemyId?: number;
+  grabPhase?: 'reaching' | 'holding' | 'throwing';
+  grabTimer?: number;
+  throwTargetX?: number;
+  throwTargetY?: number;
+  slashSweepAngle?: number;
+  slashArcRadius?: number;
+  orbitAngle?: number;
+  boundTimer?: number; // Monofilament conductive net binding this arm
+  boundMax?: number;
 }
 
 export interface VectorClashEffect {
