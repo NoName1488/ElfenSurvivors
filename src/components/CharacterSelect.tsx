@@ -18,7 +18,9 @@ import {
   BookOpen,
   Trophy,
   Sliders,
+  FlaskConical,
 } from 'lucide-react';
+import { MetaProgressionModal } from './MetaProgressionModal';
 
 interface CharacterSelectProps {
   onSelectCharacter: (character: Character) => void;
@@ -32,6 +34,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
   const { t, lang } = useLanguage();
   const [selectedId, setSelectedId] = useState<string>(CHARACTERS[0].id);
   const [showAudioModal, setShowAudioModal] = useState<boolean>(false);
+  const [showMetaModal, setShowMetaModal] = useState<boolean>(false);
   const totalWins = getTotalWins();
 
   const selectedChar = CHARACTERS.find((c) => c.id === selectedId) || CHARACTERS[0];
@@ -118,6 +121,19 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
             <span className="text-[9px] uppercase tracking-[0.2em] text-gray-500">{t('securityProtocol')}</span>
             <span className="text-xs font-mono text-red-400">{t('hardcoreLvl')}</span>
           </div>
+
+          {/* Lab Research & Meta-Progression Button */}
+          <button
+            id="lab-research-btn"
+            onClick={() => {
+              sound.playUiClick();
+              setShowMetaModal(true);
+            }}
+            className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-red-950/60 border border-red-500/50 hover:border-red-400 text-red-300 hover:text-white font-mono text-xs font-bold transition-all cursor-pointer shadow-[0_0_12px_rgba(239,68,68,0.25)]"
+          >
+            <FlaskConical className="w-4 h-4 text-red-400" />
+            <span>{isRu ? 'НИИ: Мета-Исследования' : 'Institute Research'}</span>
+          </button>
 
           {/* Lab Archive Button */}
           <button
@@ -410,6 +426,11 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
       {/* Audio Settings Modal */}
       {showAudioModal && (
         <AudioSettingsModal onClose={() => setShowAudioModal(false)} />
+      )}
+
+      {/* Meta-Progression & Research Lab Modal */}
+      {showMetaModal && (
+        <MetaProgressionModal onClose={() => setShowMetaModal(false)} />
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import { Character, Weapon, PassiveItem, WaveConfig, StatUpgradeOption, WeaponType, ItemSynergy, WeaponEvolution } from '../types';
+import { Character, Weapon, PassiveItem, WaveConfig, StatUpgradeOption, WeaponType, ItemSynergy, WeaponEvolution, WeaponTag, PlayerStats } from '../types';
 
 export const CHARACTERS: Character[] = [
   {
@@ -6,7 +6,7 @@ export const CHARACTERS: Character[] = [
     name: 'Люси',
     title: 'Королева Диклониусов',
     kind: 'diclonius',
-    description: 'Мастер чистокровных багровых векторов. Накапливает Жажду Крови за убийства для перехода в режим смертоносного Берсерка.',
+    description: 'Мастер чистокровных багровых векторов. Урон скалируется от скорости бега и серий убийств. В покое Жажда Крови угасает, а пассивный доход равен 0.',
     avatarColor: '#dc2626',
     hornColor: '#fecaca',
     accentColor: '#ef4444',
@@ -23,7 +23,7 @@ export const CHARACTERS: Character[] = [
       armor: 2,
       dodge: 5,
       moveSpeed: 210,
-      dnaHarvest: 10,
+      dnaHarvest: 0, // Polar limitation: pure hunter, zero compound harvesting!
       pickupRange: 100,
       bloodLifesteal: 2,
       luck: 5,
@@ -40,8 +40,8 @@ export const CHARACTERS: Character[] = [
       type: 'bloodlust',
       resourceName: 'ЖАЖДА КРОВИ',
       resourceMax: 100,
-      description: 'Убийства наполняют шкалу безумия. При 100% активируется Режим Берсерка (+20% скор. атаки, +12% крит, +2% вампиризм).',
-      passiveBonusText: '+12% Крит в безумии / Вампиризм крови / 4 Вектора',
+      description: 'Кинетический хищник: урон векторов растет от скорости движения (до +40%) и серий убийств. В покое Жажда Крови спадает втрое быстрее, а доход от урожая заблокирован.',
+      passiveBonusText: 'Урон от скорости бега / Серии убийств / 0% Урожая / Спад в покое',
     },
   },
   {
@@ -49,7 +49,7 @@ export const CHARACTERS: Character[] = [
     name: 'Ню',
     title: 'Невинная ипостась / Пробуждение',
     kind: 'diclonius',
-    description: 'Мирная личность с повышенным радиусом сбора ДНК и регенерацией. При тяжелом ранении пробуждается скрытая ярость Люси.',
+    description: 'Мирная личность с огромным магнитом ДНК (+150%) и лечением при сборе. При тяжелом ранении пробуждается первородная ярость Люси (+60% урона, но без регенерации).',
     avatarColor: '#ec4899',
     hornColor: '#fbcfe8',
     accentColor: '#f472b6',
@@ -67,7 +67,7 @@ export const CHARACTERS: Character[] = [
       dodge: 8,
       moveSpeed: 205,
       dnaHarvest: 20,
-      pickupRange: 140,
+      pickupRange: 160,
       bloodLifesteal: 1,
       luck: 12,
     },
@@ -83,8 +83,8 @@ export const CHARACTERS: Character[] = [
       type: 'split_psyche',
       resourceName: 'ПРОБУЖДЕНИЕ ЛЮСИ',
       resourceMax: 100,
-      description: 'В покое имеет увеличенный радиус сбора ДНК. При падении HP ниже 40% пробуждается ярость (+25% урона, +15% скорости бега).',
-      passiveBonusText: 'Магнит ДНК / Авто-отталкивание «НЮ!» / Всплеск выживания при низком HP',
+      description: 'В мирном режиме (HP > 40%) урон оружия снижен на -30%, но сбор ДНК лечит +1 HP. При падении HP ниже 40% активируется Пробуждение (+60% урона, +20% скорости, отключена регенерация).',
+      passiveBonusText: 'Магнит ДНК и лечение / -30% урон в покое / Пробуждение при <40% HP',
     },
   },
   {
@@ -92,7 +92,7 @@ export const CHARACTERS: Character[] = [
     name: 'Нана',
     title: 'Силпелит №7 / Векторный щит',
     kind: 'silpelit',
-    description: 'Сверхдлинные защитные векторы и кинетический перехват. Отражает пули SAT обратно во врагов.',
+    description: 'Кинетический якорь: стоя на месте получает +8 Брони, 100% отражение пуль с 2.5x уроном. В движении радиус векторов снижен на -25%.',
     avatarColor: '#8b5cf6',
     hornColor: '#ddd6fe',
     accentColor: '#a78bfa',
@@ -126,8 +126,8 @@ export const CHARACTERS: Character[] = [
       type: 'vector_shield',
       resourceName: 'КИНЕТИЧЕСКИЙ ЩИТ',
       resourceMax: 100,
-      description: 'Отражает приближающиеся пули спецназа SAT обратно в стрелков при взмахах векторов.',
-      passiveBonusText: 'Длинные векторы / Отражение пуль / +4 Брони',
+      description: 'Стоя неподвижно: +8 Брони, 100% отражение пуль с 2.5x уроном и быстрое восстановление Guard. В движении: радиус векторов уменьшен на 25%.',
+      passiveBonusText: 'Стоя: +8 Брони и 100% Отражение / На бегу: -25% Радиус',
     },
   },
   {
@@ -135,7 +135,7 @@ export const CHARACTERS: Character[] = [
     name: 'Марико',
     title: 'Силпелит №35 (26 Векторов)',
     kind: 'silpelit',
-    description: 'Абсолютное оружие НИИ. 26 смертоносных векторов с огромным радиусом, но хрупкое тело (45 HP) и риск перегрева векторов.',
+    description: '26 векторов колоссального охвата. Стоя охлаждается в 2 раза быстрее. Хрупкое тело (45 HP, -2 Брони), а при 100% перегреве получает 2 урона/сек.',
     avatarColor: '#eab308',
     hornColor: '#fef08a',
     accentColor: '#fde047',
@@ -169,8 +169,8 @@ export const CHARACTERS: Character[] = [
       type: 'swarm_26',
       resourceName: 'ПЕРЕГРЕВ ВЕКТОРОВ',
       resourceMax: 100,
-      description: '26 векторов генерируют нагрев. При 100% перегреве атаки замедляются на 25%, а тело Марико получает 1 урон/сек.',
-      passiveBonusText: '26 Векторов / Смертоносный охват / Хрупкость (45 HP) и Нагрев',
+      description: '26 векторов покрывают весь экран. Стоя охлаждается вдвое быстрее. При 100% перегреве тело получает 2 урона/сек, а атаки замедляются на 30%.',
+      passiveBonusText: '26 Векторов / 45 HP и -2 Брони / Охлаждение стоя / Урон от перегрева',
     },
   },
   {
@@ -178,7 +178,7 @@ export const CHARACTERS: Character[] = [
     name: 'Бандо',
     title: 'Киборг-штурмовик спецназа SAT',
     kind: 'human_cyborg',
-    description: 'ЧЕЛОВЕК-КИБОРГ БЕЗ ВЕКТОРОВ! Вооружен тактическим арсеналом спецназа: дробовики, пулемет M60, кибер-ракетницы и мины.',
+    description: 'Конверсия боли: 0 векторов, 0% уклонения. Получение урона дает +35 очков Адреналина, перезаряжает все стволы и дает +40% скорострельности на 3 сек.',
     avatarColor: '#0ea5e9',
     accentColor: '#38bdf8',
     lore: 'Штурмовик спецназа SAT. Потеряв глаза и руки в схватке с Люси, заменил их высокотехнологичными бионическими протезами, лазерным прицелом и тяжелым огнестрелом.',
@@ -192,7 +192,7 @@ export const CHARACTERS: Character[] = [
       critChance: 10,
       critDamage: 1.5,
       armor: 3,
-      dodge: 0,
+      dodge: 0, // Cannot dodge with heavy cybernetics
       moveSpeed: 210,
       dnaHarvest: 0,
       pickupRange: 80,
@@ -211,8 +211,8 @@ export const CHARACTERS: Character[] = [
       type: 'sat_adrenaline',
       resourceName: 'ТАКТИЧЕСКИЙ АДРЕНАЛИН',
       resourceMax: 100,
-      description: 'У Бандо НЕТ векторов — он использует тяжелый огнестрел и кибернетику. Убийства дают адреналин (+15% скорострельности).',
-      passiveBonusText: 'Огнестрельный арсенал SAT / Лазерный ЛЦУ / Кибер-протезы',
+      description: 'Конверсия боли: получение урона дает +35 Адреналина, перезаряжает стволы и повышает скорострельность на +40%. 0 векторов, 0% уклонения.',
+      passiveBonusText: 'Конверсия урона в Адреналин / Перезарядка при ударе / 0 Векторов',
     },
   },
 ];
@@ -236,6 +236,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Sword',
     color: '#ef4444',
     cost: 35,
+    tags: ['vector', 'psychic'],
   },
   telekinetic_shard: {
     name: 'Telekinetic Shards',
@@ -255,6 +256,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Crosshair',
     color: '#38bdf8',
     cost: 30,
+    tags: ['psychic', 'precise'],
   },
   blood_vortex: {
     name: 'Blood Vortex',
@@ -273,6 +275,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Atom',
     color: '#b91c1c',
     cost: 50,
+    tags: ['vector', 'heavy', 'psychic'],
   },
   deflection_barrier: {
     name: 'Deflection Barrier',
@@ -291,6 +294,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Shield',
     color: '#a855f7',
     cost: 45,
+    tags: ['vector', 'heavy'],
   },
   shockwave_pulse: {
     name: 'Shockwave Pulse',
@@ -309,6 +313,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Radio',
     color: '#f472b6',
     cost: 35,
+    tags: ['heavy', 'psychic'],
   },
   mariko_26_storm: {
     name: '26-Vector Swarm',
@@ -328,6 +333,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Sparkles',
     color: '#eab308',
     cost: 65,
+    tags: ['vector', 'precise'],
   },
   psychic_javelin: {
     name: 'Psychic Javelin',
@@ -347,6 +353,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Zap',
     color: '#fde047',
     cost: 60,
+    tags: ['psychic', 'precise'],
   },
   organ_rupture: {
     name: 'Internal Rupture',
@@ -365,6 +372,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Flame',
     color: '#dc2626',
     cost: 85,
+    tags: ['vector', 'precise'],
   },
   vector_snatch: {
     name: 'Vector Snatch & Throw',
@@ -383,6 +391,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Move',
     color: '#c084fc',
     cost: 50,
+    tags: ['vector', 'heavy'],
   },
   telekinetic_storm: {
     name: 'Telekinetic Storm',
@@ -401,6 +410,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Sun',
     color: '#a855f7',
     cost: 80,
+    tags: ['psychic', 'heavy'],
   },
   kinetic_crush: {
     name: 'Kinetic Crush',
@@ -419,6 +429,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Maximize2',
     color: '#6366f1',
     cost: 65,
+    tags: ['heavy', 'psychic'],
   },
 
   // === BANDO / SAT MILITARY FIREARMS & CYBERWARE (NO BIOLOGICAL VECTORS!) ===
@@ -440,6 +451,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'ShieldAlert',
     color: '#f97316',
     cost: 35,
+    tags: ['firearm', 'heavy'],
   },
   sat_m60_vulcan: {
     name: 'M60 Heavy Machine Gun',
@@ -459,6 +471,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Crosshair',
     color: '#fbbf24',
     cost: 55,
+    tags: ['firearm', 'heavy'],
   },
   sat_wrist_rockets: {
     name: 'Bionic Wrist Micro-Rockets',
@@ -477,6 +490,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Flame',
     color: '#ef4444',
     cost: 50,
+    tags: ['firearm', 'heavy'],
   },
   sat_anti_vector_laser: {
     name: 'SAT Anti-Vector Laser',
@@ -496,6 +510,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Zap',
     color: '#06b6d4',
     cost: 65,
+    tags: ['firearm', 'precise'],
   },
   sat_claymore_mine: {
     name: 'Claymore Proximity Mines',
@@ -514,6 +529,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Disc',
     color: '#e11d48',
     cost: 40,
+    tags: ['firearm', 'heavy'],
   },
   sat_barrett_sniper: {
     name: 'Barrett .50 Anti-Material Rifle',
@@ -533,6 +549,7 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Crosshair',
     color: '#38bdf8',
     cost: 85,
+    tags: ['firearm', 'precise'],
   },
   sat_vector_cutter: {
     name: 'SAT Plasma Cutter',
@@ -552,6 +569,68 @@ export const WEAPONS_DATABASE: Record<WeaponType, Omit<Weapon, 'id' | 'tier'>> =
     icon: 'Flame',
     color: '#f97316',
     cost: 50,
+    tags: ['firearm', 'precise'],
+  },
+};
+
+export const WEAPON_SET_BONUSES_CONFIG: Record<WeaponTag, {
+  name: string;
+  russianName: string;
+  icon: string;
+  color: string;
+  tiers: { count: number; bonusDesc: string; bonusDescRu: string; statBonus: Partial<PlayerStats> }[];
+}> = {
+  vector: {
+    name: 'Vector Mastery',
+    russianName: 'Векторное превосходство',
+    icon: 'Sword',
+    color: '#ef4444',
+    tiers: [
+      { count: 2, bonusDesc: '+15% Vector Reach', bonusDescRu: '+15% Дальность векторов', statBonus: { vectorReach: 15 } },
+      { count: 4, bonusDesc: '+30% Reach, +1 Extra Vector', bonusDescRu: '+30% Дальность, +1 Дополнительный вектор', statBonus: { vectorReach: 30, vectorCount: 1 } },
+      { count: 6, bonusDesc: '+50% Reach, +2 Vectors, +10% Crit', bonusDescRu: '+50% Дальность, +2 Вектора, +10% Крит', statBonus: { vectorReach: 50, vectorCount: 2, critChance: 10 } },
+    ],
+  },
+  firearm: {
+    name: 'Ballistic Ordnance',
+    russianName: 'Баллистический шквал',
+    icon: 'Crosshair',
+    color: '#38bdf8',
+    tiers: [
+      { count: 2, bonusDesc: '+15% Fire Rate', bonusDescRu: '+15% Скорострельность', statBonus: { attackSpeed: 15 } },
+      { count: 4, bonusDesc: '+30% Fire Rate, +8% Crit', bonusDescRu: '+30% Скорострельность, +8% Крит', statBonus: { attackSpeed: 30, critChance: 8 } },
+      { count: 6, bonusDesc: '+50% Fire Rate, +15% Crit, +1 Armor', bonusDescRu: '+50% Скорострельность, +15% Крит, +1 Броня', statBonus: { attackSpeed: 50, critChance: 15, armor: 1 } },
+    ],
+  },
+  heavy: {
+    name: 'Heavy Impact',
+    russianName: 'Тяжелый натиск',
+    icon: 'ShieldAlert',
+    color: '#f97316',
+    tiers: [
+      { count: 2, bonusDesc: '+20% AOE & Knockback', bonusDescRu: '+20% Зона поражения и отталкивание', statBonus: { psiPower: 6 } },
+      { count: 4, bonusDesc: '+40% AOE, +15% Firepower', bonusDescRu: '+40% Зона поражения, +15% Урон', statBonus: { psiPower: 15, armor: 1 } },
+    ],
+  },
+  precise: {
+    name: 'Deadly Precision',
+    russianName: 'Хирургическая точность',
+    icon: 'Zap',
+    color: '#eab308',
+    tiers: [
+      { count: 2, bonusDesc: '+10% Crit Chance', bonusDescRu: '+10% Шанс крита', statBonus: { critChance: 10 } },
+      { count: 4, bonusDesc: '+20% Crit Chance, +0.4x Multiplier', bonusDescRu: '+20% Шанс крита, +0.4x Крит. множитель', statBonus: { critChance: 20, critDamage: 0.4 } },
+    ],
+  },
+  psychic: {
+    name: 'Psychokinetic Resonance',
+    russianName: 'Психокинетический резонанс',
+    icon: 'Atom',
+    color: '#a855f7',
+    tiers: [
+      { count: 2, bonusDesc: '+12% PSI Power, +1% Lifesteal', bonusDescRu: '+12% Пси-сила, +1% Вампиризм', statBonus: { psiPower: 12, bloodLifesteal: 1 } },
+      { count: 4, bonusDesc: '+25% PSI Power, +3% Lifesteal', bonusDescRu: '+25% Пси-сила, +3% Вампиризм', statBonus: { psiPower: 25, bloodLifesteal: 3 } },
+    ],
   },
 };
 

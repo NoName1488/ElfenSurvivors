@@ -48,6 +48,21 @@ export interface WeaponEvolution {
   russianPowerSpikeSummary: string;
 }
 
+export type WeaponTag = 'vector' | 'firearm' | 'heavy' | 'precise' | 'psychic';
+
+export interface WeaponSetBonus {
+  tag: WeaponTag;
+  name: string;
+  russianName: string;
+  count: number;
+  thresholds: {
+    count: number;
+    bonusDesc: string;
+    bonusDescRu: string;
+    active: boolean;
+  }[];
+}
+
 export interface Weapon {
   id: string;
   name: string;
@@ -68,6 +83,7 @@ export interface Weapon {
   icon: string;
   color: string;
   cost: number;
+  tags?: WeaponTag[];
   isEvolved?: boolean;
   evolutionId?: string;
   evolvedName?: string;
@@ -468,10 +484,13 @@ export interface VectorArmVisual {
   slashing: boolean;
   attackCooldown: number;
   targetEnemyId?: number;
-  strikeType: 'pierce' | 'slash' | 'deflect' | 'whip';
+  strikeType: 'pierce' | 'slash' | 'deflect' | 'whip' | 'fling';
   lastHitTime?: number;
   clashing?: boolean;
   clashTimer?: number;
+  vibrationHz?: number; // 200 to 1000 Hz high-frequency vibration for armor tearing
+  role?: 'assault' | 'deflector' | 'flinger';
+  flingObj?: { x: number; y: number; vx: number; vy: number; life: number; radius: number; damage: number };
 }
 
 export interface VectorClashEffect {
@@ -512,3 +531,51 @@ export interface ArtilleryHazard {
   isTriggered?: boolean;
   exploded?: boolean;
 }
+
+export interface PointOfInterest {
+  id: number;
+  x: number;
+  y: number;
+  radius: number;
+  type: 'sat_supply_cache' | 'dna_pod' | 'kinetic_beacon';
+  name: string;
+  russianName: string;
+  hp: number;
+  maxHp: number;
+  isActivated: boolean;
+  isDestroyed: boolean;
+  captureProgress: number; // 0 to 100 for beacons
+  rewardClaimed: boolean;
+  color: string;
+  lootType: 'dna' | 'heal' | 'buff';
+}
+
+export interface MetaUpgrade {
+  id: string;
+  name: string;
+  russianName: string;
+  description: string;
+  russianDescription: string;
+  icon: string;
+  maxLevel: number; // STRICT HARD CAP = 5!
+  currentLevel: number;
+  costPerLevel: number[];
+  statKey: keyof PlayerStats | 'startingDna';
+  bonusPerLevel: number;
+  unit: string;
+}
+
+export interface Achievement {
+  id: string;
+  title: string;
+  russianTitle: string;
+  description: string;
+  russianDescription: string;
+  rewardDesc: string;
+  russianRewardDesc: string;
+  icon: string;
+  isUnlocked: boolean;
+  progress: number;
+  maxProgress: number;
+}
+

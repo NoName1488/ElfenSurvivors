@@ -1,11 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GameEngine } from '../utils/engine';
-import { Shield, Zap, Sparkles, Heart, Clock, Dna, Swords, Volume2, VolumeX, Pause, Play, Crosshair, Flame, Activity, Sparkle, AlertTriangle, Music, Skull, MapPin, Wind, Sliders } from 'lucide-react';
+import { Shield, Zap, Sparkles, Heart, Clock, Dna, Swords, Pause, Play, Crosshair, Flame, Activity, Sparkle, AlertTriangle, Music, Skull, MapPin, Wind } from 'lucide-react';
 import { sound } from '../utils/sound';
-import { ItemSynergy, ArenaType, WeaponEvolution } from '../types';
+import { ItemSynergy, ArenaType, WeaponEvolution, PassiveItem } from '../types';
 import { useLanguage } from '../utils/i18n';
-import { LanguageFlagButton } from './LanguageFlagButton';
-import { AudioSettingsModal } from './AudioSettingsModal';
+import { ItemIcon } from './ItemIcon';
 
 interface GameCanvasProps {
   engine: GameEngine;
@@ -65,12 +64,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
     mobilityName: 'Рывок',
     mobilityDesc: '',
     baggedDna: 0,
+    vectorCount: 0,
+    avgVibrationHz: 250,
+    deflectorsCount: 0,
     recentEvolutionPopup: null as (WeaponEvolution & { timer: number }) | null,
+    passiveItems: [] as PassiveItem[],
   });
 
   const { t, lang } = useLanguage();
-  const [showAudioModal, setShowAudioModal] = useState(false);
-  const [soundMuted, setSoundMuted] = useState(sound.getIsMuted());
+  const isRu = lang === 'ru';
   const [touchControls, setTouchControls] = useState<{ active: boolean; startX: number; startY: number; currX: number; currY: number }>({
     active: false,
     startX: 0,
@@ -124,6 +126,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         maxSpecialCooldown: s.character.specialAbilityCooldown,
         kills: s.kills,
         weapons: [...s.weapons],
+        passiveItems: [...s.passiveItems],
         resourceName: s.characterResource.name,
         resourceCurrent: Math.round(s.characterResource.current),
         resourceMax: s.characterResource.max,
@@ -161,6 +164,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         killStreakTimer: s.killStreakTimer || 0,
         surgeLevel: s.surgeLevel || 0,
         baggedDna: s.baggedDna || 0,
+        vectorCount: s.vectorArms.length,
+        avgVibrationHz: s.vectorArms.length > 0
+          ? Math.round(s.vectorArms.reduce((acc, a) => acc + (a.vibrationHz || 250), 0) / s.vectorArms.length)
+          : 0,
+        deflectorsCount: s.vectorArms.filter((a) => a.role === 'deflector').length,
         recentEvolutionPopup: s.recentEvolutionPopup ? { ...s.recentEvolutionPopup } : null,
       });
 
@@ -298,12 +306,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
     engine.handleJoystickMove(0, 0);
   };
 
-  const toggleSound = () => {
-    const newMuted = !soundMuted;
-    sound.setMuted(newMuted);
-    setSoundMuted(newMuted);
-  };
-
   const hpPercent = Math.min(100, Math.max(0, (hudState.hp / Math.max(1, hudState.maxHp)) * 100));
   const xpPercent = Math.min(100, (hudState.currentXp / Math.max(1, hudState.xpToNextLevel)) * 100);
   const resourcePercent = Math.min(100, (hudState.resourceCurrent / Math.max(1, hudState.resourceMax)) * 100);
@@ -406,9 +408,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           <div className="flex items-center gap-2">
             <div className="flex flex-col">
               <span className="text-[9px] uppercase tracking-[0.2em] text-gray-500 font-bold">ДНК</span>
-              <div className="flex items-center gap-1 text-red-400 font-mono font-bold text-xs md:text-sm">
+              <div className="flex items-center gap-1.5 text-red-400 font-mono font-bold text-xs md:text-sm">
                 <Dna className="w-3.5 h-3.5 text-red-400" />
                 <span>{hudState.dna}</span>
+                {hudState.surgeLevel > 0 && (
+                  <span
+                    className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold tracking-tight border ${
+                      hudState.surgeLevel === 3
+                        ? 'bg-purple-950/80 border-purple-400 text-purple-200'
+                        : hudState.surgeLevel === 2
+                        ? 'bg-amber-950/80 border-amber-400 text-amber-200'
+                        : 'bg-sky-950/80 border-sky-400 text-sky-200'
+                    }`}
+                    title="Бонус ДНК и магнетизма за непрерывную серию убийств"
+                  >
+                    x{hudState.surgeLevel === 3 ? '2.0' : hudState.surgeLevel === 2 ? '1.5' : '1.25'} ДНК
+                  </span>
+                )}
               </div>
             </div>
 
@@ -444,89 +460,36 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               {hudState.currentArena === 'kakuzawa_citadel' && '🏛️ ЦИТАДЕЛЬ'}
             </span>
           </div>
-          <div className={`font-cinzel text-lg md:text-2xl font-black tracking-widest text-glow ${
-            hudState.waveTimer <= 5 ? 'text-red-500 animate-pulse' : 'text-white'
-          }`}>
-            {hudState.isWaveEnding ? '0s' : `${hudState.waveTimer}s`}
-          </div>
-        </div>
-
-        {/* Right: Kills & Control Buttons */}
-        <div className="flex items-center gap-3 md:gap-5">
-          {/* Adrenaline Kill-Streak & Surge Flow Combo Gauge */}
-          {hudState.killStreak > 0 && (
-            <div className="flex flex-col items-end">
-              <div className="flex items-center gap-1.5">
-                <span className={`text-[9px] md:text-[11px] font-mono font-black tracking-wider px-2 py-0.5 rounded border transition-all ${
-                  hudState.surgeLevel === 3
-                    ? 'bg-purple-950/90 border-purple-400 text-purple-200 shadow-[0_0_12px_rgba(192,132,252,0.85)] animate-pulse'
-                    : hudState.surgeLevel === 2
-                    ? 'bg-amber-950/90 border-amber-400 text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.75)]'
-                    : hudState.surgeLevel === 1
-                    ? 'bg-sky-950/90 border-sky-400 text-sky-200 shadow-[0_0_8px_rgba(56,189,248,0.65)]'
-                    : 'bg-zinc-900/90 border-zinc-700 text-zinc-300'
-                }`}>
-                  {hudState.surgeLevel === 3 && 'СИНГУЛЯРНОСТЬ x'}
-                  {hudState.surgeLevel === 2 && 'ГИПЕР-ТРАНС x'}
-                  {hudState.surgeLevel === 1 && 'РЕЗОНАНС x'}
-                  {hudState.surgeLevel === 0 && 'СЕРИЯ x'}
-                  {hudState.killStreak}
-                </span>
-              </div>
-              <div className="w-20 md:w-24 h-1.5 bg-black/70 rounded-full overflow-hidden border border-white/10 mt-0.5">
-                <div
-                  className={`h-full transition-all duration-75 ${
-                    hudState.surgeLevel === 3
-                      ? 'bg-purple-500 shadow-[0_0_6px_rgba(168,85,247,0.9)]'
-                      : hudState.surgeLevel === 2
-                      ? 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.8)]'
-                      : hudState.surgeLevel === 1
-                      ? 'bg-sky-400 shadow-[0_0_6px_rgba(56,189,248,0.8)]'
-                      : 'bg-red-500'
-                  }`}
-                  style={{ width: `${Math.min(100, (hudState.killStreakTimer / 2.5) * 100)}%` }}
-                />
-              </div>
+          {hudState.isWaveEnding ? (
+            <div className="flex items-center gap-1.5 text-amber-400 font-mono font-black text-xs md:text-sm tracking-wider animate-pulse mt-0.5">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>МАГАЗИН ЧЕРЕЗ {Math.max(0.1, hudState.waveEndingTimer).toFixed(1)}s</span>
+            </div>
+          ) : (
+            <div className={`font-cinzel text-lg md:text-2xl font-black tracking-widest text-glow ${
+              hudState.waveTimer <= 5 ? 'text-red-500 animate-pulse' : 'text-white'
+            }`}>
+              {`${hudState.waveTimer}s`}
             </div>
           )}
+        </div>
 
-          <div className="hidden md:flex flex-col text-right">
+        {/* Right: Kills & Minimal Pause Control */}
+        <div className="flex items-center gap-3 md:gap-4">
+          <div className="flex flex-col text-right">
             <span className="text-[9px] uppercase tracking-[0.2em] text-gray-500 font-bold">{t('neutralized')}</span>
             <span className="text-xs md:text-sm font-mono text-red-400 font-bold">{hudState.kills}</span>
           </div>
 
-          <div className="flex items-center gap-1.5 pointer-events-auto">
-            {/* Country Flag Selector */}
-            <LanguageFlagButton />
-
-            {/* Audio Settings Modal Launcher */}
-            <button
-              id="audio-settings-hud-btn"
-              onClick={() => {
-                sound.playUiClick();
-                setShowAudioModal(true);
-              }}
-              className="p-2 rounded-lg glass-panel hover:border-amber-500/50 text-gray-300 hover:text-white transition-all cursor-pointer shadow-md"
-              title={t('audioSettings')}
-            >
-              <Sliders className="w-4 h-4 text-amber-400" />
-            </button>
-
-            <button
-              id="audio-toggle-btn"
-              onClick={toggleSound}
-              className="p-2 rounded-lg glass-panel hover:border-red-500/50 text-gray-300 hover:text-white transition-all cursor-pointer shadow-md"
-              title="Вкл/Выкл звук"
-            >
-              {soundMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-gray-200" />}
-            </button>
+          <div className="flex items-center gap-1 pointer-events-auto">
             <button
               id="pause-toggle-btn"
               onClick={onPauseToggle}
-              className="p-2 rounded-lg glass-panel hover:border-red-500/50 text-gray-300 hover:text-white transition-all cursor-pointer shadow-md"
-              title="Пауза"
+              className="px-2.5 py-1.5 rounded-lg glass-panel hover:border-red-500/50 text-gray-300 hover:text-white transition-all cursor-pointer shadow-md flex items-center gap-1.5 text-xs font-mono"
+              title="Пауза [ESC]"
             >
-              {isPaused ? <Play className="w-4 h-4 text-emerald-400" /> : <Pause className="w-4 h-4 text-gray-200" />}
+              {isPaused ? <Play className="w-3.5 h-3.5 text-emerald-400" /> : <Pause className="w-3.5 h-3.5 text-gray-300" />}
+              <span className="text-[10px] text-gray-400 hidden md:inline">ESC</span>
             </button>
           </div>
         </div>
@@ -692,31 +655,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         </div>
       )}
 
-      {/* Wave Transition Warning Popup (Shop Alert) */}
-      {hudState.isWaveEnding && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center animate-bounce">
-          <div className="px-6 py-3 rounded-xl bg-gradient-to-r from-red-950/90 via-black/95 to-red-950/90 border-2 border-red-500 shadow-[0_0_30px_rgba(220,38,38,0.8)] backdrop-blur-md flex flex-col items-center text-center">
-            <div className="flex items-center gap-2 text-xs md:text-sm font-mono font-black uppercase tracking-widest text-red-400">
-              <Sparkles className="w-4 h-4 text-amber-400 animate-spin" />
-              <span>ВОЛНА ЗАВЕРШЕНА • СБОР ОБРАЗЦОВ ДНК</span>
-              <Sparkles className="w-4 h-4 text-amber-400 animate-spin" />
-            </div>
-            <div className="text-sm md:text-base font-cinzel font-bold text-white tracking-wider mt-1 flex items-center gap-2">
-              <span>ОТКРЫТИЕ ЛАБОРАТОРИИ И МАГАЗИНА:</span>
-              <span className="text-amber-400 font-mono font-black text-lg">
-                {Math.max(0.1, hudState.waveEndingTimer).toFixed(1)}s
-              </span>
-            </div>
-            <div className="w-full h-1.5 bg-black/60 rounded-full mt-2 overflow-hidden border border-red-500/30">
-              <div
-                className="h-full bg-gradient-to-r from-amber-500 to-red-500 transition-all duration-75"
-                style={{ width: `${(hudState.waveEndingTimer / 2.4) * 100}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Bottom Bar Telemetry: EXP Progression & Vector / Firearms Arsenal */}
       <div
         id="game-bottom-telemetry-hud"
@@ -740,41 +678,99 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
 
         {/* Center/Right: Arsenal & Space Burst */}
         <div className="flex items-center gap-3">
-          {/* 6 Weapon Slots */}
-          <div className="hidden sm:flex items-center gap-1.5 glass-panel p-1 rounded-lg border-white/10">
+          {/* Arsenal: 6 Weapon Slots with Visual Icons */}
+          <div className="hidden sm:flex items-center gap-1.5 glass-panel p-1 rounded-lg border-white/10" title="Боевой арсенал">
             {Array.from({ length: 6 }).map((_, index) => {
               const w = hudState.weapons[index];
-              const tierBorders = [
-                'border-white/10 bg-white/5',
-                'border-blue-500/50 bg-blue-950/30',
-                'border-purple-500/50 bg-purple-950/30',
-                'border-amber-500/50 bg-amber-950/30',
-                'border-amber-400 bg-gradient-to-br from-amber-500/30 via-red-500/20 to-amber-600/30 shadow-[0_0_12px_rgba(245,158,11,0.85)] animate-pulse',
-              ];
               const isEvo = w?.isEvolved || (w?.tier && w.tier >= 5);
-              const borderClass = w
-                ? isEvo
-                  ? tierBorders[4]
-                  : tierBorders[Math.min(3, (w.tier || 1) - 1)]
-                : 'border-dashed border-white/5 bg-black/40';
+
+              if (w) {
+                return (
+                  <div
+                    key={index}
+                    title={`${isRu ? (w.russianName || w.name) : w.name} ${isEvo ? '(ТИР 5 ЭВОЛЮЦИЯ)' : `(T${w.tier || 1})`}`}
+                  >
+                    <ItemIcon
+                      iconName={w.icon}
+                      category={w.category}
+                      rarity={w.rarity}
+                      tier={w.tier || 1}
+                      isEvolved={isEvo}
+                      color={w.color}
+                      size="sm"
+                    />
+                  </div>
+                );
+              }
 
               return (
                 <div
                   key={index}
-                  className={`w-7 h-7 rounded border flex items-center justify-center ${borderClass}`}
-                  title={w ? `${w.russianName} ${isEvo ? '(ТИР 5 ЭВОЛЮЦИЯ)' : `(T${w.tier || 1})`}` : 'Пустой слот'}
+                  className="w-7 h-7 rounded border border-dashed border-white/10 bg-black/40 flex items-center justify-center text-gray-600 text-[10px]"
+                  title="Свободный оружейный слот"
                 >
-                  {w ? (
-                    <span className={`text-[9px] font-mono font-black ${isEvo ? 'text-amber-300' : 'text-red-300'}`}>
-                      {isEvo ? 'EVO' : `T${w.tier || 1}`}
-                    </span>
-                  ) : (
-                    <span className="text-gray-600 text-[10px]">+</span>
-                  )}
+                  +
                 </div>
               );
             })}
           </div>
+
+          {/* Equipped Passives Minimalist Strip */}
+          {hudState.passiveItems.length > 0 && (
+            <div
+              className="hidden lg:flex items-center gap-1 glass-panel px-1.5 py-1 rounded-lg border-white/10 max-w-[200px] overflow-x-auto"
+              title={`Пассивные аугментации (${hudState.passiveItems.length})`}
+            >
+              {hudState.passiveItems.slice(0, 6).map((p, idx) => (
+                <div
+                  key={idx}
+                  title={`${isRu ? p.russianName : p.name} (T${p.tier || 1})\n${p.description}`}
+                >
+                  <ItemIcon
+                    iconName={p.icon}
+                    category="passive"
+                    rarity={p.rarity}
+                    tier={p.tier || 1}
+                    size="xs"
+                  />
+                </div>
+              ))}
+              {hudState.passiveItems.length > 6 && (
+                <span className="text-[9px] font-mono text-gray-400 font-bold px-0.5">
+                  +{hudState.passiveItems.length - 6}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Vector Resonance & Kinematics Telemetry (For Diclonius) */}
+          {hudState.vectorCount > 0 && (
+            <div
+              id="vector-telemetry-badge"
+              className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-lg border border-pink-500/30 bg-pink-950/30 text-[11px] font-mono shadow-[0_0_10px_rgba(236,72,153,0.15)]"
+              title="Кинетическая система векторов: частота вибрации, пробитие брони и баллистический перехват"
+            >
+              <span className="text-pink-400 font-bold tracking-wider">
+                ВЕКТОРЫ: {hudState.vectorCount}
+              </span>
+              <span className="text-gray-600">•</span>
+              <span
+                className={
+                  hudState.avgVibrationHz >= 750
+                    ? 'text-cyan-300 font-bold animate-pulse'
+                    : 'text-gray-300'
+                }
+              >
+                {hudState.avgVibrationHz} Гц
+                {hudState.avgVibrationHz >= 750 ? ' [⚡РЕЗОНАНС]' : ''}
+              </span>
+              {hudState.deflectorsCount > 0 && (
+                <span className="text-purple-300 text-[10px] bg-purple-950/50 px-1.5 py-0.5 rounded border border-purple-500/30">
+                  {hudState.deflectorsCount} ПЕРЕХВАТ
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Actions & Skills */}
           <div className="pointer-events-auto flex items-center gap-2">
@@ -835,13 +831,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               )}px)`,
             }}
           />
-        </div>
-      )}
-
-      {/* Audio Settings Modal */}
-      {showAudioModal && (
-        <div className="pointer-events-auto">
-          <AudioSettingsModal onClose={() => setShowAudioModal(false)} />
         </div>
       )}
     </div>
@@ -1232,6 +1221,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
 
   // 5. Draw DNA Drops
   for (const drop of s.dnaDrops) {
+    if (!drop) continue;
     ctx.save();
     ctx.fillStyle = drop.color;
     ctx.shadowColor = drop.color;
@@ -1248,6 +1238,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
 
   // 6. Draw Projectiles
   for (const proj of s.projectiles) {
+    if (!proj) continue;
     ctx.save();
 
     if (proj.isMine) {
@@ -2413,44 +2404,92 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     ctx.lineTo(p.x + 3, p.y - 12);
     ctx.fill();
   } else if (s.character.id === 'nyu') {
-    // NYU: Soft Pink Hair + White Ribbon Bandage + Gentle Expression
-    ctx.fillStyle = '#f472b6';
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-    ctx.fill();
+    const isAwakened = s.characterResource.isActive;
+    if (isAwakened) {
+      // AWAKENED LUCY FRENZY MODE: Crimson Aura + Broken Ribbon + Demonic Glowing Red Eyes + Sharp Horns
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 3.5;
+      ctx.shadowColor = '#ef4444';
+      ctx.shadowBlur = 18;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius + 4, 0, Math.PI * 2);
+      ctx.stroke();
 
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fill();
 
-    // White Ribbon Bandage with bow ends
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(p.x - 8, p.y - 6, 16, 4);
-    ctx.beginPath();
-    ctx.arc(p.x - 9, p.y - 4, 3, 0, Math.PI * 2);
-    ctx.arc(p.x + 9, p.y - 4, 3, 0, Math.PI * 2);
-    ctx.fill();
+      // Flowing wild crimson strands
+      ctx.fillStyle = '#b91c1c';
+      ctx.beginPath();
+      ctx.moveTo(p.x - 7, p.y + 8);
+      ctx.quadraticCurveTo(p.x - 18, p.y + 18, p.x - 12, p.y + 24);
+      ctx.lineTo(p.x - 5, p.y + 12);
+      ctx.fill();
 
-    // Innocent anime eyes
-    ctx.fillStyle = '#9d174d';
-    ctx.beginPath();
-    ctx.arc(p.x - 4, p.y, 2, 0, Math.PI * 2);
-    ctx.arc(p.x + 4, p.y, 2, 0, Math.PI * 2);
-    ctx.fill();
+      // Burning demonic eyes
+      ctx.fillStyle = '#fef08a';
+      ctx.shadowColor = '#ef4444';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(p.x - 4, p.y - 1, 2.8, 0, Math.PI * 2);
+      ctx.arc(p.x + 4, p.y - 1, 2.8, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Cute Horns
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.moveTo(p.x - 7, p.y - 10);
-    ctx.lineTo(p.x - 11, p.y - 16);
-    ctx.lineTo(p.x - 3, p.y - 12);
-    ctx.fill();
+      // Sharp Red Horns
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.moveTo(p.x - 7, p.y - 10);
+      ctx.lineTo(p.x - 13, p.y - 20);
+      ctx.lineTo(p.x - 3, p.y - 13);
+      ctx.fill();
 
-    ctx.beginPath();
-    ctx.moveTo(p.x + 7, p.y - 10);
-    ctx.lineTo(p.x + 11, p.y - 16);
-    ctx.lineTo(p.x + 3, p.y - 12);
-    ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(p.x + 7, p.y - 10);
+      ctx.lineTo(p.x + 13, p.y - 20);
+      ctx.lineTo(p.x + 3, p.y - 13);
+      ctx.fill();
+    } else {
+      // PEACEFUL INNOCENT NYU: Soft Pink Hair + White Ribbon Bandage + Gentle Expression
+      ctx.fillStyle = '#f472b6';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // White Ribbon Bandage with bow ends
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(p.x - 8, p.y - 6, 16, 4);
+      ctx.beginPath();
+      ctx.arc(p.x - 9, p.y - 4, 3, 0, Math.PI * 2);
+      ctx.arc(p.x + 9, p.y - 4, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Innocent anime eyes
+      ctx.fillStyle = '#9d174d';
+      ctx.beginPath();
+      ctx.arc(p.x - 4, p.y, 2, 0, Math.PI * 2);
+      ctx.arc(p.x + 4, p.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Cute White Horns
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(p.x - 7, p.y - 10);
+      ctx.lineTo(p.x - 11, p.y - 16);
+      ctx.lineTo(p.x - 3, p.y - 12);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(p.x + 7, p.y - 10);
+      ctx.lineTo(p.x + 11, p.y - 16);
+      ctx.lineTo(p.x + 3, p.y - 12);
+      ctx.fill();
+    }
   } else if (s.character.id === 'nana') {
     // NANA: Purple Ponytail + Silver Diadem Headband
     ctx.fillStyle = '#c084fc';
@@ -2580,8 +2619,10 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       ctx.save();
       const isMariko = s.character.id === 'mariko';
       const isOverheated = isMariko && s.characterResource.isActive;
-      const isBerserk = s.character.id === 'lucy' && s.characterResource.isActive;
+      const isBerserk = (s.character.id === 'lucy' || s.character.id === 'nyu') && s.characterResource.isActive;
       const isStriking = arm.striking;
+      const vibration = arm.vibrationHz || 250;
+      const isHighResonance = vibration >= 750;
 
       let vectorColor = isOverheated
         ? '#f59e0b'
@@ -2591,65 +2632,99 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
 
       if (arm.strikeType === 'deflect' && isStriking) {
         vectorColor = '#c084fc';
+      } else if (arm.strikeType === 'fling') {
+        vectorColor = '#38bdf8';
+      } else if (isHighResonance) {
+        vectorColor = '#e0e7ff'; // Super-frequency white-cyan resonance glow
       }
 
-      // Outer ethereal psychic aura line
+      // Outer ethereal psychic aura (Kinematic Bezier Curve)
       ctx.strokeStyle = vectorColor;
-      ctx.lineWidth = isStriking ? (isMariko ? 3.0 : 4.5) : (isMariko ? 2.0 : 3.2);
+      ctx.lineWidth = isStriking ? (isMariko ? 3.2 : 5.0) : (isMariko ? 2.2 : 3.4);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.shadowColor = vectorColor;
-      ctx.shadowBlur = isStriking ? (isBerserk ? 20 : 16) : (isBerserk ? 14 : 8);
-      ctx.globalAlpha = isStriking ? 0.95 : (isOverheated ? 0.65 : 0.8);
+      ctx.shadowColor = isHighResonance ? '#38bdf8' : vectorColor;
+      ctx.shadowBlur = isStriking ? (isBerserk ? 22 : 18) : (isHighResonance ? 16 : 9);
+      ctx.globalAlpha = isStriking ? 0.95 : (isOverheated ? 0.65 : 0.82);
 
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      for (const seg of arm.segments) {
-        ctx.lineTo(seg.x, seg.y);
+      if (arm.segments.length >= 4) {
+        const [p0, p1, p2, p3] = arm.segments;
+        ctx.moveTo(p0.x, p0.y);
+        ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+      } else {
+        ctx.moveTo(p.x, p.y);
+        for (const seg of arm.segments) {
+          ctx.lineTo(seg.x, seg.y);
+        }
       }
       ctx.stroke();
 
       // Inner white high-frequency vibration core
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = isStriking ? 2.0 : 1.2;
-      ctx.globalAlpha = isStriking ? 1.0 : 0.85;
+      ctx.strokeStyle = isHighResonance ? '#ffffff' : '#f8fafc';
+      ctx.lineWidth = isStriking ? 2.2 : (isHighResonance ? 1.8 : 1.2);
+      ctx.globalAlpha = isStriking ? 1.0 : (isHighResonance ? 0.95 : 0.85);
       ctx.stroke();
 
-      // Sharp glowing tip with light flare & specific action graphics
+      // Tip with light flare & specialized action graphics
       if (arm.segments.length > 0) {
         const tip = arm.segments[arm.segments.length - 1];
-        const tipRadius = isStriking ? (isMariko ? 4.5 : 6.0) : (isMariko ? 3.0 : 4.0);
+        const tipRadius = isStriking ? (isMariko ? 4.8 : 6.5) : (isMariko ? 3.0 : 4.2);
 
         ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = vectorColor;
-        ctx.shadowBlur = isStriking ? 14 : 8;
+        ctx.shadowColor = isHighResonance ? '#38bdf8' : vectorColor;
+        ctx.shadowBlur = isStriking ? 16 : 8;
         ctx.beginPath();
         ctx.arc(tip.x, tip.y, tipRadius, 0, Math.PI * 2);
         ctx.fill();
 
-        // Extra dynamic visual effect for striking independent vectors
+        // Idle Deflector Vector ready indicator ring
+        if (!isStriking && arm.role === 'deflector') {
+          ctx.strokeStyle = '#c084fc';
+          ctx.lineWidth = 1.2;
+          ctx.globalAlpha = 0.6;
+          ctx.beginPath();
+          ctx.arc(tip.x, tip.y, tipRadius + 3.5, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Specialized strike action graphics
         if (isStriking) {
           if (arm.strikeType === 'pierce') {
-            // Needle thrust flare
+            // High-frequency needle thrust flare
             ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1.5;
+            ctx.lineWidth = 1.6;
             ctx.beginPath();
-            ctx.moveTo(tip.x - 8, tip.y);
-            ctx.lineTo(tip.x + 8, tip.y);
-            ctx.moveTo(tip.x, tip.y - 8);
-            ctx.lineTo(tip.x, tip.y + 8);
+            ctx.moveTo(tip.x - 10, tip.y);
+            ctx.lineTo(tip.x + 10, tip.y);
+            ctx.moveTo(tip.x, tip.y - 10);
+            ctx.lineTo(tip.x, tip.y + 10);
             ctx.stroke();
           } else if (arm.strikeType === 'slash') {
             // Crescent cutting blade arc
-            ctx.strokeStyle = vectorColor;
-            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = isHighResonance ? '#ffffff' : vectorColor;
+            ctx.lineWidth = 2.8;
             ctx.beginPath();
-            ctx.arc(tip.x, tip.y, tipRadius + 6, arm.currentAngle - 1.0, arm.currentAngle + 1.0);
+            ctx.arc(tip.x, tip.y, tipRadius + 7, arm.currentAngle - 1.1, arm.currentAngle + 1.1);
             ctx.stroke();
           } else if (arm.strikeType === 'deflect') {
-            // Deflection hex shield flash
+            // Hexagonal kinetic deflection shield flash
             ctx.strokeStyle = '#c084fc';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2.4;
+            ctx.beginPath();
+            for (let h = 0; h < 6; h++) {
+              const hAngle = (h * Math.PI) / 3;
+              const hx = tip.x + Math.cos(hAngle) * (tipRadius + 9);
+              const hy = tip.y + Math.sin(hAngle) * (tipRadius + 9);
+              if (h === 0) ctx.moveTo(hx, hy);
+              else ctx.lineTo(hx, hy);
+            }
+            ctx.closePath();
+            ctx.stroke();
+          } else if (arm.strikeType === 'fling') {
+            // Telekinetic vortex shockwave
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 2.2;
             ctx.beginPath();
             ctx.arc(tip.x, tip.y, tipRadius + 8, 0, Math.PI * 2);
             ctx.stroke();
@@ -2705,6 +2780,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
 
   // 10. Draw Floating Damage Numbers
   for (const dt of s.damageNumbers) {
+    if (!dt) continue;
     ctx.save();
     ctx.globalAlpha = dt.opacity;
     ctx.fillStyle = dt.color;

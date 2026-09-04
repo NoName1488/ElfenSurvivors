@@ -22,11 +22,15 @@ import {
   ArtilleryHazard,
   ActiveArchetype,
   WeaponEvolution,
+  PointOfInterest,
+  WeaponSetBonus,
+  WeaponTag,
 } from '../types';
 import { sound } from './sound';
-import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS } from '../data/gameData';
+import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG } from '../data/gameData';
 import { PSYCHIC_MUTATION_TREES, PsychicMutationNode } from '../data/psychicMutationsData';
 import { getLanguage } from './i18n';
+import { getAppliedMetaStats, recordRunCompleted, checkAchievements } from './metaProgression';
 
 export interface GameEngineState {
   player: {
@@ -129,27 +133,28 @@ export interface GameEngineState {
 
   // Catalytic Weapon Evolution System
   evolvedWeapons: string[];
-  recentEvolutionPopup: {
-    name: string;
-    russianName: string;
-    description: string;
-    russianDescription: string;
-    powerSpike: string;
-    russianPowerSpike: string;
-    color: string;
-    icon: string;
-    timer: number;
-  } | null;
+  recentEvolutionPopup: (WeaponEvolution & { timer: number }) | null;
+
+  // Seamless Map Exploration & Tactical POIs (2.Б.1)
+  pointsOfInterest: PointOfInterest[];
+  activeWeaponSets: WeaponSetBonus[];
+  cameraX: number;
+  cameraY: number;
+  viewportWidth: number;
+  viewportHeight: number;
 }
 
 export class GameEngine {
   public state: GameEngineState;
+  public readonly WORLD_WIDTH = 2600;
+  public readonly WORLD_HEIGHT = 2200;
   private weaponCooldowns: Map<string, number> = new Map();
   private lastEnemySpawn: number = 0;
   private enemyIdCounter: number = 0;
   private projectileIdCounter: number = 0;
   private dnaIdCounter: number = 0;
   private dmgNumIdCounter: number = 0;
+  private poiIdCounter: number = 0;
   private keysDown: Set<string> = new Set();
   private virtualJoystick: { active: boolean; dx: number; dy: number } = { active: false, dx: 0, dy: 0 };
   private nyuRepulseTimer: number = 0;
@@ -161,18 +166,20 @@ export class GameEngine {
 
   constructor(character: Character, starterWeapon: Weapon, width: number = 1000, height: number = 700) {
     const baseStats = { ...character.baseStats };
+    const metaStats = getAppliedMetaStats();
+    const startDna = 40 + (metaStats.startingDna || 0);
 
     this.state = {
       player: {
-        x: width / 2,
-        y: height / 2,
+        x: this.WORLD_WIDTH / 2,
+        y: this.WORLD_HEIGHT / 2,
         radius: 18,
-        hp: baseStats.maxHp,
-        maxHp: baseStats.maxHp,
+        hp: baseStats.maxHp + (metaStats.stats.maxHp || 0),
+        maxHp: baseStats.maxHp + (metaStats.stats.maxHp || 0),
         level: 1,
         currentXp: 0,
         xpToNextLevel: 45, // Rebalanced initial XP curve
-        dna: 40,
+        dna: startDna,
         specialCooldownTimer: 0,
         specialActiveTimer: 0,
         invincibleTimer: 0,
@@ -233,8 +240,14 @@ export class GameEngine {
       damageDealt: 0,
       shakeTimer: 0,
       shakeIntensity: 0,
-      arenaWidth: width,
-      arenaHeight: height,
+      arenaWidth: this.WORLD_WIDTH,
+      arenaHeight: this.WORLD_HEIGHT,
+      viewportWidth: width,
+      viewportHeight: height,
+      cameraX: 0,
+      cameraY: 0,
+      pointsOfInterest: [],
+      activeWeaponSets: [],
       killStreak: 0,
       killStreakTimer: 0,
       maxKillStreak: 0,
@@ -266,8 +279,20 @@ export class GameEngine {
   }
 
   public setDimensions(width: number, height: number) {
-    this.state.arenaWidth = width;
-    this.state.arenaHeight = height;
+    this.state.viewportWidth = width;
+    this.state.viewportHeight = height;
+    this.state.arenaWidth = this.WORLD_WIDTH;
+    this.state.arenaHeight = this.WORLD_HEIGHT;
+  }
+
+  public updateCamera() {
+    const targetCamX = this.state.player.x - this.state.viewportWidth / 2;
+    const targetCamY = this.state.player.y - this.state.viewportHeight / 2;
+    const maxCamX = Math.max(0, this.state.arenaWidth - this.state.viewportWidth);
+    const maxCamY = Math.max(0, this.state.arenaHeight - this.state.viewportHeight);
+
+    this.state.cameraX += (Math.max(0, Math.min(maxCamX, targetCamX)) - this.state.cameraX) * 0.15;
+    this.state.cameraY += (Math.max(0, Math.min(maxCamY, targetCamY)) - this.state.cameraY) * 0.15;
   }
 
   public getArenaForWave(wave: number): ArenaType {
@@ -480,7 +505,8 @@ export class GameEngine {
               y: this.state.player.y,
               vx: Math.cos(angle) * (180 + Math.random() * 80),
               vy: Math.sin(angle) * (180 + Math.random() * 80),
-              radius: 4 + Math.random() * 3,
+              size: 4 + Math.random() * 3,
+              alpha: 1,
               color: match.color,
               life: 1.2,
               maxLife: 1.2,
@@ -499,6 +525,14 @@ export class GameEngine {
 
   public recalculateStats() {
     const stats = { ...this.state.character.baseStats };
+
+    // -1. Apply Permanent Meta-Progression Stats (Capped Soft Buffer 2.Е.1)
+    const metaStats = getAppliedMetaStats();
+    for (const [key, value] of Object.entries(metaStats)) {
+      if (value !== undefined && typeof value === 'number' && key !== 'startingDna') {
+        (stats as any)[key] = ((stats as any)[key] || 0) + value;
+      }
+    }
 
     // 0. Apply Level-up chosen stat upgrades
     if (this.state.baseStatBonuses) {
@@ -695,6 +729,71 @@ export class GameEngine {
     this.state.activeArchetypes = archetypes;
     this.state.activeSynergies = activeSyns;
 
+    // 4.5 Weapon Set Tag Synergies (Brotato Class/Faction Sets 2.В.1)
+    const tagCounts: Record<WeaponTag, number> = {
+      vector: 0,
+      firearm: 0,
+      heavy: 0,
+      precise: 0,
+      psychic: 0,
+    };
+
+    for (const w of this.state.weapons) {
+      if (w.tags) {
+        for (const tag of w.tags) {
+          if (tagCounts[tag] !== undefined) {
+            tagCounts[tag]++;
+          }
+        }
+      }
+    }
+
+    const activeWeaponSets: WeaponSetBonus[] = [];
+    for (const [tagStr, cfg] of Object.entries(WEAPON_SET_BONUSES_CONFIG)) {
+      const tag = tagStr as WeaponTag;
+      const count = tagCounts[tag] || 0;
+      const thresholds = cfg.tiers.map((tier) => ({
+        count: tier.count,
+        bonusDesc: tier.bonusDesc,
+        bonusDescRu: tier.bonusDescRu,
+        active: count >= tier.count,
+      }));
+
+      activeWeaponSets.push({
+        tag,
+        name: cfg.name,
+        russianName: cfg.russianName,
+        count,
+        thresholds,
+      });
+
+      // Apply stat bonuses for all active tiers
+      for (const tier of cfg.tiers) {
+        if (count >= tier.count) {
+          for (const [sKey, sVal] of Object.entries(tier.statBonus)) {
+            if (sVal !== undefined) {
+              (stats as any)[sKey] = ((stats as any)[sKey] || 0) + sVal;
+            }
+          }
+        }
+      }
+    }
+    this.state.activeWeaponSets = activeWeaponSets;
+
+    // 5. Radical Dualism & Polar Character Constraints (2.Д)
+    if (this.state.character.id === 'lucy') {
+      // Zero Harvest Anomaly: Cannot invest in DNA harvest
+      stats.dnaHarvest = 0;
+    } else if (this.state.character.id === 'bando') {
+      // Pure Human Cyborg Anomaly: Strictly 0 biological vectors, 0% dodge
+      stats.vectorCount = 0;
+      stats.dodge = 0;
+    } else if (this.state.character.id === 'mariko') {
+      // 26 Vectors Anomaly: Frailty cap on Max HP
+      stats.vectorCount = 26;
+      stats.maxHp = Math.min(85, stats.maxHp);
+    }
+
     // Minimum constraints
     stats.maxHp = Math.max(20, stats.maxHp);
     stats.moveSpeed = Math.max(120, stats.moveSpeed);
@@ -741,6 +840,15 @@ export class GameEngine {
 
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2;
+      let role: 'assault' | 'deflector' | 'flinger' = 'assault';
+      if (count >= 3) {
+        if (i === 0 || (count >= 16 && i < 4)) {
+          role = 'deflector';
+        } else if (i === 1 || (count >= 16 && i < 8)) {
+          role = 'flinger';
+        }
+      }
+
       this.state.vectorArms.push({
         id: i + 1,
         baseAngle: angle,
@@ -748,14 +856,17 @@ export class GameEngine {
         length: baseLength,
         segments: [
           { x: 0, y: 0 },
-          { x: Math.cos(angle) * (baseLength * 0.5), y: Math.sin(angle) * (baseLength * 0.5) },
+          { x: Math.cos(angle) * (baseLength * 0.33), y: Math.sin(angle) * (baseLength * 0.33) },
+          { x: Math.cos(angle) * (baseLength * 0.66), y: Math.sin(angle) * (baseLength * 0.66) },
           { x: Math.cos(angle) * baseLength, y: Math.sin(angle) * baseLength },
         ],
         striking: false,
         strikeProgress: 0,
         slashing: false,
         attackCooldown: (i / count) * 0.35, // Staggered initial cadence for flowing combat rhythm
-        strikeType: i % 2 === 0 ? 'slash' : 'pierce',
+        strikeType: role === 'deflector' ? 'deflect' : (i % 2 === 0 ? 'slash' : 'pierce'),
+        role,
+        vibrationHz: 250,
       });
     }
   }
@@ -801,10 +912,213 @@ export class GameEngine {
     this.lastEnemySpawn = 0;
     this.tacticalAmbushTimer = 12 + Math.random() * 4;
     this.recalculateStats();
+    this.spawnPointsOfInterest();
 
     // Revert back to authentic character theme at wave start
     sound.endBossBattle();
     sound.setCharacter(this.state.character.id);
+  }
+
+  public spawnPointsOfInterest() {
+    this.state.pointsOfInterest = [];
+    const numCaches = 4 + Math.floor(Math.random() * 3); // 4-6 supply caches
+    const numPods = 2 + Math.floor(Math.random() * 2); // 2-3 DNA incubation pods
+    const numBeacons = 2; // 2 kinetic beacons
+
+    // 1. SAT Supply Caches (Breakable for massive DNA drop)
+    for (let i = 0; i < numCaches; i++) {
+      const x = 180 + Math.random() * (this.state.arenaWidth - 360);
+      const y = 180 + Math.random() * (this.state.arenaHeight - 360);
+      this.state.pointsOfInterest.push({
+        id: ++this.poiIdCounter,
+        x,
+        y,
+        radius: 26,
+        type: 'sat_supply_cache',
+        name: 'SAT Supply Cache',
+        russianName: 'Ящик снабжения SAT',
+        hp: 35,
+        maxHp: 35,
+        isActivated: false,
+        isDestroyed: false,
+        captureProgress: 0,
+        rewardClaimed: false,
+        color: '#f59e0b',
+        lootType: 'dna',
+      });
+    }
+
+    // 2. Diclonius DNA Incubation Pods (Breakable for DNA + Surge Level boost)
+    for (let i = 0; i < numPods; i++) {
+      const x = 240 + Math.random() * (this.state.arenaWidth - 480);
+      const y = 240 + Math.random() * (this.state.arenaHeight - 480);
+      this.state.pointsOfInterest.push({
+        id: ++this.poiIdCounter,
+        x,
+        y,
+        radius: 34,
+        type: 'dna_pod',
+        name: 'Diclonius Incubation Pod',
+        russianName: 'Био-инкубатор Диклониуса',
+        hp: 70,
+        maxHp: 70,
+        isActivated: false,
+        isDestroyed: false,
+        captureProgress: 0,
+        rewardClaimed: false,
+        color: '#10b981',
+        lootType: 'buff',
+      });
+    }
+
+    // 3. Kinetic Relay Terminals (Capturable territory for instant full heal + guard recharge)
+    for (let i = 0; i < numBeacons; i++) {
+      const x = 320 + Math.random() * (this.state.arenaWidth - 640);
+      const y = 320 + Math.random() * (this.state.arenaHeight - 640);
+      this.state.pointsOfInterest.push({
+        id: ++this.poiIdCounter,
+        x,
+        y,
+        radius: 46,
+        type: 'kinetic_beacon',
+        name: 'Kinetic Relay Terminal',
+        russianName: 'Кинетический ретранслятор',
+        hp: 1,
+        maxHp: 1,
+        isActivated: false,
+        isDestroyed: false,
+        captureProgress: 0,
+        rewardClaimed: false,
+        color: '#06b6d4',
+        lootType: 'heal',
+      });
+    }
+  }
+
+  public updatePointsOfInterest(dt: number) {
+    const pX = this.state.player.x;
+    const pY = this.state.player.y;
+
+    for (let i = this.state.pointsOfInterest.length - 1; i >= 0; i--) {
+      const poi = this.state.pointsOfInterest[i];
+      if (poi.isDestroyed || poi.rewardClaimed) continue;
+
+      const dist = Math.hypot(pX - poi.x, pY - poi.y);
+
+      // Kinetic Relay Beacon: Capturable by standing inside its beacon radius
+      if (poi.type === 'kinetic_beacon') {
+        if (dist <= poi.radius + this.state.player.radius) {
+          poi.captureProgress = Math.min(100, poi.captureProgress + dt * 45);
+          if (poi.captureProgress >= 100 && !poi.isActivated) {
+            poi.isActivated = true;
+            poi.rewardClaimed = true;
+            this.claimPOIReward(poi);
+          }
+        } else if (poi.captureProgress > 0 && !poi.isActivated) {
+          poi.captureProgress = Math.max(0, poi.captureProgress - dt * 18);
+        }
+      }
+    }
+  }
+
+  public damagePOI(poi: PointOfInterest, dmg: number) {
+    if (poi.isDestroyed || poi.rewardClaimed) return;
+    poi.hp -= dmg;
+
+    // Visual damage feedback
+    for (let k = 0; k < 4; k++) {
+      this.state.particles.push({
+        x: poi.x + (Math.random() - 0.5) * poi.radius,
+        y: poi.y + (Math.random() - 0.5) * poi.radius,
+        vx: (Math.random() - 0.5) * 90,
+        vy: (Math.random() - 0.5) * 90,
+        size: 3,
+        alpha: 0.9,
+        color: poi.color,
+        life: 0.4,
+        maxLife: 0.4,
+        type: 'spark',
+      });
+    }
+
+    if (poi.hp <= 0) {
+      this.destroyPOI(poi);
+    }
+  }
+
+  public destroyPOI(poi: PointOfInterest) {
+    poi.isDestroyed = true;
+    poi.rewardClaimed = true;
+    this.claimPOIReward(poi);
+  }
+
+  private claimPOIReward(poi: PointOfInterest) {
+    sound.playLevelUp();
+    this.triggerScreenShake(8, 0.4);
+
+    // Blast particles
+    for (let k = 0; k < 24; k++) {
+      const angle = (Math.PI * 2 * k) / 24;
+      this.state.particles.push({
+        x: poi.x,
+        y: poi.y,
+        vx: Math.cos(angle) * (130 + Math.random() * 90),
+        vy: Math.sin(angle) * (130 + Math.random() * 90),
+        size: 4 + Math.random() * 3,
+        alpha: 1,
+        color: poi.color,
+        life: 0.8,
+        maxLife: 0.8,
+        type: 'spark',
+      });
+    }
+
+    if (poi.lootType === 'dna' || poi.type === 'sat_supply_cache') {
+      const count = 6 + Math.floor(Math.random() * 4);
+      for (let k = 0; k < count; k++) {
+        const offsetAng = Math.random() * Math.PI * 2;
+        const offsetDist = 15 + Math.random() * 35;
+        this.state.dnaDrops.push({
+          id: ++this.dnaIdCounter,
+          x: poi.x + Math.cos(offsetAng) * offsetDist,
+          y: poi.y + Math.sin(offsetAng) * offsetDist,
+          value: 12 + Math.floor(Math.random() * 8),
+          magnetized: false,
+          color: '#f59e0b',
+          size: 7,
+        });
+      }
+    } else if (poi.lootType === 'heal' || poi.type === 'kinetic_beacon') {
+      this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 35);
+      this.state.player.vectorGuard = this.state.player.maxVectorGuard;
+      this.state.damageNumbers.push({
+        id: ++this.dmgNumIdCounter,
+        x: this.state.player.x,
+        y: this.state.player.y - 20,
+        text: '+35 HP / ПОЛНЫЙ БАРЬЕР',
+        color: '#10b981',
+        opacity: 1,
+        vy: -30,
+        isCrit: false,
+      });
+    } else if (poi.lootType === 'buff' || poi.type === 'dna_pod') {
+      // Big DNA burst + surge trigger
+      this.state.player.dna += 50;
+      this.state.totalDnaCollected += 50;
+      this.state.surgeLevel = Math.min(3, this.state.surgeLevel + 1);
+      this.state.killStreak += 12;
+      this.state.killStreakTimer = 10;
+      this.state.damageNumbers.push({
+        id: ++this.dmgNumIdCounter,
+        x: poi.x,
+        y: poi.y - 20,
+        text: '+50 ДНК & СИНГУЛЯРНЫЙ РАЗРЫВ!',
+        color: '#a855f7',
+        opacity: 1,
+        vy: -35,
+        isCrit: false,
+      });
+    }
   }
 
   public resetInput() {
@@ -859,20 +1173,48 @@ export class GameEngine {
           }
         });
         // Clear enemy projectiles
-        this.state.projectiles = this.state.projectiles.filter((p) => p.isPlayer);
+        this.clearEnemyProjectiles();
       } else if (this.state.character.id === 'nyu') {
-        // Nyu: Psychic Nova + Awakening Lucy mode
+        // Nyu: Psychic Nova + Instant Lucy Awakening Mode
         sound.playSpecialAbility();
+        this.triggerScreenShake(14, 0.45);
         this.state.characterResource.current = 100;
         this.state.characterResource.isActive = true;
+        this.state.characterResource.name = 'ПРОБУЖДЕНИЕ ЛЮСИ (БЕРСЕРК +60%)';
+        this.state.player.specialActiveTimer = 8.0;
+
+        // Big Repulsion Nova + DNA vacuum
+        this.state.particles.push({
+          x: this.state.player.x,
+          y: this.state.player.y,
+          vx: 0,
+          vy: 0,
+          life: 0.6,
+          maxLife: 0.6,
+          size: 260,
+          color: '#ef4444',
+          alpha: 1.0,
+          type: 'psychic_ring',
+        });
 
         this.state.enemies.forEach((e) => {
           const angle = Math.atan2(e.y - this.state.player.y, e.x - this.state.player.x);
-          e.x += Math.cos(angle) * 220;
-          e.y += Math.sin(angle) * 220;
-          this.damageEnemy(e, 80, false);
+          e.x += Math.cos(angle) * 240;
+          e.y += Math.sin(angle) * 240;
+          this.damageEnemy(e, 110 * (1 + this.state.stats.psiPower / 100), true);
         });
         this.state.dnaDrops.forEach((d) => (d.magnetized = true));
+
+        this.state.damageNumbers.push({
+          id: Math.random(),
+          x: this.state.player.x,
+          y: this.state.player.y - 35,
+          text: 'ПРОБУЖДЕНИЕ ЛЮСИ!',
+          color: '#ef4444',
+          opacity: 1,
+          vy: -40,
+          isCrit: true,
+        });
       } else if (this.state.character.id === 'nana') {
         // Nana: Absolute Vector Dome + 35 HP heal
         sound.playSpecialAbility();
@@ -1222,7 +1564,7 @@ export class GameEngine {
             this.state.isWaveEnding = true;
             this.state.waveEndingTimer = 2.4;
             sound.playWaveComplete();
-            this.state.projectiles = this.state.projectiles.filter((p) => p.isPlayer);
+            this.clearEnemyProjectiles();
           }
         } else {
           // Boss was already spawned in this wave: check if all bosses have been defeated
@@ -1231,15 +1573,16 @@ export class GameEngine {
             this.state.isWaveEnding = true;
             this.state.waveEndingTimer = 2.8;
             sound.playWaveComplete();
-            this.state.projectiles = this.state.projectiles.filter((p) => p.isPlayer);
+            this.clearEnemyProjectiles();
             this.state.dnaDrops.forEach((d) => (d.magnetized = true));
           }
         }
       }
     }
 
-    // HP Regen
-    if (this.state.stats.hpRegen > 0 && this.state.player.hp < this.state.player.maxHp) {
+    // HP Regen (disabled for Nyu during Awakened Lucy frenzy)
+    const isNyuAwakened = this.state.character.id === 'nyu' && this.state.characterResource.isActive;
+    if (!isNyuAwakened && this.state.stats.hpRegen > 0 && this.state.player.hp < this.state.player.maxHp) {
       this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + (this.state.stats.hpRegen / 5) * dt);
     }
 
@@ -1302,10 +1645,12 @@ export class GameEngine {
     this.updateEnemySpawning(dt);
     this.updateDropships(dt);
     this.updateArtilleryHazards(dt);
+    this.updatePointsOfInterest(dt);
     this.updateEnemies(dt);
     this.updateProjectiles(dt);
     this.updateDnaDrops(dt);
     this.updateEffects(dt);
+    this.updateCamera();
   }
 
   private updateCharacterMechanics(dt: number) {
@@ -1341,13 +1686,13 @@ export class GameEngine {
       }
     }
 
-    // 3. NYU: Innocent Repulse & Surge Mode
+    // 3. NYU: Innocent Repulse & Surge Mode (Dual Psyche)
     if (this.state.character.id === 'nyu') {
       this.nyuRepulseTimer += dt;
-      if (this.nyuRepulseTimer >= 4.0) {
+      if (this.nyuRepulseTimer >= 3.5) {
         this.nyuRepulseTimer = 0;
         // Check if enemies are close
-        const closeEnemies = this.state.enemies.filter((e) => Math.hypot(e.x - pX, e.y - pY) < 140);
+        const closeEnemies = this.state.enemies.filter((e) => Math.hypot(e.x - pX, e.y - pY) < 160);
         if (closeEnemies.length > 0) {
           sound.playSpecialAbility();
           this.state.particles.push({
@@ -1355,28 +1700,98 @@ export class GameEngine {
             y: pY,
             vx: 0,
             vy: 0,
-            life: 0.4,
-            maxLife: 0.4,
-            size: 140,
-            color: '#f472b6',
-            alpha: 0.9,
+            life: 0.45,
+            maxLife: 0.45,
+            size: 160,
+            color: this.state.characterResource.isActive ? '#ef4444' : '#f472b6',
+            alpha: 0.95,
             type: 'psychic_ring',
           });
           closeEnemies.forEach((e) => {
             const angle = Math.atan2(e.y - pY, e.x - pX);
-            e.x += Math.cos(angle) * 60;
-            e.y += Math.sin(angle) * 60;
-            this.damageEnemy(e, 35);
+            e.x += Math.cos(angle) * 80;
+            e.y += Math.sin(angle) * 80;
+            this.damageEnemy(e, 45 * (1 + this.state.stats.psiPower / 100));
+          });
+          // Also magnetize nearby DNA drops
+          this.state.dnaDrops.forEach((d) => {
+            if (Math.hypot(d.x - pX, d.y - pY) < 220) d.magnetized = true;
           });
         }
       }
-      // Low HP awakening
-      if (this.state.player.hp < this.state.player.maxHp * 0.4) {
+
+      // Low HP awakening (< 40% HP) vs Peaceful State (> 45% HP)
+      const isCriticalHp = this.state.player.hp <= this.state.player.maxHp * 0.4;
+      const isSpecialActive = this.state.player.specialActiveTimer > 0;
+      const shouldAwaken = isCriticalHp || isSpecialActive;
+
+      if (shouldAwaken && !this.state.characterResource.isActive) {
+        // Trigger Awakening Transition: tear ribbon, flash red
         this.state.characterResource.isActive = true;
         this.state.characterResource.current = 100;
-      } else if (this.state.player.specialActiveTimer <= 0) {
+        this.state.characterResource.name = 'ПРОБУЖДЕНИЕ ЛЮСИ (БЕРСЕРК +60%)';
+        sound.playBossShockwave();
+        this.triggerScreenShake(10, 0.35);
+
+        // White ribbon burst particles
+        for (let i = 0; i < 8; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const spd = 60 + Math.random() * 80;
+          this.state.particles.push({
+            x: pX,
+            y: pY,
+            vx: Math.cos(angle) * spd,
+            vy: Math.sin(angle) * spd,
+            life: 0.5,
+            maxLife: 0.5,
+            size: 6,
+            color: '#f8fafc',
+            alpha: 1.0,
+            type: 'spark',
+          });
+        }
+
+        this.state.damageNumbers.push({
+          id: Math.random(),
+          x: pX,
+          y: pY - 30,
+          text: 'ПРОБУЖДЕНИЕ ЛЮСИ!',
+          color: '#ef4444',
+          opacity: 1,
+          vy: -35,
+          isCrit: true,
+        });
+      } else if (!shouldAwaken && this.state.characterResource.isActive && this.state.player.hp > this.state.player.maxHp * 0.45) {
+        // Return to Peaceful Innocent Nyu
         this.state.characterResource.isActive = false;
         this.state.characterResource.current = 0;
+        this.state.characterResource.name = 'НЮ: НЕВИННОСТЬ (ДНК ЛЕЧИТ)';
+        sound.playLevelUp();
+
+        // Soft pink restoration circle
+        this.state.particles.push({
+          x: pX,
+          y: pY,
+          vx: 0,
+          vy: 0,
+          life: 0.5,
+          maxLife: 0.5,
+          size: 100,
+          color: '#f472b6',
+          alpha: 0.8,
+          type: 'psychic_ring',
+        });
+
+        this.state.damageNumbers.push({
+          id: Math.random(),
+          x: pX,
+          y: pY - 30,
+          text: 'НЮ (МИРНЫЙ РЕЖИМ)',
+          color: '#f472b6',
+          opacity: 1,
+          vy: -30,
+          isCrit: false,
+        });
       }
     }
 
@@ -1384,6 +1799,7 @@ export class GameEngine {
     if (this.state.character.id === 'nana') {
       const reflectRadius = 140 * (1 + this.state.stats.vectorReach / 100);
       for (const p of this.state.projectiles) {
+        if (!p) continue;
         if (!p.isPlayer && Math.hypot(p.x - pX, p.y - pY) < reflectRadius) {
           p.isPlayer = true;
           p.isDeflected = true;
@@ -1507,6 +1923,9 @@ export class GameEngine {
     } else if (this.state.character.id === 'mariko' && this.state.characterResource.isActive) {
       // Overheat slows Mariko's motorized suspension
       speed *= 0.7;
+    } else if (this.state.character.id === 'nyu' && this.state.characterResource.isActive) {
+      // Awakened Lucy mode: +20% sprint speed
+      speed *= 1.2;
     }
 
     // Crisis Adrenaline Rush (Near-death survival clutch)
@@ -1567,6 +1986,12 @@ export class GameEngine {
       arm.length = baseReach;
       arm.attackCooldown -= dt;
 
+      // Vibration frequency dynamics
+      if (arm.vibrationHz === undefined) arm.vibrationHz = 250;
+      if (!arm.striking) {
+        arm.vibrationHz = Math.max(250, arm.vibrationHz - dt * 160);
+      }
+
       if (arm.clashing && arm.clashTimer !== undefined) {
         arm.clashTimer -= dt;
         if (arm.clashTimer <= 0) {
@@ -1576,13 +2001,81 @@ export class GameEngine {
 
       // 1. Advance strike animation
       if (arm.striking && arm.targetX !== undefined && arm.targetY !== undefined) {
-        const strikeSpeed = (arm.strikeType === 'pierce' ? 7.5 : 6.0) * atkSpeedMod;
+        const strikeSpeed = (arm.strikeType === 'pierce' ? 7.5 : arm.strikeType === 'fling' ? 8.5 : 6.0) * atkSpeedMod;
         arm.strikeProgress += dt * strikeSpeed;
 
         if (arm.strikeProgress >= 1) {
           arm.striking = false;
           arm.strikeProgress = 0;
           arm.targetEnemyId = undefined;
+        }
+      }
+
+      // 2. High-Priority Autonomous Bullet & Rocket Deflection (Kinetic Intercept)
+      if (!arm.striking && arm.attackCooldown <= 0.1) {
+        const isDeflectorRole = arm.role === 'deflector';
+        const deflectReachBonus = (this.hasMutation('nana_auto_deflect') ? 1.4 : 1.0) * (isDeflectorRole ? 1.2 : 1.0);
+        for (const proj of this.state.projectiles) {
+          if (!proj) continue;
+          if (!proj.isPlayer && !proj.isDeflected) {
+            const pDist = Math.hypot(proj.x - pX, proj.y - pY);
+            if (pDist <= baseReach * 0.95 * deflectReachBonus) {
+              const projAngle = Math.atan2(proj.y - pY, proj.x - pX);
+              let angleDiff = Math.abs(arm.baseAngle - projAngle);
+              if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+
+              // Deflectors guard a wider arc (up to 120° around their base angle)
+              const maxDeflectAngle = Math.PI * (isDeflectorRole ? 0.65 : 0.4) * deflectReachBonus;
+              if (angleDiff < maxDeflectAngle) {
+                // Intercept & deflect bullet with vector tip!
+                proj.isPlayer = true;
+                proj.isDeflected = true;
+                arm.vibrationHz = Math.min(1000, arm.vibrationHz + 120);
+
+                // Auto-target nearest hostile soldier or dropship
+                let bestTargetAngle = Math.atan2(-proj.vy, -proj.vx);
+                if (nearbyEnemies.length > 0) {
+                  const closest = nearbyEnemies[0];
+                  bestTargetAngle = Math.atan2(closest.y - proj.y, closest.x - proj.x);
+                }
+
+                const baseProjSpeed = Math.hypot(proj.vx, proj.vy);
+                const deflectedSpeed = Math.max(550, baseProjSpeed * 1.8);
+                proj.vx = Math.cos(bestTargetAngle) * deflectedSpeed;
+                proj.vy = Math.sin(bestTargetAngle) * deflectedSpeed;
+                proj.damage = Math.round((45 + this.state.stats.psiPower * 0.85) * psiMultiplier);
+                proj.penetration = 3;
+
+                // Nana Kinetic Battery Heal
+                if (this.hasMutation('nana_kinetic_battery')) {
+                  this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 3);
+                }
+
+                proj.color = '#c084fc';
+                sound.playDeflection();
+                this.spawnVectorClash(proj.x, proj.y, bestTargetAngle, '#c084fc');
+
+                this.state.damageNumbers.push({
+                  id: ++this.dmgNumIdCounter,
+                  x: proj.x,
+                  y: proj.y - 12,
+                  text: getLanguage() === 'ru' ? 'ОТРАЖЕНИЕ!' : 'DEFLECTED!',
+                  color: '#c084fc',
+                  opacity: 1,
+                  isCrit: false,
+                  vy: -40,
+                });
+
+                arm.striking = true;
+                arm.strikeProgress = 0;
+                arm.targetX = proj.x;
+                arm.targetY = proj.y;
+                arm.strikeType = 'deflect';
+                arm.attackCooldown = (0.25 / atkSpeedMod);
+                break;
+              }
+            }
+          }
         }
       }
 
@@ -1863,6 +2356,36 @@ export class GameEngine {
             this.damageEnemy(bestTarget, bonusDmg, isCrit || (bestTarget.isBoss && bestTarget.isStunned));
             sound.playVectorSlash();
             this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
+
+            // Vibration resonance increase & armor shred
+            arm.vibrationHz = Math.min(1000, (arm.vibrationHz || 250) + 75);
+            if (arm.vibrationHz >= 750) {
+              const resonanceBonus = Math.round(finalDmg * 0.45);
+              this.damageEnemy(bestTarget, resonanceBonus, true);
+            }
+
+            // Telekinetic Fling: Hurling slain enemy corpse or kinetic blast through enemy ranks
+            const canFling = arm.role === 'flinger' || (bestTarget.hp <= 0 && Math.random() < 0.4);
+            if (canFling) {
+              arm.strikeType = 'fling';
+              const flingAngle = strikeAngle + (Math.random() - 0.5) * 0.15;
+              this.state.projectiles.push({
+                id: ++this.projectileIdCounter,
+                x: bestTarget.x,
+                y: bestTarget.y,
+                vx: Math.cos(flingAngle) * 820,
+                vy: Math.sin(flingAngle) * 820,
+                damage: Math.round((48 + this.state.stats.psiPower * 0.85) * psiMultiplier),
+                radius: 8,
+                color: this.state.character.id === 'lucy' ? '#ef4444' : '#38bdf8',
+                life: 0.75,
+                maxLife: 0.75,
+                penetration: 4,
+                isPlayer: true,
+                isBullet: false,
+              });
+              this.triggerScreenShake(3, 0.1);
+            }
           }
 
           // Special Mutation: Lucy Relativistic Double-Rend
@@ -2003,58 +2526,7 @@ export class GameEngine {
         }
       }
 
-      // 3. Autonomous Bullet Deflection by Idle Vectors
-      if (!arm.striking && arm.attackCooldown <= 0.1) {
-        const deflectReachBonus = this.hasMutation('nana_auto_deflect') ? 1.4 : 1.0;
-        for (const proj of this.state.projectiles) {
-          if (!proj.isPlayer && !proj.isDeflected) {
-            const pDist = Math.hypot(proj.x - pX, proj.y - pY);
-            if (pDist <= baseReach * 0.85 * deflectReachBonus) {
-              const projAngle = Math.atan2(proj.y - pY, proj.x - pX);
-              let angleDiff = Math.abs(arm.baseAngle - projAngle);
-              if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
-
-              if (angleDiff < Math.PI * 0.35 * deflectReachBonus) {
-                // Intercept & deflect bullet with vector tip!
-                proj.isPlayer = true;
-                proj.isDeflected = true;
-
-                // Nana Homing Deflection Mutation
-                if (this.hasMutation('nana_homing_deflect') && nearbyEnemies.length > 0) {
-                  const target = nearbyEnemies[0];
-                  const homingAngle = Math.atan2(target.y - proj.y, target.x - proj.x);
-                  const speed = Math.hypot(proj.vx, proj.vy) * 1.8;
-                  proj.vx = Math.cos(homingAngle) * speed;
-                  proj.vy = Math.sin(homingAngle) * speed;
-                  proj.damage = 60 * psiMultiplier;
-                } else {
-                  proj.vx = -proj.vx * 1.6;
-                  proj.vy = -proj.vy * 1.6;
-                  proj.damage = 35 * psiMultiplier;
-                }
-
-                // Nana Kinetic Battery Heal
-                if (this.hasMutation('nana_kinetic_battery')) {
-                  this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 3);
-                }
-
-                proj.color = '#c084fc';
-                sound.playDeflection();
-
-                arm.striking = true;
-                arm.strikeProgress = 0;
-                arm.targetX = proj.x;
-                arm.targetY = proj.y;
-                arm.strikeType = 'deflect';
-                arm.attackCooldown = 0.3 / atkSpeedMod;
-                break;
-              }
-            }
-          }
-        }
-      }
-
-      // 4. Smooth Kinematic Target Angle & Wave
+      // 3. Smooth Kinematic Target Angle & Wave Dynamics
       const idleWave = Math.sin(time + i * 1.5) * 0.25;
       let targetAngle = arm.baseAngle + idleWave;
       if (arm.striking && arm.targetX !== undefined && arm.targetY !== undefined) {
@@ -2064,22 +2536,30 @@ export class GameEngine {
       arm.currentAngle += (targetAngle - arm.currentAngle) * (dt * 12);
 
       const angle = arm.currentAngle;
-      const segLen = arm.length / 2;
+      const armLen = arm.length;
+      const vibIntensity = Math.max(0, ((arm.vibrationHz || 250) - 250) / 750);
+      const vibMicro = vibIntensity * Math.sin(time * 70 + i * 3) * 3.5;
 
+      // 4-Node Kinematic Chain (Root -> Shoulder -> Elbow -> Blade Tip)
       arm.segments[0] = { x: pX, y: pY };
       arm.segments[1] = {
-        x: pX + Math.cos(angle + Math.sin(time * 2 + i) * 0.2) * segLen,
-        y: pY + Math.sin(angle + Math.sin(time * 2 + i) * 0.2) * segLen,
+        x: pX + Math.cos(angle + Math.sin(time * 2.2 + i) * 0.12) * (armLen * 0.33),
+        y: pY + Math.sin(angle + Math.sin(time * 2.2 + i) * 0.12) * (armLen * 0.33),
+      };
+      arm.segments[2] = {
+        x: pX + Math.cos(angle + Math.sin(time * 3.5 + i * 1.6) * 0.22) * (armLen * 0.66) + vibMicro * 0.5,
+        y: pY + Math.sin(angle + Math.sin(time * 3.5 + i * 1.6) * 0.22) * (armLen * 0.66) + vibMicro * 0.5,
       };
 
       if (arm.striking && arm.targetX !== undefined && arm.targetY !== undefined) {
-        const strikeX = pX + (arm.targetX - pX) * Math.sin(arm.strikeProgress * Math.PI);
-        const strikeY = pY + (arm.targetY - pY) * Math.sin(arm.strikeProgress * Math.PI);
-        arm.segments[2] = { x: strikeX, y: strikeY };
+        const strikeEase = Math.sin(arm.strikeProgress * Math.PI);
+        const strikeX = pX + (arm.targetX - pX) * strikeEase;
+        const strikeY = pY + (arm.targetY - pY) * strikeEase;
+        arm.segments[3] = { x: strikeX + vibMicro, y: strikeY + vibMicro };
       } else {
-        arm.segments[2] = {
-          x: pX + Math.cos(angle) * arm.length,
-          y: pY + Math.sin(angle) * arm.length,
+        arm.segments[3] = {
+          x: pX + Math.cos(angle) * armLen + vibMicro,
+          y: pY + Math.sin(angle) * armLen + vibMicro,
         };
       }
     });
@@ -2620,7 +3100,8 @@ export class GameEngine {
             y: pY,
             vx: Math.cos(ang) * 220,
             vy: Math.sin(ang) * 220,
-            radius: 4,
+            size: 4,
+            alpha: 1,
             color: '#ef4444',
             life: 0.6,
             maxLife: 0.6,
@@ -2664,7 +3145,8 @@ export class GameEngine {
             y: pY + Math.sin(angle) * i * 40,
             vx: (Math.random() - 0.5) * 60,
             vy: (Math.random() - 0.5) * 60,
-            radius: 3.5,
+            size: 3.5,
+            alpha: 1,
             color: '#7dd3fc',
             life: 0.4,
             maxLife: 0.4,
@@ -2731,11 +3213,12 @@ export class GameEngine {
             y: vortexY + Math.sin(a) * 60,
             vx: -Math.cos(a) * 120,
             vy: -Math.sin(a) * 120,
-            radius: 5,
+            size: 5,
+            alpha: 1,
             color: '#b91c1c',
             life: 0.5,
             maxLife: 0.5,
-            type: 'blood',
+            type: 'blood_spray',
           });
         }
         return true;
@@ -2763,7 +3246,7 @@ export class GameEngine {
           e.x += Math.cos(ang) * 65;
           e.y += Math.sin(ang) * 65;
           this.damageEnemy(e, baseDamage * 1.3, false, weapon);
-          this.spawnVectorImpact(e.x, e.y, ang, false, 'blunt');
+          this.spawnVectorImpact(e.x, e.y, ang, false, 'deflect');
         });
 
         // Ring ripple
@@ -2774,7 +3257,8 @@ export class GameEngine {
             y: pY,
             vx: Math.cos(a) * 260,
             vy: Math.sin(a) * 260,
-            radius: 4,
+            size: 4,
+            alpha: 1,
             color: '#8b5cf6',
             life: 0.45,
             maxLife: 0.45,
@@ -2838,7 +3322,7 @@ export class GameEngine {
       // 6. TITAN GATLING MINIGUN (M60 Vulcan Evolution)
       case 'evo_titan_gatling': {
         if (!target) return false;
-        sound.playMachineGun();
+        sound.playMinigun();
         this.triggerScreenShake(3, 0.08);
         this.ejectShellCasing();
 
@@ -2927,10 +3411,11 @@ export class GameEngine {
             // Harmonic damage
             const dmg = baseDamage * 1.8;
             this.damageEnemy(e, dmg, false, weapon);
-            this.spawnVectorImpact(e.x, e.y, Math.atan2(e.y - pY, e.x - pX), false, 'blunt');
+            this.spawnVectorImpact(e.x, e.y, Math.atan2(e.y - pY, e.x - pX), false, 'deflect');
 
             // Stun and slow down enemy
-            e.attackCooldown = Math.max(e.attackCooldown, 2.0);
+            e.isStunned = true;
+            e.stunTimer = Math.max(e.stunTimer || 0, 2.0);
 
             // Cascade corpse burst if defeated
             if (e.hp <= 0) {
@@ -2941,7 +3426,8 @@ export class GameEngine {
                   y: e.y,
                   vx: Math.cos(pa) * 160,
                   vy: Math.sin(pa) * 160,
-                  radius: 4,
+                  size: 4,
+                  alpha: 1,
                   color: '#ec4899',
                   life: 0.6,
                   maxLife: 0.6,
@@ -2960,7 +3446,8 @@ export class GameEngine {
             y: pY,
             vx: Math.cos(ang) * 280,
             vy: Math.sin(ang) * 280,
-            radius: 5,
+            size: 5,
+            alpha: 1,
             color: '#f472b6',
             life: 0.6,
             maxLife: 0.6,
@@ -4411,6 +4898,7 @@ export class GameEngine {
               }
             } else if (e.vectorAttackState === 'cyclone') {
               for (const proj of this.state.projectiles) {
+                if (!proj) continue;
                 if (proj.isPlayer && !proj.isDeflected) {
                   const dToBoss = Math.hypot(proj.x - e.x, proj.y - e.y);
                   if (dToBoss < vReach * 0.85) {
@@ -5110,7 +5598,12 @@ export class GameEngine {
     const pY = this.state.player.y;
 
     for (let i = this.state.projectiles.length - 1; i >= 0; i--) {
+      if (i >= this.state.projectiles.length) {
+        i = this.state.projectiles.length;
+        continue;
+      }
       const p = this.state.projectiles[i];
+      if (!p) continue;
 
       // Rocket acceleration
       if (p.isRocket) {
@@ -5236,6 +5729,15 @@ export class GameEngine {
     }
   }
 
+  private clearEnemyProjectiles() {
+    for (let i = this.state.projectiles.length - 1; i >= 0; i--) {
+      const p = this.state.projectiles[i];
+      if (!p || !p.isPlayer) {
+        this.state.projectiles.splice(i, 1);
+      }
+    }
+  }
+
   private explodeAt(x: number, y: number, radius: number, damage: number) {
     sound.playExplosion();
     this.triggerScreenShake(6, 0.2);
@@ -5258,6 +5760,14 @@ export class GameEngine {
         this.damageEnemy(enemy, damage * 0.85);
       }
     });
+
+    if (this.state.pointsOfInterest) {
+      this.state.pointsOfInterest.forEach((poi) => {
+        if (!poi.isDestroyed && !poi.rewardClaimed && Math.hypot(poi.x - x, poi.y - y) < radius + poi.radius) {
+          this.damagePOI(poi, damage);
+        }
+      });
+    }
   }
 
   private damageEnemy(enemy: Enemy, rawDamage: number, forceCrit: boolean = false, weapon?: Weapon) {
@@ -5269,6 +5779,36 @@ export class GameEngine {
     const isCrit = forceCrit || Math.random() < critChance / 100;
     const critMult = isCrit ? this.state.stats.critDamage * (weapon?.critMultiplier || 1.5) : 1;
     let finalDamage = Math.round(rawDamage * critMult);
+
+    // Radical Dualism: Polar Character Combat Modifiers (2.Д)
+    if (this.state.character.id === 'lucy') {
+      // Kinetic predator: sprint damage boost
+      if (this.state.characterResource.isActive) {
+        finalDamage = Math.round(finalDamage * 1.5);
+      }
+    } else if (this.state.character.id === 'nyu') {
+      // Dual psyche: Innocent mode (-30% weapon damage) vs Awakened Lucy frenzy (+60% damage)
+      if (this.state.characterResource.isActive) {
+        finalDamage = Math.round(finalDamage * 1.6);
+      } else {
+        finalDamage = Math.max(1, Math.round(finalDamage * 0.7));
+      }
+    } else if (this.state.character.id === 'nana') {
+      // Anchored stance: bonus damage if standing still
+      if (this.state.characterResource.isActive) {
+        finalDamage = Math.round(finalDamage * 1.35);
+      }
+    } else if (this.state.character.id === 'bando') {
+      // Adrenaline burst: more damage when wounded/high adrenaline
+      const missingHpRatio = 1 - (this.state.player.hp / Math.max(1, this.state.player.maxHp));
+      const adrenalineBonus = 1 + missingHpRatio * 0.65;
+      finalDamage = Math.round(finalDamage * adrenalineBonus);
+    } else if (this.state.character.id === 'mariko') {
+      // Overheat state reduces precision/damage slightly or causes recoil
+      if (this.state.characterResource.isActive) {
+        finalDamage = Math.round(finalDamage * 0.85);
+      }
+    }
 
     if (enemy.eliteAffix === 'armored') {
       finalDamage = Math.max(1, Math.round(finalDamage * 0.7)); // 30% ballistic armor mitigation
@@ -5397,7 +5937,7 @@ export class GameEngine {
         this.state.isWaveEnding = true;
         this.state.waveEndingTimer = 2.8;
         sound.playWaveComplete();
-        this.state.projectiles = this.state.projectiles.filter((p) => p.isPlayer);
+        this.clearEnemyProjectiles();
         this.state.dnaDrops.forEach((d) => (d.magnetized = true));
         this.triggerScreenShake(10, 0.5);
       }
@@ -5566,6 +6106,7 @@ export class GameEngine {
     if (this.state.player.hp <= 0) {
       this.state.player.hp = 0;
       this.state.isWaveActive = false;
+      recordRunCompleted(false, this.state.wave, this.state.kills, this.state.totalDnaCollected, this.state.character.id, this.state.maxKillStreak);
       if (this.onGameOverCallback) {
         this.onGameOverCallback(false);
       }
@@ -5726,6 +6267,25 @@ export class GameEngine {
         if (dist < this.state.player.radius + drop.size) {
           this.state.player.dna += drop.value;
           this.state.totalDnaCollected += drop.value;
+
+          // NYU UNIQUE PASSIVE: Innocent mode heals +1 HP (+2 HP for large clusters) per DNA pickup!
+          if (this.state.character.id === 'nyu' && !this.state.characterResource.isActive) {
+            const healAmount = drop.value >= 5 ? 2 : 1;
+            this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + healAmount);
+            this.state.particles.push({
+              x: this.state.player.x + (Math.random() - 0.5) * 18,
+              y: this.state.player.y + (Math.random() - 0.5) * 18,
+              vx: 0,
+              vy: -25,
+              life: 0.35,
+              maxLife: 0.35,
+              size: 4,
+              color: '#f472b6',
+              alpha: 0.9,
+              type: 'flesh',
+            });
+          }
+
           sound.playDnaPickup();
           this.state.dnaDrops.splice(i, 1);
         }
@@ -5985,7 +6545,8 @@ export class GameEngine {
 
     sound.playLevelUp();
 
-    if (this.state.wave === 10 && !this.state.isEndlessMode) {
+    if (this.state.wave >= 15 && !this.state.isEndlessMode) {
+      recordRunCompleted(true, this.state.wave, this.state.kills, this.state.totalDnaCollected, this.state.character.id, this.state.maxKillStreak);
       if (this.onGameOverCallback) {
         this.onGameOverCallback(true);
       }

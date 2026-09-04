@@ -7,6 +7,7 @@ import { useLanguage } from '../utils/i18n';
 import { PsychicMutationTree } from './PsychicMutationTree';
 import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
+import { ItemIcon } from './ItemIcon';
 import {
   Dna,
   RefreshCw,
@@ -771,8 +772,16 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: isEvo ? '#f59e0b' : w.color }} />
+                      <div className="flex items-center gap-2.5">
+                        <ItemIcon
+                          iconName={w.icon}
+                          category={w.category}
+                          rarity={w.rarity}
+                          tier={w.tier || 1}
+                          isEvolved={isEvo}
+                          color={w.color}
+                          size="sm"
+                        />
                         <div>
                           <div className="font-cinzel text-xs font-bold text-gray-200 flex items-center gap-1.5">
                             <span className={isEvo ? 'text-amber-300 font-black' : ''}>
@@ -844,13 +853,21 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
               </div>
               <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
                 {engine.state.passiveItems.map((p, idx) => (
-                  <span
+                  <div
                     key={idx}
-                    className="px-2 py-0.5 rounded text-[10px] font-mono bg-neutral-900 border border-white/10 text-gray-300 flex items-center gap-1"
+                    className="px-2 py-1 rounded text-[10px] font-mono bg-neutral-900/90 border border-white/10 text-gray-300 flex items-center gap-1.5 hover:border-white/30 transition-all cursor-default"
+                    title={`${isRu ? p.russianName : p.name} (T${p.tier || 1})\n${isRu && p.description ? p.description : p.description}`}
                   >
-                    <span>{isRu ? p.russianName : p.name}</span>
+                    <ItemIcon
+                      iconName={p.icon}
+                      category="passive"
+                      rarity={p.rarity}
+                      tier={p.tier || 1}
+                      size="xs"
+                    />
+                    <span className="truncate max-w-[110px]">{isRu ? p.russianName : p.name}</span>
                     <span className="text-amber-400 font-bold">T{p.tier || 1}</span>
-                  </span>
+                  </div>
                 ))}
               </div>
             </div>
@@ -1065,12 +1082,24 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                   </div>
 
                   {/* Body Info */}
-                  <div>
-                    <h3 className="font-cinzel font-bold text-base text-white flex items-center gap-2">
-                      <span>{title}</span>
-                      <span className="text-xs font-mono text-red-400 font-bold">T{item.tier}</span>
-                    </h3>
-                    <p className="text-xs text-gray-400 font-mono mt-1 leading-relaxed">{desc}</p>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-start gap-3">
+                      <ItemIcon
+                        iconName={isWeapon ? WEAPONS_DATABASE[item.weaponKey!].icon : item.passiveData?.icon}
+                        category={isWeapon ? WEAPONS_DATABASE[item.weaponKey!].category : 'passive'}
+                        rarity={item.rarity}
+                        tier={item.tier}
+                        color={isWeapon ? WEAPONS_DATABASE[item.weaponKey!].color : undefined}
+                        size="md"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-cinzel font-bold text-base text-white flex items-center gap-2">
+                          <span className="truncate">{title}</span>
+                          <span className="text-xs font-mono text-red-400 font-bold shrink-0">T{item.tier}</span>
+                        </h3>
+                        <p className="text-xs text-gray-400 font-mono mt-1 leading-relaxed">{desc}</p>
+                      </div>
+                    </div>
 
                     {/* Experimental Item Detailed Risk/Reward breakdown */}
                     {isExperimental && item.passiveData && (

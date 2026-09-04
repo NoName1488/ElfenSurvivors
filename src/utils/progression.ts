@@ -94,3 +94,15 @@ export function recordWave10Victory(completedWithCharId: string): {
     newlyUnlockedCharacter: newlyUnlockedChar,
   };
 }
+
+export function unlockCharacterManually(charId: string): boolean {
+  try {
+    const unlocked = getUnlockedCharacterIds();
+    if (!unlocked.includes(charId)) {
+      unlocked.push(charId);
+      localStorage.setItem(STORAGE_UNLOCKED_KEY, JSON.stringify(unlocked));
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}

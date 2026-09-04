@@ -95,7 +95,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
               <div className="font-mono font-bold text-sm text-white">
                 {s.isEndlessMode
                   ? (isRu ? `Волна ${s.wave} (Выживание)` : `Wave ${s.wave} (Survival)`)
-                  : `${s.wave} / 10`}
+                  : `${s.wave} / 15`}
               </div>
             </div>
           </div>
@@ -106,7 +106,9 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
               <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest font-bold">
                 {isRu ? 'УНИЧТОЖЕНО ВРАГОВ' : 'ENEMIES KILLED'}
               </div>
-              <div className="font-mono font-bold text-sm text-red-400">{s.kills}</div>
+              <div className="font-mono font-bold text-sm text-red-400">
+                {s.kills} {s.maxKillStreak > 5 ? `(Серия x${s.maxKillStreak})` : ''}
+              </div>
             </div>
           </div>
 
@@ -116,7 +118,9 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
               <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest font-bold">
                 {isRu ? 'СОБРАНО ДНК' : 'DNA EXTRACTED'}
               </div>
-              <div className="font-mono font-bold text-sm text-red-400">{s.totalDnaCollected}</div>
+              <div className="font-mono font-bold text-sm text-red-400">
+                {s.totalDnaCollected} <span className="text-[10px] text-emerald-400 font-bold">(+{Math.round(s.totalDnaCollected * 0.15)} В НИИ)</span>
+              </div>
             </div>
           </div>
 
@@ -181,7 +185,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
             className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-600 via-red-600 to-amber-600 hover:from-amber-500 hover:to-red-500 text-white font-cinzel font-black text-sm tracking-wider flex items-center justify-center gap-2 shadow-[0_0_25px_rgba(245,158,11,0.6)] border border-amber-400 animate-pulse transition-all cursor-pointer"
           >
             <Flame className="w-4 h-4 text-amber-300" />
-            <span>{isRu ? 'БЕСКОНЕЧНЫЙ РЕЖИМ ВЫЖИВАНИЯ (ВОЛНА 11+)' : 'ENDLESS SURVIVAL MODE (WAVE 11+)'}</span>
+            <span>{isRu ? 'БЕСКОНЕЧНЫЙ РЕЖИМ ВЫЖИВАНИЯ (ВОЛНА 16+)' : 'ENDLESS SURVIVAL MODE (WAVE 16+)'}</span>
             <ArrowRight className="w-4 h-4 text-amber-300" />
           </button>
         )}
