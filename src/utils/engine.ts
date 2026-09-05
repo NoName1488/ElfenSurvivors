@@ -2811,6 +2811,24 @@ export class GameEngine {
    * fire from beyond the radius has to know where the radius is, and it moves with upgrades,
    * with ultrasonic suppression and with Nana's stance.
    */
+  /**
+   * The standoff distance the institute is currently telling its men to hold, in pixels.
+   *
+   * Command tracks the specimen's radius - the entire containment doctrine is built on
+   * staying outside it - so every unit works from the same number: the cordon ring, the
+   * rifleman's standoff, and how far their weapons have to reach to be useful from there.
+   * It was previously three unrelated constants, which meant that against a long-reach
+   * build the cordon formed outside its own weapon range and simply stopped shooting.
+   */
+  satEngagementRange(): number {
+    return this.playerVectorReach() + 170;
+  }
+
+  /** How far a soldier's weapon carries. Always enough to fire from the cordon. */
+  satWeaponRange(base: number): number {
+    return Math.max(base, this.satEngagementRange() + 200);
+  }
+
   playerVectorReach(): number {
     const reachMultiplier = 1 + this.state.stats.vectorReach / 100;
     let reach =
@@ -7757,7 +7775,7 @@ export class GameEngine {
       // Shoot cooldown
       if (e.shootCooldown !== undefined && !e.isReloading) {
         e.lastShoot = (e.lastShoot || 0) + dt;
-        if (e.lastShoot >= e.shootCooldown && dist < (e.type === 'sat_grunt' ? 640 : 520)) {
+        if (e.lastShoot >= e.shootCooldown && dist < this.satWeaponRange(e.type === 'sat_grunt' ? 640 : 520)) {
           e.lastShoot = 0;
           this.enemyShoot(e);
         }
@@ -7838,12 +7856,16 @@ export class GameEngine {
         !e.isRouted &&
         !knockedBack &&
         !isDiclonius(e.type) &&
+        // A shield bearer is already carrying out the containment order in the most direct
+        // way available to him - he is standing in front of the man who is shooting. Putting
+        // him on the cordon ring instead would take him away from the gun he exists to cover.
+        e.type !== 'riot_shield' &&
         !(e.squadId && !e.squadBroken) &&
         this.state.threatLevel < 0.62;
 
       if (underContainment) {
         const allies = e.nearbyAllies || 0;
-        const ringRadius = this.playerVectorReach() + 170;
+        const ringRadius = this.satEngagementRange();
 
         if (allies < 2) {
           e.isContained = true;
@@ -7950,15 +7972,18 @@ export class GameEngine {
         e.sniperAimProgress = (e.sniperAimProgress || 0) + dt * 0.75;
         e.aimLaser = { x: pX, y: pY, progress: Math.min(1, e.sniperAimProgress) };
 
-        if (e.sniperAimProgress >= 1 && dist < 520 && !e.isReloading) {
+        if (e.sniperAimProgress >= 1 && dist < this.satWeaponRange(520) && !e.isReloading) {
           e.sniperAimProgress = 0;
           this.enemyShoot(e);
         }
 
-        if (dist < 320) {
+        // A sniper holds a hundred past the cordon, so he is behind the men who are holding
+        // it rather than level with them.
+        const sniperHold = this.satEngagementRange() + 100;
+        if (dist < sniperHold - 40) {
           e.x -= Math.cos(angle) * moveSpeed * 1.3 * dt;
           e.y -= Math.sin(angle) * moveSpeed * 1.3 * dt;
-        } else if (dist > 460) {
+        } else if (dist > sniperHold + 100) {
           e.x += Math.cos(angle) * moveSpeed * dt;
           e.y += Math.sin(angle) * moveSpeed * dt;
         } else {
@@ -8045,7 +8070,7 @@ export class GameEngine {
          * chip damage with nothing to close on: 22 deaths across a capped fourteen-wave
          * probe against 12 with the split. The half that charges is what keeps the arms fed.
          */
-        const standoff = this.playerVectorReach() + 150;
+        const standoff = this.satEngagementRange();
         if (dist < standoff - 40) {
           e.x -= Math.cos(angle) * moveSpeed * 0.62 * dt;
           e.y -= Math.sin(angle) * moveSpeed * 0.62 * dt;
@@ -8057,7 +8082,64 @@ export class GameEngine {
           e.x += Math.cos(strafeAng) * moveSpeed * 0.5 * dt;
           e.y += Math.sin(strafeAng) * moveSpeed * 0.5 * dt;
         }
-      } else if (e.type === 'sat_shotgunner' || e.type === 'riot_shield' || e.type === 'sat_heavy_commando') {
+      } else if (e.type === 'riot_shield') {
+        /*
+         * A shield is there so that somebody else can shoot.
+         *
+         * It used to advance on the player alone, in front of nobody, and die as an
+         * unusually tough rifleman - its frontal arc absorbed strikes aimed at itself and
+         * protected no one. It now takes station in front of a gun: it picks the nearest
+         * rifleman who is not already covered and plants itself between that man and the
+         * player. Because it is physically in the way, incoming fire and vector strikes
+         * meet the shield first, which is the whole point of carrying one.
+         *
+         * With no gun to cover it advances, because then the shield is the front line.
+         */
+        let escort: Enemy | null = null;
+        if (e.escortTargetId !== undefined) {
+          escort = this.state.enemies.find((o) => o.id === e.escortTargetId && o.hp > 0) || null;
+        }
+        if (!escort) {
+          // One shield per gun: two men behind the same slab is not cover. The taken set is
+          // built once rather than re-scanned per candidate, which would make picking a post
+          // cubic in the enemy count during a dense wave.
+          const taken = new Set<number>();
+          for (const other of this.state.enemies) {
+            if (other.type === 'riot_shield' && other.id !== e.id && other.escortTargetId !== undefined) {
+              taken.add(other.escortTargetId);
+            }
+          }
+          let bestDist = Infinity;
+          for (const other of this.state.enemies) {
+            if (other.id === e.id || other.hp <= 0 || other.isRouted) continue;
+            if (other.shootCooldown === undefined || other.type === 'riot_shield') continue;
+            if (taken.has(other.id)) continue;
+            const d = Math.hypot(other.x - e.x, other.y - e.y);
+            if (d < bestDist) { bestDist = d; escort = other; }
+          }
+          e.escortTargetId = escort ? escort.id : undefined;
+        }
+
+        if (escort) {
+          // The post: just in front of the man being covered, on the line to the player.
+          const toPlayer = Math.atan2(pY - escort.y, pX - escort.x);
+          const postX = escort.x + Math.cos(toPlayer) * (e.radius + escort.radius + 8);
+          const postY = escort.y + Math.sin(toPlayer) * (e.radius + escort.radius + 8);
+          const toPost = Math.hypot(postX - e.x, postY - e.y);
+          if (toPost > 5) {
+            const postAngle = Math.atan2(postY - e.y, postX - e.x);
+            // Slightly quicker than his own pace while taking station, so he gets there
+            // before the man he is covering is shot.
+            e.x += Math.cos(postAngle) * moveSpeed * (toPost > 70 ? 1.3 : 0.9) * dt;
+            e.y += Math.sin(postAngle) * moveSpeed * (toPost > 70 ? 1.3 : 0.9) * dt;
+          }
+        } else {
+          const flankSign = (e.id % 2 === 0 ? 1 : -1);
+          const moveAng = angle + (dist < 260 ? flankSign * 0.45 : 0);
+          e.x += Math.cos(moveAng) * moveSpeed * dt;
+          e.y += Math.sin(moveAng) * moveSpeed * dt;
+        }
+      } else if (e.type === 'sat_shotgunner' || e.type === 'sat_heavy_commando') {
         // Tactical squad flanking: angle offset creates an encirclement pincer
         const flankSign = (e.id % 2 === 0 ? 1 : -1);
         const flankOffset = dist < 260 ? flankSign * 0.45 : 0;

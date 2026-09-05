@@ -381,6 +381,9 @@ export interface Enemy {
    * Recomputed every frame. While set, the unit's fire is suppressive and lands for half.
    */
   isContained?: boolean;
+
+  /** For a riot shield: the id of the shooter it is currently covering. */
+  escortTargetId?: number;
   id: number;
   type:
     | 'sat_grunt'
