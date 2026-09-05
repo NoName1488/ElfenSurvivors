@@ -39,6 +39,17 @@ export interface DifficultyLevel {
   densityMult: number;
   /** Multiplier on permanent research DNA banked by a run. */
   rewardMult: number;
+  /**
+   * How well the SAT actually fights, 0 to 2.
+   *
+   * 0 - they walk forward and shoot at the same time, and fire through their own men.
+   * 1 - bounding overwatch: half the element moves while half covers, and they swap.
+   * 2 - as above, plus fire discipline and a real flanking element.
+   *
+   * Tied to clearance so the ladder is a difference in competence and not only in health
+   * bars. The institute does not send its best people to watch a specimen.
+   */
+  tactics: 0 | 1 | 2;
   color: string;
 }
 
@@ -53,6 +64,7 @@ export const DIFFICULTY_LEVELS: DifficultyLevel[] = [
     damageMult: 0.72,
     densityMult: 0.85,
     rewardMult: 0.8,
+    tactics: 0,
     color: '#4ade80',
   },
   {
@@ -65,6 +77,7 @@ export const DIFFICULTY_LEVELS: DifficultyLevel[] = [
     damageMult: 1.0,
     densityMult: 1.0,
     rewardMult: 1.0,
+    tactics: 0,
     color: '#38bdf8',
   },
   {
@@ -77,6 +90,7 @@ export const DIFFICULTY_LEVELS: DifficultyLevel[] = [
     damageMult: 1.22,
     densityMult: 1.18,
     rewardMult: 1.45,
+    tactics: 1,
     color: '#f59e0b',
   },
   {
@@ -89,6 +103,7 @@ export const DIFFICULTY_LEVELS: DifficultyLevel[] = [
     damageMult: 1.5,
     densityMult: 1.35,
     rewardMult: 2.1,
+    tactics: 2,
     color: '#f97316',
   },
   {
@@ -101,6 +116,7 @@ export const DIFFICULTY_LEVELS: DifficultyLevel[] = [
     damageMult: 1.9,
     densityMult: 1.55,
     rewardMult: 3.0,
+    tactics: 2,
     color: '#ef4444',
   },
 ];

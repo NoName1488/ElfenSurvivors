@@ -84,6 +84,13 @@ export interface GameEngineState {
   isWaveActive: boolean;
   isWaveEnding: boolean;
   /**
+   * Which half of the SAT line is moving right now, 0 or 1.
+   *
+   * Flipped on a timer. The other half is stationary and shooting. Only meaningful at
+   * clearance levels where the SAT is trained well enough to bound.
+   */
+  boundingPhase: 0 | 1;
+  /**
    * How far past containment the situation has gone, 0 to 1.
    *
    * Rises with what the player has done - bodies, bosses, waves survived. Below the
@@ -564,6 +571,7 @@ export class GameEngine {
       isWaveEnding: false,
       threatLevel: 0,
       bossesKilled: 0,
+      boundingPhase: 0,
       waveEndingTimer: 0,
       isEndlessMode: false,
       enemies: [],
@@ -2370,6 +2378,21 @@ export class GameEngine {
      * counts for a great deal, because it is the clearest possible demonstration that
      * nothing on this island can hold her.
      */
+    /*
+     * The bounding beat.
+     *
+     * Two and a half seconds is long enough for a bound to read as a deliberate rush and
+     * short enough that the covering half is never left exposed for long. The player should
+     * be able to feel the rhythm without counting it.
+     */
+    if (this.difficulty.tactics >= 1) {
+      this.boundingTimer -= dt;
+      if (this.boundingTimer <= 0) {
+        this.boundingTimer = 2.5;
+        this.state.boundingPhase = this.state.boundingPhase === 0 ? 1 : 0;
+      }
+    }
+
     this.state.threatLevel = Math.min(
       1,
       this.state.kills / 900 +
@@ -2847,6 +2870,9 @@ export class GameEngine {
    * Spent as strike climb rate rather than discarded. See recalculateStats.
    */
   vibrationOverflow = 0;
+
+  /** Seconds until the moving and covering halves of the SAT line swap roles. */
+  private boundingTimer = 2.5;
 
   /**
    * The clearance level this run is played at.
@@ -6394,6 +6420,9 @@ export class GameEngine {
     }
 
     const spawned = enemyData as Enemy;
+    // Alternate halves by spawn order, so a group that arrives together is split down the
+    // middle rather than bounding as one body.
+    spawned.boundGroup = (spawned.id % 2) as 0 | 1;
     this.state.enemies.push(spawned);
 
     // Twins are only twins in pairs. The first one spawns its partner beside it and the two
@@ -7775,7 +7804,16 @@ export class GameEngine {
       // Shoot cooldown
       if (e.shootCooldown !== undefined && !e.isReloading) {
         e.lastShoot = (e.lastShoot || 0) + dt;
-        if (e.lastShoot >= e.shootCooldown && dist < this.satWeaponRange(e.type === 'sat_grunt' ? 640 : 520)) {
+        // Covering fire is faster than aimed fire, and a man in the middle of a bound is
+        // not firing at all - that gap is the whole point of the manoeuvre.
+        const bounding = !!e.isBounding;
+        const covering = this.difficulty.tactics >= 1 && !bounding && e.shootCooldown !== undefined && !e.isBoss;
+        const cadence = e.shootCooldown * (covering ? 0.75 : 1);
+        if (
+          !bounding &&
+          e.lastShoot >= cadence &&
+          dist < this.satWeaponRange(e.type === 'sat_grunt' ? 640 : 520)
+        ) {
           e.lastShoot = 0;
           this.enemyShoot(e);
         }
@@ -7849,6 +7887,28 @@ export class GameEngine {
       let containmentHandled = false;
       // Read by the damage paths: a soldier under a recovery order shoots to pin, not kill.
       e.isContained = false;
+
+      /*
+       * Bounding overwatch.
+       *
+       * The oldest fundamental in infantry work, and one of the few that survives being
+       * seen from directly overhead: half the element moves while the other half covers,
+       * and they swap. The half that is moving is not shooting, so every bound is an
+       * opening the player can see and use - which is the test any tactic has to pass
+       * before it goes in. A pattern the player cannot read is a hidden damage multiplier
+       * with a nice name.
+       *
+       * Only units with a weapon take part. A man with nothing to cover with is not
+       * bounding, he is just walking. Diclonii are exempt with the rest of the doctrine.
+       */
+      const canBound =
+        this.difficulty.tactics >= 1 &&
+        !e.isBoss &&
+        !e.isRouted &&
+        !isDiclonius(e.type) &&
+        e.shootCooldown !== undefined;
+      e.isBounding = canBound && e.boundGroup === this.state.boundingPhase;
+      const isCovering = canBound && !e.isBounding;
       const knockedBack =
         e.vx !== undefined && e.vy !== undefined && (Math.abs(e.vx) > 1 || Math.abs(e.vy) > 1);
       const underContainment =
@@ -7906,7 +7966,9 @@ export class GameEngine {
         // Six or more: the cordon can be closed. Fall through to the aggressive rules.
       }
 
-      if (containmentHandled) {
+      if (isCovering && !knockedBack) {
+        // Covering: feet planted, weapon up. Movement is the other half's job this beat.
+      } else if (containmentHandled) {
         // Position already decided above.
       } else if (knockedBack) {
         e.x += e.vx! * dt;

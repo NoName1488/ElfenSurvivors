@@ -20,6 +20,10 @@
 const g: any = globalThis as any;
 
 const store = new Map<string, string>();
+// Containment clearance to run at. Levels 3+ change SAT tactics, not just their numbers, so
+// a tactical change has to be measured with DIFF set or it will not appear at all.
+store.set('elfen_lied_difficulty_cleared_v1', JSON.stringify([1, 2, 3, 4, 5]));
+store.set('elfen_lied_difficulty_selected_v1', String(Number(process.env.DIFF || 2)));
 g.localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
   setItem: (k: string, v: string) => void store.set(k, String(v)),

@@ -178,7 +178,12 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                       unlocked
                         ? `${d.level}. ${isRu ? d.ru : d.en}\n${isRu ? d.descriptionRu : d.descriptionEn}\n` +
                           `${isRu ? 'ОЗ врагов' : 'Enemy HP'} x${d.hpMult} · ${isRu ? 'Урон' : 'Damage'} x${d.damageMult} · ` +
-                          `${isRu ? 'Плотность' : 'Density'} x${d.densityMult} · ${isRu ? 'Награда НИИ' : 'Research DNA'} x${d.rewardMult}`
+                          `${isRu ? 'Плотность' : 'Density'} x${d.densityMult} · ${isRu ? 'Награда НИИ' : 'Research DNA'} x${d.rewardMult}\n` +
+                          (d.tactics === 0
+                            ? (isRu ? 'Выучка SAT: базовая. Идут и стреляют одновременно.' : 'SAT training: basic. They walk and shoot at once.')
+                            : d.tactics === 1
+                            ? (isRu ? 'Выучка SAT: перекаты. Половина двигается, половина прикрывает.' : 'SAT training: bounding overwatch. Half moves, half covers.')
+                            : (isRu ? 'Выучка SAT: полная. Перекаты, дисциплина огня, обходы.' : 'SAT training: full. Bounding, fire discipline, flanking.'))
                         : isRu
                         ? `Закрыто. Пройдите кампанию на уровне ${d.level - 1}.`
                         : `Locked. Finish a campaign on level ${d.level - 1}.`

@@ -18,6 +18,10 @@
 const g: any = globalThis as any;
 
 const store = new Map<string, string>();
+// Containment clearance to run at. Levels 3+ change SAT tactics, not just their numbers, so
+// a tactical change has to be measured with DIFF set or it will not appear at all.
+store.set('elfen_lied_difficulty_cleared_v1', JSON.stringify([1, 2, 3, 4, 5]));
+store.set('elfen_lied_difficulty_selected_v1', String(Number(process.env.DIFF || 2)));
 g.localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
   setItem: (k: string, v: string) => void store.set(k, String(v)),
@@ -69,6 +73,18 @@ Math.random = () => {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 g.cancelAnimationFrame = (id: any) => clearTimeout(id);
+
+import { DIFFICULTY_LEVELS } from '../src/utils/difficulty';
+/*
+ * Forces SAT training level, so a tactical change can be isolated from the clearance
+ * multipliers that normally travel with it. The engine reads its difficulty object once at
+ * construction, so mutating the table before the run takes effect and nothing in the shipped
+ * code has to know this exists.
+ */
+if (process.env.TACTICS !== undefined) {
+  const forced = Number(process.env.TACTICS) as 0 | 1 | 2;
+  for (const level of DIFFICULTY_LEVELS) level.tactics = forced;
+}
 
 import { GameEngine } from '../src/utils/engine';
 import { CHARACTERS, WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS } from '../src/data/gameData';

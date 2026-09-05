@@ -384,6 +384,17 @@ export interface Enemy {
 
   /** For a riot shield: the id of the shooter it is currently covering. */
   escortTargetId?: number;
+
+  /**
+   * Which half of the bounding cycle this unit belongs to, 0 or 1.
+   *
+   * Fixed at spawn. On the beats where its own half is the one moving, the unit advances
+   * and holds its fire; on the others it stops and covers.
+   */
+  boundGroup?: 0 | 1;
+
+  /** True on the beats this unit is moving, and therefore not shooting. */
+  isBounding?: boolean;
   id: number;
   type:
     | 'sat_grunt'
