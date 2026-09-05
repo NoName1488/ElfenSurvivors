@@ -174,8 +174,8 @@ export const ACHIEVEMENTS_CONFIG: Achievement[] = [
     id: 'ach_lab_escape',
     title: 'Total Enoshima Lockdown Cleared',
     russianTitle: 'Полная победа: Прорыв Эносимы',
-    description: 'Survive all 10 sector waves and eliminate the final prime anomaly.',
-    russianDescription: 'Пройдите все 10 волн секторов и устраните финальную аномалию.',
+    description: 'Complete the full campaign and eliminate the final prime anomaly.',
+    russianDescription: 'Пройдите всю кампанию и устраните финальную аномалию.',
     rewardDesc: '+100 Lab DNA & Endless Mode',
     russianRewardDesc: '+100 ДНК НИИ и Бесконечный режим',
     icon: 'Award',
@@ -187,8 +187,8 @@ export const ACHIEVEMENTS_CONFIG: Achievement[] = [
     id: 'ach_secret_restrained_lucy',
     title: 'Containment Protocol Breached',
     russianTitle: 'Гриф Секретно: Прорыв Оков',
-    description: 'Survive 10 waves as Lucy using only vectors and telekinesis (no firearms or cyberware).',
-    russianDescription: 'Пройдите 10 волн за Люси без огнестрела и кибернетики. Разблокирует Субъекта 00.',
+    description: 'Win the campaign as Lucy using only vectors and telekinesis (no firearms or cyberware).',
+    russianDescription: 'Пройдите кампанию за Люси без огнестрела и кибернетики. Разблокирует Субъекта 00.',
     rewardDesc: '+80 Lab DNA & Subject 00',
     russianRewardDesc: '+80 ДНК НИИ & Персонаж: Субъект 00',
     icon: 'Layers',
@@ -213,8 +213,8 @@ export const ACHIEVEMENTS_CONFIG: Achievement[] = [
     id: 'ach_secret_anna',
     title: 'Leviathan of the Void',
     russianTitle: 'Гриф Секретно: Мозговой Левиафан',
-    description: 'Reach Wave 15 in Endless Mode or win with a Tier 5 Catalytic Weapon. Unlocks Anna Kakuzawa.',
-    russianDescription: 'Достигните 15 волны в бесконечном режиме или победите с T5 эволюцией. Разблокирует Анну Какудзаву.',
+    description: 'Reach Wave 25 in Endless Mode or win with a Tier 5 Catalytic Weapon. Unlocks Anna Kakuzawa.',
+    russianDescription: 'Достигните 25 волны в бесконечном режиме или победите с T5 эволюцией. Разблокирует Анну Какудзаву.',
     rewardDesc: '+100 Lab DNA & Anna Kakuzawa',
     russianRewardDesc: '+100 ДНК НИИ & Персонаж: Анна Какудзава',
     icon: 'Flame',
@@ -319,47 +319,98 @@ export function getAppliedMetaStats(): { stats: Partial<PlayerStats>; startingDn
   return { stats: bonusStats, startingDna };
 }
 
-export function getStoredAchievements(): Record<string, { unlocked: boolean; progress: number }> {
+// In-memory mirror of the achievement table. Progress is recorded on every kill, so
+// hitting localStorage (parse + stringify + synchronous write) per frag caused visible
+// hitching during dense waves. Reads come from the cache; writes are coalesced.
+let achievementCache: Record<string, { unlocked: boolean; progress: number }> | null = null;
+let achievementFlushHandle: any = null;
+let achievementDirty = false;
+
+function loadAchievementCache(): Record<string, { unlocked: boolean; progress: number }> {
+  if (achievementCache) return achievementCache;
   try {
     const raw = localStorage.getItem(META_STORAGE_ACHIEVEMENTS_KEY);
-    return raw ? JSON.parse(raw) : {};
+    achievementCache = raw ? JSON.parse(raw) : {};
   } catch (e) {
-    return {};
+    achievementCache = {};
   }
+  return achievementCache!;
 }
 
+export function flushAchievements(): void {
+  if (!achievementDirty || !achievementCache) return;
+  achievementDirty = false;
+  if (achievementFlushHandle) {
+    clearTimeout(achievementFlushHandle);
+    achievementFlushHandle = null;
+  }
+  try {
+    localStorage.setItem(META_STORAGE_ACHIEVEMENTS_KEY, JSON.stringify(achievementCache));
+  } catch (e) {}
+}
+
+function scheduleAchievementFlush(immediate: boolean): void {
+  achievementDirty = true;
+  if (immediate) {
+    flushAchievements();
+    return;
+  }
+  if (achievementFlushHandle) return;
+  achievementFlushHandle = setTimeout(() => {
+    achievementFlushHandle = null;
+    flushAchievements();
+  }, 3000);
+}
+
+export function getStoredAchievements(): Record<string, { unlocked: boolean; progress: number }> {
+  return loadAchievementCache();
+}
+
+// Single source of truth for achievement payouts, so the reward text on the card and
+// the DNA actually granted can never drift apart again.
+export const ACHIEVEMENT_DNA_REWARDS: Record<string, number> = {
+  ach_first_blood: 30,
+  ach_catalytic_evo: 60,
+  ach_speed_predator: 40,
+  ach_kinetic_shield: 40,
+  ach_overheat_survivor: 50,
+  ach_sat_fury: 50,
+  ach_nyu_awakening: 50,
+  ach_lab_escape: 100,
+  ach_secret_restrained_lucy: 80,
+  ach_secret_kurama: 80,
+  ach_secret_anna: 100,
+};
+
+// Characters granted directly by an achievement unlock.
+const ACHIEVEMENT_CHARACTER_UNLOCKS: Record<string, string> = {
+  ach_nyu_awakening: 'nyu',
+  ach_secret_restrained_lucy: 'restrained_lucy',
+  ach_secret_kurama: 'kurama',
+  ach_secret_anna: 'anna_kakuzawa',
+};
+
 export function recordAchievementProgress(achId: string, inc: number = 1): boolean {
-  const stored = getStoredAchievements();
+  const stored = loadAchievementCache();
   const current = stored[achId] || { unlocked: false, progress: 0 };
   const cfg = ACHIEVEMENTS_CONFIG.find((a) => a.id === achId);
   if (!cfg || current.unlocked) return false;
 
   current.progress = Math.min(cfg.maxProgress, current.progress + inc);
+  stored[achId] = current;
+
   if (current.progress >= cfg.maxProgress) {
     current.unlocked = true;
-    stored[achId] = current;
-    try {
-      localStorage.setItem(META_STORAGE_ACHIEVEMENTS_KEY, JSON.stringify(stored));
-      // Reward Meta-DNA
-      if (achId === 'ach_first_blood') addMetaDna(30);
-      else if (achId === 'ach_catalytic_evo') addMetaDna(60);
-      else if (achId === 'ach_speed_predator') addMetaDna(40);
-      else if (achId === 'ach_kinetic_shield') addMetaDna(40);
-      else if (achId === 'ach_overheat_survivor') addMetaDna(50);
-      else if (achId === 'ach_sat_fury') addMetaDna(50);
-      else if (achId === 'ach_nyu_awakening') {
-        addMetaDna(50);
-        unlockCharacterManually('nyu');
-      }
-      else if (achId === 'ach_lab_escape') addMetaDna(100);
-    } catch (e) {}
+    scheduleAchievementFlush(true);
+    const reward = ACHIEVEMENT_DNA_REWARDS[achId];
+    if (reward) addMetaDna(reward);
+    const charUnlock = ACHIEVEMENT_CHARACTER_UNLOCKS[achId];
+    if (charUnlock) unlockCharacterManually(charUnlock);
     return true; // Newly unlocked!
   }
 
-  stored[achId] = current;
-  try {
-    localStorage.setItem(META_STORAGE_ACHIEVEMENTS_KEY, JSON.stringify(stored));
-  } catch (e) {}
+  // Progress ticks are cheap and frequent - coalesce them instead of writing per kill.
+  scheduleAchievementFlush(false);
   return false;
 }
 
@@ -387,9 +438,12 @@ export function recordRunCompleted(
     recordAchievementProgress('ach_nyu_awakening', totalDnaCollected);
   }
 
-  if (won || wave >= 10) {
+  if (won) {
     recordAchievementProgress('ach_lab_escape', 1);
   }
+
+  // Persist any coalesced achievement progress at the end of a run.
+  flushAchievements();
 }
 
 export function checkAchievements(state: any): void {

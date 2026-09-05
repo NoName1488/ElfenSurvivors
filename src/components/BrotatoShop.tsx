@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { GameEngine } from '../utils/engine';
+import { GameEngine, getDividendConfig, projectDividend, MAX_PASSIVE_ITEMS } from '../utils/engine';
 import { Weapon, PassiveItem, StatUpgradeOption, WeaponRarity } from '../types';
-import { WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS, ITEM_SYNERGIES, WEAPON_EVOLUTIONS } from '../data/gameData';
+import { WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS, ASCENDED_STAT_UPGRADES, ITEM_SYNERGIES, WEAPON_EVOLUTIONS } from '../data/gameData';
 import { sound } from '../utils/sound';
 import { useLanguage } from '../utils/i18n';
 import { PsychicMutationTree } from './PsychicMutationTree';
@@ -52,6 +52,9 @@ interface ShopItem {
   rarity: WeaponRarity;
   cost: number;
   isLocked: boolean;
+  // Set when the slot was reserved to complete a Catalytic Evolution the player is building.
+  isCatalyst?: boolean;
+  catalystForEvolutionId?: string;
 }
 
 export const BrotatoShop: React.FC<BrotatoShopProps> = ({
@@ -74,10 +77,8 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
   const [showAudioModal, setShowAudioModal] = useState<boolean>(false);
   const [autoMergeToast, setAutoMergeToast] = useState<string | null>(null);
 
-  const hasCryoVault = engine.state.passiveItems.some((p) => p.id === 'dna_vault');
-  const dividendRate = hasCryoVault ? 0.20 : 0.08;
-  const maxDividend = hasCryoVault ? 100 : 35;
-  const projectedDividend = Math.min(maxDividend, Math.floor(currentDna * dividendRate));
+  const { rate: dividendRate, cap: maxDividend, hasVault: hasCryoVault } = getDividendConfig(engine.state.passiveItems);
+  const projectedDividend = projectDividend(currentDna, engine.state.passiveItems);
 
   // Auto-merge weapons and passives on mount
   useEffect(() => {
@@ -100,8 +101,30 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
   }, [autoMergeToast]);
 
   const generateStatChoices = () => {
-    const shuffled = [...STAT_UPGRADE_OPTIONS].sort(() => Math.random() - 0.5);
-    setStatChoices(shuffled.slice(0, 4));
+    // Elite ("ascended") mutations start appearing once the subject is deep enough into a run,
+    // and Luck raises how often they surface. Previously this whole tier was authored but
+    // never offered, so every level-up drew from the same 11 basic cards.
+    const wave = engine.state.wave;
+    const luck = engine.state.stats.luck || 0;
+    const ascendedChance = Math.min(0.55, Math.max(0, (wave - 4) * 0.055) + luck * 0.004);
+
+    const basicPool = [...STAT_UPGRADE_OPTIONS].sort(() => Math.random() - 0.5);
+    const ascendedPool = [...ASCENDED_STAT_UPGRADES].sort(() => Math.random() - 0.5);
+
+    const picks: StatUpgradeOption[] = [];
+    let bi = 0;
+    let ai = 0;
+    for (let slot = 0; slot < 4; slot++) {
+      const wantAscended = ai < ascendedPool.length && Math.random() < ascendedChance;
+      if (wantAscended) {
+        picks.push(ascendedPool[ai++]);
+      } else if (bi < basicPool.length) {
+        picks.push(basicPool[bi++]);
+      } else if (ai < ascendedPool.length) {
+        picks.push(ascendedPool[ai++]);
+      }
+    }
+    setStatChoices(picks);
   };
 
   useEffect(() => {
@@ -112,13 +135,35 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
 
   const generateShopOfferings = (keepLocked: boolean = false) => {
     const baseWave = engine.state.wave;
-    const availableWeaponKeys = Object.keys(WEAPONS_DATABASE);
+
+    // Subjects without biological vectors (Bando the cyborg, Chief Kurama the human) can
+    // never manifest a vector arm, so offering them psychokinetic weapons sold a purchase
+    // whose entire visual and fantasy layer is missing. Passives were already filtered by
+    // kind; weapons were not.
+    const hasVectors = engine.state.character.baseStats.vectorCount > 0;
+    const availableWeaponKeys = Object.keys(WEAPONS_DATABASE).filter((key) => {
+      const cat = WEAPONS_DATABASE[key as keyof typeof WEAPONS_DATABASE].category;
+      if (!hasVectors && (cat === 'vector' || cat === 'telekinesis')) return false;
+      return true;
+    });
 
     const eligiblePassives = PASSIVE_ITEMS.filter((item) => {
       if (item.restrictedToKind && item.restrictedToKind !== engine.state.character.kind) {
         return false;
       }
       return true;
+    });
+
+    // Catalytic Evolution targeting (2.В.2).
+    // An evolution needs a tier-4 weapon AND one specific passive out of ~24, drawn from a
+    // fully random shop: the odds of the pair ever meeting were a couple of percent per run,
+    // so the biggest power spike in the game was pure lottery. Once the player is visibly
+    // building toward an evolution, its catalyst is guaranteed to surface.
+    const pendingCatalysts = WEAPON_EVOLUTIONS.filter((evo) => {
+      const ownsBase = engine.state.weapons.some((w) => w.type === evo.baseWeaponType && !w.isEvolved && w.tier >= 3);
+      const ownsCatalyst = engine.state.passiveItems.some((p) => p.id === evo.requiredPassiveId);
+      const catalystExists = PASSIVE_ITEMS.some((p) => p.id === evo.requiredPassiveId);
+      return ownsBase && !ownsCatalyst && catalystExists;
     });
 
     const newOfferings: ShopItem[] = [];
@@ -133,13 +178,40 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
       engine.state.savedLockedShopItems = [];
     }
 
+    let catalystSlotUsed = false;
+
     for (let i = 0; i < 4; i++) {
       if (preservedItems[i]) {
         newOfferings.push(preservedItems[i]);
         continue;
       }
 
-      const isWeapon = Math.random() < 0.45;
+      // Requisition prices inflate with the sector so late-game DNA keeps a real cost.
+      const waveCostMult = 1 + (baseWave - 1) * 0.085;
+
+      // Reserve one slot for a catalyst the player is demonstrably building toward.
+      if (!catalystSlotUsed && pendingCatalysts.length > 0) {
+        catalystSlotUsed = true;
+        const evo = pendingCatalysts[Math.floor(Math.random() * pendingCatalysts.length)];
+        const catalyst = PASSIVE_ITEMS.find((p) => p.id === evo.requiredPassiveId)!;
+        const boughtCount = purchaseCounts[catalyst.id] || 0;
+        // Catalysts carry a premium: guaranteed availability should still cost a decision.
+        const cost = Math.round((catalyst.cost || 25) * 1.6 * (1 + boughtCount * 0.08) * waveCostMult);
+        newOfferings.push({
+          id: `shop_cat_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'passive',
+          passiveData: { ...catalyst, tier: 1 },
+          tier: 1,
+          rarity: 'legendary',
+          cost,
+          isLocked: false,
+          isCatalyst: true,
+          catalystForEvolutionId: evo.id,
+        });
+        continue;
+      }
+
+      const isWeapon = availableWeaponKeys.length > 0 && Math.random() < 0.45;
 
       // Tier rolling based on current wave & luck
       const luckBonus = engine.state.stats.luck * 0.01;
@@ -163,7 +235,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
         const template = WEAPONS_DATABASE[randomWeaponKey];
         const boughtCount = purchaseCounts[randomWeaponKey] || 0;
         const dynamicCostMult = 1 + boughtCount * 0.08;
-        const cost = Math.round(template.cost * (1 + (tier - 1) * 0.65) * dynamicCostMult);
+        const cost = Math.round(template.cost * (1 + (tier - 1) * 0.65) * dynamicCostMult * waveCostMult);
 
         newOfferings.push({
           id: `shop_w_${Math.random().toString(36).substr(2, 9)}`,
@@ -178,7 +250,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
         const randomPassive = eligiblePassives[Math.floor(Math.random() * eligiblePassives.length)];
         const boughtCount = purchaseCounts[randomPassive.id] || 0;
         const dynamicCostMult = 1 + boughtCount * 0.08;
-        const cost = Math.round((randomPassive.cost || 25) * (1 + (tier - 1) * 0.5) * dynamicCostMult);
+        const cost = Math.round((randomPassive.cost || 25) * (1 + (tier - 1) * 0.5) * dynamicCostMult * waveCostMult);
 
         newOfferings.push({
           id: `shop_p_${Math.random().toString(36).substr(2, 9)}`,
@@ -200,7 +272,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
   }, []);
 
   const hasFreeReroll = engine.state.freeRerollAvailable && rerollCount === 0;
-  const rerollCost = hasFreeReroll ? 0 : Math.round(5 + rerollCount * 4 + engine.state.wave * 1.5);
+  const rerollCost = hasFreeReroll ? 0 : Math.round((6 + engine.state.wave * 1.6) * (1 + rerollCount * 0.8));
 
   const handleReroll = () => {
     if (!hasFreeReroll && currentDna < rerollCost) return;
@@ -276,6 +348,14 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
         }
       }
     } else if (item.type === 'passive' && item.passiveData) {
+      // Slots are finite. A purchase that cannot merge into an augment you already own is
+      // refused when full, which is what forces the duplicate-merge decision to matter.
+      const willMerge = engine.state.passiveItems.some(
+        (p) => p.id === item.passiveData!.id && (p.tier || 1) === (item.tier || 1) && (p.tier || 1) < 4
+      );
+      if (engine.state.passiveItems.length >= MAX_PASSIVE_ITEMS && !willMerge) {
+        return;
+      }
       engine.state.passiveItems.push({
         ...item.passiveData,
         tier: item.tier || 1,
@@ -407,7 +487,9 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                 {t('chooseOneStatHint')}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 w-full">
-                {statChoices.map((opt) => (
+                {statChoices.map((opt) => {
+                  const isAscended = opt.rarity === 'ascended';
+                  return (
                   <button
                     key={opt.id}
                     onClick={() => {
@@ -415,24 +497,41 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                       sound.playLevelUp();
                       onLevelUpChosen();
                     }}
-                    className="glass-panel p-4 rounded-xl border border-white/10 hover:border-red-500 hover:bg-red-950/30 transition-all cursor-pointer flex items-center gap-4 text-left group shadow-lg active:scale-98"
+                    className={`glass-panel p-4 rounded-xl border transition-all cursor-pointer flex items-center gap-4 text-left group shadow-lg active:scale-98 ${
+                      isAscended
+                        ? 'border-rose-400/70 bg-gradient-to-br from-rose-950/40 via-fuchsia-950/20 to-transparent hover:border-rose-300 hover:bg-rose-900/30 shadow-[0_0_14px_rgba(244,63,94,0.25)]'
+                        : 'border-white/10 hover:border-red-500 hover:bg-red-950/30'
+                    }`}
                   >
-                    <div className="p-3 rounded-lg bg-red-950/60 border border-red-600/40 text-red-400 group-hover:scale-110 transition-transform shrink-0">
+                    <div className={`p-3 rounded-lg border group-hover:scale-110 transition-transform shrink-0 ${
+                      isAscended
+                        ? 'bg-rose-950/70 border-rose-400/60 text-rose-300'
+                        : 'bg-red-950/60 border-red-600/40 text-red-400'
+                    }`}>
                       <Sparkles className="w-5 h-5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-cinzel font-bold text-base text-white group-hover:text-red-300 truncate">
-                        {isRu ? opt.russianName : opt.name}
+                      <div className="flex items-center gap-2">
+                        <div className={`font-cinzel font-bold text-base truncate ${isAscended ? 'text-rose-200 group-hover:text-rose-100' : 'text-white group-hover:text-red-300'}`}>
+                          {isRu ? opt.russianName : opt.name}
+                        </div>
+                        {isAscended && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-wider bg-rose-500/20 border border-rose-400/50 text-rose-200 shrink-0">
+                            {isRu ? 'ЭЛИТА' : 'ELITE'}
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-gray-400 font-sans mt-0.5 line-clamp-1">
                         {isRu ? opt.description : (opt.descriptionEn || opt.description)}
                       </div>
                       <div className="text-xs text-emerald-400 font-mono font-bold mt-1">
                         +{opt.amount} {t(opt.statKey as any)}
+                        {opt.secondaryStatKey && opt.secondaryAmount ? `  ·  +${opt.secondaryAmount} ${t(opt.secondaryStatKey as any)}` : ''}
                       </div>
                     </div>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : (
@@ -574,7 +673,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                   {isRu ? 'Инкубация' : 'Dividend'}
                 </span>
                 <span className="text-emerald-300 font-bold text-[11px]">
-                  +{projectedDividend} ДНК
+                  +{projectedDividend} {isRu ? 'ДНК' : 'DNA'}
                 </span>
               </div>
               {hasCryoVault && (
@@ -613,14 +712,14 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-200"
                 title={
                   isRu
-                    ? 'Все кристаллы, оставшиеся на арене, поглощены в мешок сбережений. В следующей волне первые убитые враги дадут двойной ресурс (2x)!'
-                    : 'Uncollected arena crystals are saved in the bag reserve. First enemies slain next wave will drop doubled materials (2x)!'
+                    ? 'Все кристаллы, оставшиеся на арене, поглощены в мешок сбережений. В следующей волне первые убитые враги вернут его долями — резерв не сгорает.'
+                    : 'Uncollected arena crystals are banked in the bag reserve. Next wave the first kills pay it back in shares - nothing is lost.'
                 }
               >
                 <span>🎒</span>
                 <span className="text-gray-400">{isRu ? 'Мешок сбережений:' : 'Bag Reserve:'}</span>
                 <span className="font-bold text-amber-300">
-                  +{engine.state.lastWaveBaggedSaved || engine.state.baggedDna} ДНК (2x дроп)
+                  +{engine.state.lastWaveBaggedSaved || engine.state.baggedDna} {isRu ? 'ДНК в резерве' : 'DNA banked'}
                 </span>
               </div>
             )}
@@ -637,7 +736,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                 <span>🌾</span>
                 <span className="text-gray-400">{isRu ? 'Сбор урожая:' : 'Harvest Payout:'}</span>
                 <span className="font-bold text-emerald-300">
-                  +{engine.state.lastWaveHarvestPayout} ДНК (+10% рост)
+                  +{engine.state.lastWaveHarvestPayout} {isRu ? 'ДНК (+10% рост)' : 'DNA (+10% growth)'}
                 </span>
               </div>
             )}

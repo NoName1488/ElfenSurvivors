@@ -37,7 +37,7 @@ import {
 interface ItemIconProps {
   iconName?: string;
   category?: 'vector' | 'firearm' | 'cyberware' | 'telekinesis' | 'passive';
-  rarity?: 'common' | 'rare' | 'epic' | 'legendary';
+  rarity?: 'common' | 'rare' | 'epic' | 'legendary' | 'ascended';
   tier?: number;
   isEvolved?: boolean;
   color?: string;
@@ -110,6 +110,8 @@ export const ItemIcon: React.FC<ItemIconProps> = ({
   let borderBg = 'border-white/10 bg-neutral-900/90 text-gray-300';
   if (isEvolved) {
     borderBg = 'border-amber-400 bg-gradient-to-br from-amber-950/80 via-red-950/80 to-black text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)]';
+  } else if (tier >= 5 || rarity === 'ascended') {
+    borderBg = 'border-rose-400 bg-gradient-to-br from-rose-950/80 via-fuchsia-950/70 to-black text-rose-200 shadow-[0_0_12px_rgba(244,63,94,0.5)]';
   } else if (tier === 4 || rarity === 'legendary') {
     borderBg = 'border-amber-500/80 bg-amber-950/50 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.35)]';
   } else if (tier === 3 || rarity === 'epic') {

@@ -5,6 +5,7 @@ import { Trophy, Skull, RotateCcw, Dna, Swords, Flame, Clock, Sparkles, ArrowRig
 import { sound } from '../utils/sound';
 import { useLanguage } from '../utils/i18n';
 import { MetaProgressionModal } from './MetaProgressionModal';
+import { FINAL_CAMPAIGN_WAVE } from '../data/gameData';
 
 interface GameOverModalProps {
   engine: GameEngine;
@@ -109,7 +110,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
               <div className="font-mono font-bold text-sm text-white">
                 {s.isEndlessMode
                   ? (isRu ? `Волна ${s.wave} (Выживание)` : `Wave ${s.wave} (Survival)`)
-                  : `${s.wave} / 15`}
+                  : `${s.wave} / ${FINAL_CAMPAIGN_WAVE}`}
               </div>
             </div>
           </div>

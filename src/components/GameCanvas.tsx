@@ -3,7 +3,11 @@ import { GameEngine } from '../utils/engine';
 import { Shield, Zap, Sparkles, Heart, Clock, Dna, Swords, Pause, Play, Crosshair, Flame, Activity, Sparkle, AlertTriangle, Music, Skull, MapPin, Wind } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { ItemSynergy, ArenaType, WeaponEvolution, PassiveItem } from '../types';
-import { useLanguage } from '../utils/i18n';
+import { FINAL_CAMPAIGN_WAVE } from '../data/gameData';
+import { useLanguage, getLanguage } from '../utils/i18n';
+
+// Canvas overlay strings are drawn outside React, so they read the active language directly.
+const cloc = (ru: string, en: string) => (getLanguage() === 'ru' ? ru : en);
 import { ItemIcon } from './ItemIcon';
 
 interface GameCanvasProps {
@@ -48,10 +52,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
       isEnraged?: boolean;
       color: string;
       specialAbility?: string;
+      vectorGuard?: number;
+      maxVectorGuard?: number;
+      isStunned?: boolean;
     } | null,
     bossWarningText: '',
     dropshipWarningText: '',
     crisisWarningText: '',
+    assaultWarningText: '',
+    assaultPhaseActive: false,
     killStreak: 0,
     maxKillStreak: 0,
     killStreakTimer: 0,
@@ -61,7 +70,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
     isPlayerStunned: false,
     mobilityCooldown: 0,
     maxMobilityCooldown: 2.8,
-    mobilityName: 'Рывок',
+    mobilityName: 'Dash',
     mobilityDesc: '',
     baggedDna: 0,
     vectorCount: 0,
@@ -145,8 +154,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         isPlayerStunned: !!s.player.isStunned,
         mobilityCooldown: s.player.mobilityCooldownTimer || 0,
         maxMobilityCooldown: s.character.mobilitySkillCooldown || 2.8,
-        mobilityName: s.character.mobilitySkillName || 'Рывок',
-        mobilityDesc: s.character.mobilitySkillDescription || '',
+        mobilityName: s.character.mobilitySkillName || (isRu ? 'Рывок' : 'Dash'),
+        mobilityDesc: s.character.mobilitySkillDesc || '',
         activeBoss: s.activeBoss ? {
           name: s.activeBoss.name,
           hp: Math.max(0, Math.round(s.activeBoss.hp)),
@@ -163,6 +172,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         bossWarningText: s.bossWarningText,
         dropshipWarningText: s.dropshipWarningText,
         crisisWarningText: s.crisisWarningText,
+        assaultWarningText: s.assaultWarningText,
+        assaultPhaseActive: s.assaultPhaseActive,
         killStreak: s.killStreak || 0,
         maxKillStreak: s.maxKillStreak || 0,
         killStreakTimer: s.killStreakTimer || 0,
@@ -341,11 +352,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         {/* Left: Subject Info, HP & Unique Character Resource */}
         <div className="flex items-center gap-3 md:gap-5">
           <div className="flex flex-col">
-            <span className="text-[9px] uppercase tracking-[0.2em] text-red-500 font-bold">СУБЪЕКТ</span>
+            <span className="text-[9px] uppercase tracking-[0.2em] text-red-500 font-bold">{isRu ? 'СУБЪЕКТ' : 'SUBJECT'}</span>
             <div className="text-xs md:text-sm font-cinzel font-bold text-white tracking-wider flex items-center gap-1.5">
               <span>{engine.state.character.name}</span>
               <span className="text-[9px] font-mono text-red-500 font-bold">
-                [{engine.state.character.kind === 'human_cyborg' ? 'КИБОРГ SAT' : 'ДИКЛОНИУС'}]
+                [{engine.state.character.kind === 'human_cyborg' ? (isRu ? 'КИБОРГ SAT' : 'SAT CYBORG') : (isRu ? 'ДИКЛОНИУС' : 'DICLONIUS')}]
               </span>
             </div>
           </div>
@@ -355,7 +366,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           {/* HP Bar */}
           <div className="flex flex-col w-28 md:w-36">
             <div className="flex justify-between items-center text-[9px] font-mono text-gray-400 mb-0.5">
-              <span className="text-red-400 font-bold uppercase tracking-wider">ОЗ</span>
+              <span className="text-red-400 font-bold uppercase tracking-wider">{isRu ? 'ОЗ' : 'HP'}</span>
               <span className="text-white font-bold">{hudState.hp} / {hudState.maxHp}</span>
             </div>
             <div className="h-2 w-full bg-gray-900 rounded-full overflow-hidden border border-white/5 relative">
@@ -393,7 +404,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
             <div className="flex flex-col w-24 md:w-32">
               <div className="flex justify-between items-center text-[9px] font-mono mb-0.5">
                 <span className={`font-bold uppercase tracking-wider ${hudState.isPlayerStunned ? 'text-red-400 font-black animate-pulse' : 'text-cyan-400'}`}>
-                  {hudState.isPlayerStunned ? 'ПРОБИТИЕ!' : 'ВЕКТОР-БЛОК'}
+                  {hudState.isPlayerStunned ? (isRu ? 'ПРОБИТИЕ!' : 'GUARD BROKEN!') : (isRu ? 'ВЕКТОР-БЛОК' : 'VECTOR GUARD')}
                 </span>
                 <span className="text-white font-bold">{hudState.vectorGuard}/{hudState.maxVectorGuard}</span>
               </div>
@@ -415,7 +426,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           {/* DNA Collected & Bagged Materials Reserve */}
           <div className="flex items-center gap-2">
             <div className="flex flex-col">
-              <span className="text-[9px] uppercase tracking-[0.2em] text-gray-500 font-bold">ДНК</span>
+              <span className="text-[9px] uppercase tracking-[0.2em] text-gray-500 font-bold">{isRu ? 'ДНК' : 'DNA'}</span>
               <div className="flex items-center gap-1.5 text-red-400 font-mono font-bold text-xs md:text-sm">
                 <Dna className="w-3.5 h-3.5 text-red-400" />
                 <span>{hudState.dna}</span>
@@ -428,9 +439,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
                         ? 'bg-amber-950/80 border-amber-400 text-amber-200'
                         : 'bg-sky-950/80 border-sky-400 text-sky-200'
                     }`}
-                    title="Бонус ДНК и магнетизма за непрерывную серию убийств"
+                    title={isRu ? 'Бонус ДНК и магнетизма за непрерывную серию убийств' : 'DNA and magnet bonus for an unbroken kill streak'}
                   >
-                    x{hudState.surgeLevel === 3 ? '2.0' : hudState.surgeLevel === 2 ? '1.5' : '1.25'} ДНК
+                    x{hudState.surgeLevel === 3 ? '2.0' : hudState.surgeLevel === 2 ? '1.5' : '1.25'} {isRu ? 'ДНК' : 'DNA'}
                   </span>
                 )}
               </div>
@@ -439,10 +450,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
             {hudState.baggedDna > 0 && (
               <div
                 className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono text-[10px] font-bold shadow-[0_0_8px_rgba(245,158,11,0.4)] animate-pulse"
-                title="Мешок сбережений: несобранные кристаллы сохраняются в резерве и выпадают с удвоенным номиналом (2x) из первых убитых врагов волны!"
+                title={isRu
+                  ? 'Мешок сбережений: несобранные кристаллы уходят в резерв и возвращаются долями с первых убийств следующей волны'
+                  : 'Bagged reserve: uncollected crystals are banked and paid back in shares from the next wave’s first kills'}
               >
                 <Sparkles className="w-3 h-3 text-amber-400 animate-spin" />
-                <span>+{hudState.baggedDna} 2x МЕШОК</span>
+                <span>+{hudState.baggedDna} {isRu ? 'МЕШОК' : 'BAGGED'}</span>
               </div>
             )}
           </div>
@@ -452,33 +465,43 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         <div className="flex flex-col items-center">
           <div className="flex items-center gap-2">
             <span className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-mono">
-              {hudState.isEndlessMode || hudState.wave > 15 ? (
+              {hudState.isEndlessMode || hudState.wave > FINAL_CAMPAIGN_WAVE ? (
                 <span className="text-amber-400 font-bold flex items-center gap-1">
                   <Flame className="w-3 h-3 animate-pulse" />
-                  ВЫЖИВАНИЕ • ВОЛНА {hudState.wave}
+                  {isRu ? 'ВЫЖИВАНИЕ' : 'SURVIVAL'} • {isRu ? 'ВОЛНА' : 'WAVE'} {hudState.wave}
                 </span>
               ) : (
-                `ВОЛНА ${hudState.wave.toString().padStart(2, '0')} / 15`
+                `${isRu ? 'ВОЛНА' : 'WAVE'} ${hudState.wave.toString().padStart(2, '0')} / ${FINAL_CAMPAIGN_WAVE}`
               )}
             </span>
             <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-wider bg-white/5 border border-white/10 text-gray-300">
-              {hudState.currentArena === 'lab_containment' && '🔬 ЛАБ-01'}
-              {hudState.currentArena === 'enoshima_coast' && '🌊 ЭНОСИМА'}
-              {hudState.currentArena === 'military_highway' && '🚧 ШОССЕ SAT'}
-              {hudState.currentArena === 'kakuzawa_citadel' && '🏛️ ЦИТАДЕЛЬ'}
+              {hudState.currentArena === 'lab_containment' && (isRu ? '🔬 ЛАБ-01' : '🔬 LAB-01')}
+              {hudState.currentArena === 'enoshima_coast' && (isRu ? '🌊 ЭНОСИМА' : '🌊 ENOSHIMA')}
+              {hudState.currentArena === 'military_highway' && (isRu ? '🚧 ШОССЕ SAT' : '🚧 SAT HIGHWAY')}
+              {hudState.currentArena === 'kakuzawa_citadel' && (isRu ? '🏛️ ЦИТАДЕЛЬ' : '🏛️ CITADEL')}
             </span>
           </div>
           {hudState.isWaveEnding ? (
             <div className="flex items-center gap-1.5 text-amber-400 font-mono font-black text-xs md:text-sm tracking-wider animate-pulse mt-0.5">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>МАГАЗИН ЧЕРЕЗ {Math.max(0.1, hudState.waveEndingTimer).toFixed(1)}s</span>
+              <span>{isRu ? 'МАГАЗИН ЧЕРЕЗ' : 'OUTPOST IN'} {Math.max(0.1, hudState.waveEndingTimer).toFixed(1)}s</span>
             </div>
           ) : (
-            <div className={`font-cinzel text-lg md:text-2xl font-black tracking-widest text-glow ${
-              hudState.waveTimer <= 5 ? 'text-red-500 animate-pulse' : 'text-white'
-            }`}>
-              {`${hudState.waveTimer}s`}
-            </div>
+            <>
+              <div className={`font-cinzel text-lg md:text-2xl font-black tracking-widest text-glow ${
+                hudState.waveTimer <= 5 ? 'text-red-500 animate-pulse' : 'text-white'
+              }`}>
+                {`${hudState.waveTimer}s`}
+              </div>
+              {/* Which beat of the wave the player is in: open sweep, or elite assault */}
+              <div className={`text-[9px] font-mono font-bold uppercase tracking-[0.18em] -mt-0.5 ${
+                hudState.assaultPhaseActive ? 'text-orange-400' : 'text-emerald-400/80'
+              }`}>
+                {hudState.assaultPhaseActive
+                  ? (isRu ? '▲ ШТУРМ' : '▲ ASSAULT')
+                  : (isRu ? '◇ РАЗВЕДКА' : '◇ SWEEP')}
+              </div>
+            </>
           )}
         </div>
 
@@ -494,7 +517,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               id="pause-toggle-btn"
               onClick={onPauseToggle}
               className="px-2.5 py-1.5 rounded-lg glass-panel hover:border-red-500/50 text-gray-300 hover:text-white transition-all cursor-pointer shadow-md flex items-center gap-1.5 text-xs font-mono"
-              title="Пауза [ESC]"
+              title={isRu ? 'Пауза [ESC]' : 'Pause [ESC]'}
             >
               {isPaused ? <Play className="w-3.5 h-3.5 text-emerald-400" /> : <Pause className="w-3.5 h-3.5 text-gray-300" />}
               <span className="text-[10px] text-gray-400 hidden md:inline">ESC</span>
@@ -515,7 +538,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               {hudState.activeBoss.isEnraged && (
                 <span className="px-2 py-0.5 rounded bg-red-600/90 text-white font-mono text-[10px] font-black animate-pulse flex items-center gap-1 shadow-[0_0_12px_rgba(239,68,68,0.9)]">
                   <Flame className="w-3 h-3" />
-                  ФАЗА 2: БЕРСЕРК
+                  {isRu ? 'ФАЗА 2: БЕРСЕРК' : 'PHASE 2: BERSERK'}
                 </span>
               )}
             </div>
@@ -523,7 +546,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               {hudState.activeBoss.hp} / {hudState.activeBoss.maxHp} HP
               {hudState.activeBoss.maxShield && hudState.activeBoss.shield !== undefined && (
                 <span className="text-cyan-400 ml-2 font-bold">
-                  ({hudState.activeBoss.shield} ЩИТ)
+                  ({hudState.activeBoss.shield} {isRu ? 'ЩИТ' : 'SHIELD'})
                 </span>
               )}
             </div>
@@ -549,7 +572,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
             <div className="w-full max-w-2xl mt-1.5 flex flex-col">
               <div className="flex justify-between items-center text-[10px] font-mono mb-0.5">
                 <span className={hudState.activeBoss.isStunned ? "text-yellow-400 font-bold animate-pulse" : "text-amber-300 font-medium"}>
-                  {hudState.activeBoss.isStunned ? "⚡ СТОЙКА ПРОБИТА! ОГЛУШЕНИЕ (2X УРОН)" : "ВЕКТОРНЫЙ БЛОК / СТОЙКА БОССА"}
+                  {hudState.activeBoss.isStunned
+                    ? (isRu ? '⚡ СТОЙКА ПРОБИТА! ОГЛУШЕНИЕ (2X УРОН)' : '⚡ GUARD BROKEN! STUNNED (2X DAMAGE)')
+                    : (isRu ? 'ВЕКТОРНЫЙ БЛОК / СТОЙКА БОССА' : 'BOSS VECTOR GUARD / POSTURE')}
                 </span>
                 <span className="text-gray-400 font-mono">
                   {Math.max(0, Math.round(hudState.activeBoss.vectorGuard || 0))} / {hudState.activeBoss.maxVectorGuard}
@@ -595,6 +620,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         </div>
       )}
 
+      {/* Assault Phase Banner - the wave's second beat begins */}
+      {hudState.assaultWarningText && !hudState.bossWarningText && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center animate-in slide-in-from-top duration-300">
+          <div className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-orange-950 via-zinc-950 to-orange-950 border-2 border-orange-500 shadow-[0_0_35px_rgba(249,115,22,0.85)] backdrop-blur-md flex items-center gap-3">
+            <Skull className="w-5 h-5 text-orange-400 animate-pulse flex-shrink-0" />
+            <span className="text-xs md:text-sm font-mono font-black uppercase tracking-wider text-orange-100">
+              {hudState.assaultWarningText}
+            </span>
+            <Skull className="w-5 h-5 text-orange-400 animate-pulse flex-shrink-0" />
+          </div>
+        </div>
+      )}
+
       {/* SAT Artillery Crisis Warning Banner */}
       {hudState.crisisWarningText && !hudState.bossWarningText && (
         <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center animate-bounce">
@@ -614,7 +652,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           <div className="px-7 py-4 rounded-2xl bg-gradient-to-b from-amber-950/95 via-black/95 to-red-950/95 border-2 border-amber-400 shadow-[0_0_50px_rgba(245,158,11,0.85)] backdrop-blur-lg flex flex-col items-center text-center max-w-lg">
             <div className="flex items-center gap-2 text-[10px] md:text-xs font-mono font-black uppercase tracking-[0.25em] text-amber-400">
               <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
-              <span>КАТАЛИТИЧЕСКАЯ ЭВОЛЮЦИЯ ОРУЖИЯ • ТИР 5</span>
+              <span>{isRu ? 'КАТАЛИТИЧЕСКАЯ ЭВОЛЮЦИЯ ОРУЖИЯ • ТИР 5' : 'CATALYTIC WEAPON EVOLUTION • TIER 5'}</span>
               <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
             </div>
 
@@ -626,7 +664,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
             </div>
 
             <div className="text-[11px] font-mono text-amber-300 mt-0.5 flex items-center gap-1.5">
-              <span className="text-gray-400">Катализатор:</span>
+              <span className="text-gray-400">{isRu ? 'Катализатор:' : 'Catalyst:'}</span>
               <span className="font-bold text-white bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40">
                 {hudState.recentEvolutionPopup.requiredPassiveName}
               </span>
@@ -650,7 +688,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
       {hudState.activeSynergies.length > 0 && (
         <div className="relative z-10 w-full px-4 md:px-8 py-1 bg-amber-950/40 border-b border-amber-500/20 backdrop-blur-xs flex items-center justify-center gap-2 overflow-x-auto pointer-events-none">
           <Sparkles className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-          <span className="text-[10px] uppercase tracking-wider font-mono text-amber-300 font-bold">АКТИВНЫЕ СИНЕРГИИ:</span>
+          <span className="text-[10px] uppercase tracking-wider font-mono text-amber-300 font-bold">{isRu ? 'АКТИВНЫЕ СИНЕРГИИ:' : 'ACTIVE SYNERGIES:'}</span>
           {hudState.activeSynergies.map((syn) => (
             <div
               key={syn.id}
@@ -671,7 +709,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         {/* Left: EXP Progress */}
         <div className="flex items-center gap-4 flex-1 max-w-md">
           <div className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold whitespace-nowrap">
-            УР. {hudState.level}
+            {isRu ? 'УР.' : 'LVL'} {hudState.level}
           </div>
           <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden flex border border-white/5">
             <div
@@ -687,7 +725,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         {/* Center/Right: Arsenal & Space Burst */}
         <div className="flex items-center gap-3">
           {/* Arsenal: 6 Weapon Slots with Visual Icons */}
-          <div className="hidden sm:flex items-center gap-1.5 glass-panel p-1 rounded-lg border-white/10" title="Боевой арсенал">
+          <div className="hidden sm:flex items-center gap-1.5 glass-panel p-1 rounded-lg border-white/10" title={isRu ? 'Боевой арсенал' : 'Combat arsenal'}>
             {Array.from({ length: 6 }).map((_, index) => {
               const w = hudState.weapons[index];
               const isEvo = w?.isEvolved || (w?.tier && w.tier >= 5);
@@ -715,7 +753,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
                 <div
                   key={index}
                   className="w-7 h-7 rounded border border-dashed border-white/10 bg-black/40 flex items-center justify-center text-gray-600 text-[10px]"
-                  title="Свободный оружейный слот"
+                  title={isRu ? 'Свободный оружейный слот' : 'Empty weapon slot'}
                 >
                   +
                 </div>
@@ -727,7 +765,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           {hudState.passiveItems.length > 0 && (
             <div
               className="hidden lg:flex items-center gap-1 glass-panel px-1.5 py-1 rounded-lg border-white/10 max-w-[200px] overflow-x-auto"
-              title={`Пассивные аугментации (${hudState.passiveItems.length})`}
+              title={`${isRu ? 'Пассивные аугментации' : 'Passive augments'} (${hudState.passiveItems.length})`}
             >
               {hudState.passiveItems.slice(0, 6).map((p, idx) => (
                 <div
@@ -756,10 +794,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
             <div
               id="vector-telemetry-badge"
               className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-lg border border-pink-500/30 bg-pink-950/30 text-[11px] font-mono shadow-[0_0_10px_rgba(236,72,153,0.15)]"
-              title="Кинетическая система векторов: частота вибрации, пробитие брони и баллистический перехват"
+              title={isRu ? 'Кинетическая система векторов: частота вибрации, пробитие брони и баллистический перехват' : 'Vector kinetics: vibration frequency, armour shear and ballistic interception'}
             >
               <span className="text-pink-400 font-bold tracking-wider">
-                ВЕКТОРЫ: {hudState.vectorCount}
+                {isRu ? 'ВЕКТОРЫ' : 'VECTORS'}: {hudState.vectorCount}
               </span>
               <span className="text-gray-600">•</span>
               <span
@@ -769,12 +807,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
                     : 'text-gray-300'
                 }
               >
-                {hudState.avgVibrationHz} Гц
-                {hudState.avgVibrationHz >= 750 ? ' [⚡РЕЗОНАНС]' : ''}
+                {hudState.avgVibrationHz} {isRu ? 'Гц' : 'Hz'}
+                {hudState.avgVibrationHz >= 750 ? (isRu ? ' [⚡РЕЗОНАНС]' : ' [⚡RESONANCE]') : ''}
               </span>
               {hudState.deflectorsCount > 0 && (
                 <span className="text-purple-300 text-[10px] bg-purple-950/50 px-1.5 py-0.5 rounded border border-purple-500/30">
-                  {hudState.deflectorsCount} ПЕРЕХВАТ
+                  {hudState.deflectorsCount} {isRu ? 'ПЕРЕХВАТ' : 'INTERCEPT'}
                 </span>
               )}
             </div>
@@ -817,7 +855,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               <span>
                 {hudState.specialCooldown > 0
                   ? `${Math.ceil(hudState.specialCooldown)}s`
-                  : `[ПРОБЕЛ] ${engine.state.character.specialAbilityName}`}
+                  : `[${isRu ? 'ПРОБЕЛ' : 'SPACE'}] ${engine.state.character.specialAbilityName}`}
               </span>
             </button>
           </div>
@@ -1567,10 +1605,65 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       ctx.fillStyle = '#fef08a';
       ctx.font = 'bold 9px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(`АРТОБСТРЕЛ ${Math.max(0.1, h.timer).toFixed(1)}s`, h.x, h.y - h.radius - 6);
+      ctx.fillText(`${cloc('АРТОБСТРЕЛ', 'BARRAGE')} ${Math.max(0.1, h.timer).toFixed(1)}s`, h.x, h.y - h.radius - 6);
 
       ctx.restore();
     }
+  }
+
+  // 6.9. Thrown-body flight path and predicted impact crater.
+  // A thrown enemy used to cross ~155px in 0.6s with no destination cue, so the throw read
+  // as a flicker. The arc is now long enough to follow, and the landing zone is telegraphed
+  // while the body is still airborne so the player can move to or away from it.
+  for (const enemy of s.enemies) {
+    if (!enemy.isThrown || enemy.throwLandingX === undefined || enemy.throwLandingY === undefined) continue;
+    const lx = enemy.throwLandingX;
+    const ly = enemy.throwLandingY;
+    const impactRadius = enemy.throwImpactRadius || 95;
+    const remaining = Math.hypot(lx - enemy.x, ly - enemy.y);
+    // Marker fades in as the body approaches, so distant early frames stay uncluttered.
+    const proximity = Math.max(0, Math.min(1, 1 - remaining / 520));
+    const pulse = (Math.sin(Date.now() * 0.012) + 1) * 0.5;
+
+    ctx.save();
+
+    // Flight line from body to impact point
+    ctx.strokeStyle = `rgba(192, 132, 252, ${0.15 + proximity * 0.35})`;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 8]);
+    ctx.beginPath();
+    ctx.moveTo(enemy.x, enemy.y);
+    ctx.lineTo(lx, ly);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Impact crater ring
+    ctx.strokeStyle = `rgba(239, 68, 68, ${0.35 + proximity * 0.45})`;
+    ctx.lineWidth = 2 + proximity * 1.5;
+    ctx.shadowColor = "#ef4444";
+    ctx.shadowBlur = 10 + proximity * 14;
+    ctx.beginPath();
+    ctx.arc(lx, ly, impactRadius * (0.55 + proximity * 0.45), 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Contracting inner ring reads as a countdown to impact
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.2 + proximity * 0.5})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(lx, ly, impactRadius * (0.55 + proximity * 0.45) * (0.35 + pulse * 0.3), 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Cross-hair at the exact impact point
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 + proximity * 0.5})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(lx - 9, ly);
+    ctx.lineTo(lx + 9, ly);
+    ctx.moveTo(lx, ly - 9);
+    ctx.lineTo(lx, ly + 9);
+    ctx.stroke();
+
+    ctx.restore();
   }
 
   // 7. Draw Enemies
@@ -1815,36 +1908,11 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     } else if (enemy.isBoss) {
       // BOSS: Unique visual presentation with Vector Arms, Shields, Enrage flames & Horns
 
-      // 1. Draw Boss Vector Arms
-      if (enemy.vectorArms && enemy.vectorArms.length > 0) {
-        for (const arm of enemy.vectorArms) {
-          ctx.save();
-          const armLen = arm.length || 150;
-          const angle = arm.currentAngle;
-          const endX = enemy.x + Math.cos(angle) * armLen;
-          const endY = enemy.y + Math.sin(angle) * armLen;
-          const ctrlX = enemy.x + Math.cos(angle + 0.18) * (armLen * 0.52);
-          const ctrlY = enemy.y + Math.sin(angle + 0.18) * (armLen * 0.52);
+      // NOTE: boss vector arms are rendered from arm.segments in the dedicated vector pass
+      // below. A second, dimmer copy used to be drawn here from currentAngle/length, which
+      // showed up in-game as faded duplicate arms trailing the real ones.
 
-          ctx.strokeStyle = enemy.isEnraged ? 'rgba(239, 68, 68, 0.5)' : 'rgba(244, 114, 182, 0.38)';
-          ctx.lineWidth = enemy.isEnraged ? 3.5 : 2.5;
-          ctx.shadowColor = enemy.color;
-          ctx.shadowBlur = 10;
-          ctx.beginPath();
-          ctx.moveTo(enemy.x, enemy.y);
-          ctx.quadraticCurveTo(ctrlX, ctrlY, endX, endY);
-          ctx.stroke();
-
-          // Vector blade glowing tip
-          ctx.fillStyle = '#ffffff';
-          ctx.beginPath();
-          ctx.arc(endX, endY, 3, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-
-      // 2. Draw Kinetic Barrier Shield Bubble
+      // 1. Draw Kinetic Barrier Shield Bubble
       if (enemy.shield && enemy.shield > 0) {
         ctx.save();
         const sPulse = (Math.sin(Date.now() * 0.008) + 1) * 0.5;
@@ -1858,7 +1926,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
         ctx.restore();
       }
 
-      // 3. Draw Enraged Phase 2 Crimson Aura
+      // 2. Draw Enraged Phase 2 Crimson Aura
       if (enemy.isEnraged) {
         ctx.save();
         const enrPulse = (Math.sin(Date.now() * 0.015) + 1) * 0.5;
@@ -1872,7 +1940,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
         ctx.restore();
       }
 
-      // 4. Boss Body Sprite
+      // 3. Boss Body Sprite
       if (enemy.type === 'boss_bando') {
         // Cyborg Commander Bando
         ctx.fillStyle = '#0f172a';
@@ -2110,7 +2178,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       ctx.font = 'bold 8px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('⚡ GRABBED', enemy.x, badgeY);
+      ctx.fillText(cloc('⚡ ЗАХВАТ', '⚡ GRABBED'), enemy.x, badgeY);
       ctx.restore();
     } else if (enemy.isThrown) {
       // Readability badge: THROWN HUMAN PROJECTILE
@@ -2122,7 +2190,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       ctx.font = 'bold 8px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('☄️ THROWN', enemy.x, badgeY);
+      ctx.fillText(cloc('☄️ БРОСОК', '☄️ THROWN'), enemy.x, badgeY);
       ctx.restore();
     } else if (enemy.internalRuptureTimer !== undefined && enemy.internalRuptureTimer > 0) {
       // Pulsing internal organ rupture tremor and X-ray glow
@@ -2146,7 +2214,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       ctx.font = 'bold 8px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('💥 RUPTURE', enemy.x, badgeY);
+      ctx.fillText(cloc('💥 РАЗРЫВ', '💥 RUPTURE'), enemy.x, badgeY);
       ctx.restore();
     } else if (enemy.isStunned) {
       // Readability badge: STUNNED
@@ -2158,7 +2226,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       ctx.font = 'bold 8px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('⚡ STUNNED', enemy.x, badgeY);
+      ctx.fillText(cloc('⚡ ОГЛУШЁН', '⚡ STUNNED'), enemy.x, badgeY);
       ctx.restore();
     }
 
@@ -2716,7 +2784,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     }
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('⚡ ОГЛУШЕН!', p.x, p.y - p.radius - 18);
+    ctx.fillText(cloc('⚡ ОГЛУШЕН!', '⚡ STUNNED!'), p.x, p.y - p.radius - 18);
     ctx.restore();
   }
 
@@ -2738,7 +2806,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#06b6d4';
-    ctx.fillText('⚠️ ЭМИ ПОДАВЛЕНИЕ', p.x, p.y + p.radius + 16);
+    ctx.fillText(cloc('⚠️ ЭМИ ПОДАВЛЕНИЕ', '⚠️ EMP SUPPRESSION'), p.x, p.y + p.radius + 16);
     ctx.restore();
   }
 
@@ -3045,7 +3113,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     ctx.textAlign = 'center';
     ctx.shadowColor = '#ef4444';
     ctx.shadowBlur = 8;
-    ctx.fillText('⚡ КРИЗИСНЫЙ ПРОРЫВ: +15% СКОРОСТЬ & ВАМПИРИЗМ С УБИЙСТВ ⚡', width / 2, height - 16);
+    ctx.fillText(cloc('⚡ КРИЗИСНЫЙ ПРОРЫВ: +15% СКОРОСТЬ & ВАМПИРИЗМ С УБИЙСТВ ⚡', '⚡ CRISIS SURGE: +15% SPEED & LIFESTEAL ON KILL ⚡'), width / 2, height - 16);
     ctx.restore();
   }
 

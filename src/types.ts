@@ -209,6 +209,10 @@ export interface StatUpgradeOption {
   descriptionEn?: string;
   statKey: keyof PlayerStats;
   amount: number;
+  // Some elite ("ascended") upgrades advertise a second effect in their text.
+  // Without these the card would promise more than it grants.
+  secondaryStatKey?: keyof PlayerStats;
+  secondaryAmount?: number;
   rarity: WeaponRarity;
   icon: string;
   value?: number;
@@ -342,6 +346,9 @@ export interface Enemy {
   hp: number;
   maxHp: number;
   speed: number;
+  // Unmodified speed, captured the first time a temporary slow is applied so that
+  // aura effects can be reverted instead of compounding frame after frame.
+  baseSpeed?: number;
   damage: number;
   radius: number;
   color: string;
@@ -412,6 +419,10 @@ export interface Enemy {
   throwRotation?: number;
   throwDamage?: number;
   throwImpactRadius?: number;
+  // Predicted landing point, recomputed while airborne so the player can read where a
+  // thrown body is going to come down before it lands.
+  throwLandingX?: number;
+  throwLandingY?: number;
   hitstopTimer?: number;
   internalRuptureTimer?: number;
   internalRuptureDuration?: number;
@@ -421,6 +432,17 @@ export interface Enemy {
   sonicPulseTimer?: number;
   netTrapCooldown?: number;
   shieldAngle?: number; // Directional ballistic shield orientation
+  // Boss parry rate limiter. Without it every incoming vector strike found some arm
+  // within the guard arc, so 100% of player strikes were deflected.
+  parryCooldownTimer?: number;
+  // Minimum gap before another hitstop may start. Without it, a fast attacker refreshes
+  // hitstop faster than it expires and freezes the enemy update loop indefinitely.
+  hitstopCooldown?: number;
+  // Velocity measured from actual position change each frame, used to lead projectile aim.
+  trackVx?: number;
+  trackVy?: number;
+  trackLastX?: number;
+  trackLastY?: number;
 }
 
 export interface Projectile {
@@ -445,6 +467,9 @@ export interface Projectile {
   isMine?: boolean;
   isEmp?: boolean; // Sonic/EMP wave that suppresses vectors
   isNetTrap?: boolean; // Monofilament taser net that binds vector arms
+  // Set once a boss has already rolled to swat this projectile, so the parry is a single
+  // contested roll per shot rather than a re-roll on every frame it spends in reach.
+  parryCheckedBy?: number[];
 }
 
 export interface DnaDrop {

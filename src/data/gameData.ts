@@ -251,8 +251,8 @@ export const CHARACTERS: Character[] = [
     startingWeaponId: 'restrained_shockwave',
     unlocked: false,
     isSecret: true,
-    secretHintRu: 'Пройдите 10 волн за Люси, не купив ни одного огнестрельного оружия или кибернетики (чистый диклонический путь).',
-    secretHintEn: 'Complete 10 waves as Lucy without buying any firearm or cyberware weapons (pure Diclonius path).',
+    secretHintRu: 'Пройдите кампанию за Люси, не купив ни одного огнестрельного оружия или кибернетики (чистый диклонический путь).',
+    secretHintEn: 'Win the campaign as Lucy without buying any firearm or cyberware weapons (pure Diclonius path).',
     secretRequirementRu: 'Победа за Люси с исключительно векторным/телекинетическим арсеналом.',
     secretRequirementEn: 'Win as Lucy with only vector/telekinesis weapons.',
     specialAbilityName: 'Детонация замков маски',
@@ -300,8 +300,8 @@ export const CHARACTERS: Character[] = [
     startingWeaponId: 'kurama_revolver',
     unlocked: false,
     isSecret: true,
-    secretHintRu: 'Защитите Нану: завершите 10 волн за Нану, отразив кинетическим щитом не менее 150 пуль и сохранив здоровье не ниже 80%.',
-    secretHintEn: 'Protect Nana: complete 10 waves as Nana with >=150 deflected bullets and at least 80% HP remaining.',
+    secretHintRu: 'Защитите Нану: завершите кампанию за Нану, отразив кинетическим щитом не менее 150 пуль и сохранив здоровье не ниже 80%.',
+    secretHintEn: 'Protect Nana: win the campaign as Nana with >=150 deflected bullets and at least 80% HP remaining.',
     secretRequirementRu: '150+ отражений пуль и победа при 80%+ HP за Нану.',
     secretRequirementEn: '150+ bullet deflections and win with 80%+ HP as Nana.',
     specialAbilityName: 'Антивекторная сыворотка Курамы',
@@ -350,10 +350,10 @@ export const CHARACTERS: Character[] = [
     startingWeaponId: 'gravity_singularity',
     unlocked: false,
     isSecret: true,
-    secretHintRu: 'Достигните 15-й волны в Бесконечном Режиме (Endless Mode) ИЛИ синтезируйте Каталитическую Эволюцию T5 в победном забеге.',
-    secretHintEn: 'Reach Wave 15 in Endless Mode OR synthesize a Tier 5 Catalytic Evolution in a winning run.',
-    secretRequirementRu: 'Волна 15 в бесконечном режиме или Катализатор T5 в победе.',
-    secretRequirementEn: 'Wave 15 in Endless Mode or Tier 5 Catalyst in a win.',
+    secretHintRu: 'Достигните 25-й волны в Бесконечном Режиме (Endless Mode) ИЛИ синтезируйте Каталитическую Эволюцию T5 в победном забеге.',
+    secretHintEn: 'Reach Wave 25 in Endless Mode OR synthesize a Tier 5 Catalytic Evolution in a winning run.',
+    secretRequirementRu: 'Волна 25 в бесконечном режиме или Катализатор T5 в победе.',
+    secretRequirementEn: 'Wave 25 in Endless Mode or Tier 5 Catalyst in a win.',
     specialAbilityName: 'Хроно-Стазис Мозга',
     specialAbilityDesc: 'Коллапс пространственно-временного континуума: полностью останавливает время на 5 секунд для всех врагов и снарядов на экране.',
     specialAbilityCooldown: 24,
@@ -1265,7 +1265,7 @@ export const WAVES: WaveConfig[] = [
   // =========================================================================
   {
     waveNumber: 1,
-    duration: 35,
+    duration: 40,
     enemySpawnRate: 1.6,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner'],
     maxConcurrentEnemies: 24,
@@ -1275,7 +1275,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 2,
-    duration: 40,
+    duration: 46,
     enemySpawnRate: 2.2,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield'],
     maxConcurrentEnemies: 30,
@@ -1285,7 +1285,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 3,
-    duration: 45,
+    duration: 52,
     enemySpawnRate: 2.8,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer'],
     maxConcurrentEnemies: 38,
@@ -1300,7 +1300,7 @@ export const WAVES: WaveConfig[] = [
   // =========================================================================
   {
     waveNumber: 4,
-    duration: 45,
+    duration: 56,
     enemySpawnRate: 3.2,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'assault_drone'],
     maxConcurrentEnemies: 46,
@@ -1310,7 +1310,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 5,
-    duration: 50,
+    duration: 62,
     enemySpawnRate: 3.8,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper'],
     maxConcurrentEnemies: 54,
@@ -1320,7 +1320,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 6,
-    duration: 50,
+    duration: 62,
     enemySpawnRate: 4.2,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'sat_sniper', 'emp_disruptor'],
     maxConcurrentEnemies: 60,
@@ -1330,7 +1330,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 7,
-    duration: 55,
+    duration: 68,
     enemySpawnRate: 4.8,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'mutant_beast'],
     maxConcurrentEnemies: 68,
@@ -1345,7 +1345,7 @@ export const WAVES: WaveConfig[] = [
   // =========================================================================
   {
     waveNumber: 8,
-    duration: 55,
+    duration: 68,
     enemySpawnRate: 5.2,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'sat_sniper', 'silpelit_clone'],
     maxConcurrentEnemies: 74,
@@ -1355,7 +1355,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 9,
-    duration: 60,
+    duration: 74,
     enemySpawnRate: 5.6,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'emp_disruptor', 'sat_sniper'],
     maxConcurrentEnemies: 80,
@@ -1365,7 +1365,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 10,
-    duration: 60,
+    duration: 74,
     enemySpawnRate: 6.0,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'emp_disruptor', 'silpelit_clone', 'mutant_beast'],
     maxConcurrentEnemies: 86,
@@ -1375,7 +1375,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 11,
-    duration: 65,
+    duration: 80,
     enemySpawnRate: 6.4,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'silpelit_clone', 'mutant_beast', 'sat_sniper'],
     maxConcurrentEnemies: 92,
@@ -1390,7 +1390,7 @@ export const WAVES: WaveConfig[] = [
   // =========================================================================
   {
     waveNumber: 12,
-    duration: 65,
+    duration: 80,
     enemySpawnRate: 6.8,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'emp_disruptor', 'sat_sniper', 'silpelit_clone', 'mutant_beast'],
     maxConcurrentEnemies: 98,
@@ -1400,7 +1400,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 13,
-    duration: 70,
+    duration: 86,
     enemySpawnRate: 7.2,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'silpelit_clone', 'mutant_beast', 'sat_sniper'],
     maxConcurrentEnemies: 104,
@@ -1410,7 +1410,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 14,
-    duration: 75,
+    duration: 92,
     enemySpawnRate: 7.6,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'silpelit_clone', 'mutant_beast', 'emp_disruptor', 'sat_sniper'],
     maxConcurrentEnemies: 110,
@@ -1420,7 +1420,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 15,
-    duration: 85,
+    duration: 100,
     enemySpawnRate: 8.2,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'silpelit_clone', 'mutant_beast', 'emp_disruptor', 'sat_sniper'],
     maxConcurrentEnemies: 120,
@@ -1435,7 +1435,7 @@ export const WAVES: WaveConfig[] = [
   // =========================================================================
   {
     waveNumber: 16,
-    duration: 80,
+    duration: 100,
     enemySpawnRate: 8.6,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast'],
     maxConcurrentEnemies: 125,
@@ -1445,7 +1445,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 17,
-    duration: 85,
+    duration: 105,
     enemySpawnRate: 9.0,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast'],
     maxConcurrentEnemies: 130,
@@ -1455,7 +1455,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 18,
-    duration: 90,
+    duration: 110,
     enemySpawnRate: 9.4,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast'],
     maxConcurrentEnemies: 135,
@@ -1465,7 +1465,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 19,
-    duration: 95,
+    duration: 115,
     enemySpawnRate: 9.8,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast'],
     maxConcurrentEnemies: 140,
@@ -1475,7 +1475,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 20,
-    duration: 105,
+    duration: 125,
     enemySpawnRate: 10.5,
     allowedEnemies: ['sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast'],
     maxConcurrentEnemies: 150,
@@ -1485,13 +1485,16 @@ export const WAVES: WaveConfig[] = [
   },
 ];
 
+// Length of the authored campaign. Endless survival starts on the next wave.
+export const FINAL_CAMPAIGN_WAVE: number = WAVES[WAVES.length - 1].waveNumber;
+
 export const ASCENDED_STAT_UPGRADES: StatUpgradeOption[] = [
-  { id: 'u_asc_hp', name: '[Элитный] +16 Макс ОЗ & Регенерация', russianName: '[Элитный] +16 Макс ОЗ & Регенерация', description: 'Стабилизация клеточных мембран (+16 ОЗ, +1 Реген/5с)', descriptionEn: 'Cellular reinforcement (+16 Max HP, +1 HP Regen/5s)', statKey: 'maxHp', amount: 16, rarity: 'ascended', icon: 'Heart' },
+  { id: 'u_asc_hp', name: '[Элитный] +16 Макс ОЗ & Регенерация', russianName: '[Элитный] +16 Макс ОЗ & Регенерация', description: 'Стабилизация клеточных мембран (+16 ОЗ, +1 Реген/5с)', descriptionEn: 'Cellular reinforcement (+16 Max HP, +1 HP Regen/5s)', statKey: 'maxHp', amount: 16, secondaryStatKey: 'hpRegen', secondaryAmount: 1, rarity: 'ascended', icon: 'Heart' },
   { id: 'u_asc_psi', name: '[Элитный] +8% Пси-Мощь / Огневая мощь', russianName: '[Элитный] +8% Пси-Мощь / Огневая мощь', description: 'Увеличение плотности кинетического импульса на 8%', descriptionEn: 'Increases all vector and weapon damage by 8%', statKey: 'psiPower', amount: 8, rarity: 'ascended', icon: 'Flame' },
   { id: 'u_asc_reach', name: '[Элитный] +12% Радиус векторов', russianName: '[Элитный] +12% Радиус векторов', description: 'Расширение радиуса досягаемости векторов на 12%', descriptionEn: 'Increases psychokinetic attack distance by 12%', statKey: 'vectorReach', amount: 12, rarity: 'ascended', icon: 'Maximize2' },
   { id: 'u_asc_aspd', name: '[Элитный] +8% Скорость атак', russianName: '[Элитный] +8% Скорость атак', description: 'Повышение тактовой частоты колебаний векторов и темпа стрельбы', descriptionEn: 'Increases vector vibration frequency and weapon fire rate', statKey: 'attackSpeed', amount: 8, rarity: 'ascended', icon: 'Zap' },
   { id: 'u_asc_crit', name: '[Элитный] +5% Шанс крита', russianName: '[Элитный] +5% Шанс крита', description: 'Фокусировка ударов по критическим анатомическим узлам (+5%)', descriptionEn: 'Increases critical strike chance by 5%', statKey: 'critChance', amount: 5, rarity: 'ascended', icon: 'Crosshair' },
-  { id: 'u_asc_armor', name: '[Элитный] +2 Броня & +4% Уклонение', russianName: '[Элитный] +2 Броня & +4% Уклонение', description: 'Кинетический покров гасит энергию встречных пуль (+2 Броня, +4% Уклонение)', descriptionEn: 'Kinetic dampening reducing incoming damage (+2 Armor, +4% Dodge)', statKey: 'armor', amount: 2, rarity: 'ascended', icon: 'Shield' },
+  { id: 'u_asc_armor', name: '[Элитный] +2 Броня & +4% Уклонение', russianName: '[Элитный] +2 Броня & +4% Уклонение', description: 'Кинетический покров гасит энергию встречных пуль (+2 Броня, +4% Уклонение)', descriptionEn: 'Kinetic dampening reducing incoming damage (+2 Armor, +4% Dodge)', statKey: 'armor', amount: 2, secondaryStatKey: 'dodge', secondaryAmount: 4, rarity: 'ascended', icon: 'Shield' },
   { id: 'u_asc_lifesteal', name: '[Элитный] +1.5% Вампиризм крови', russianName: '[Элитный] +1.5% Вампиризм крови', description: 'Поглощение биологических ресурсов нейтрализованных целей (+1.5%)', descriptionEn: 'Absorbs cellular vital essence from slain enemies (+1.5% lifesteal)', statKey: 'bloodLifesteal', amount: 1.5, rarity: 'ascended', icon: 'Droplets' },
   { id: 'u_asc_vector', name: '[Элитный] +1 Дополнительный вектор / Ствол', russianName: '[Элитный] +1 Дополнительный вектор / Ствол', description: 'Активация дополнительного психокинетического вектора или орудийной турели', descriptionEn: 'Awakening of an additional vector arm or weapon barrel', statKey: 'vectorCount', amount: 1, rarity: 'ascended', icon: 'Sparkles' },
 ];

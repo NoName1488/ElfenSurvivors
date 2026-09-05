@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { sound } from '../utils/sound';
+import { CUSTOM_PLAYLIST } from '../data/musicPlaylist';
 import { useLanguage } from '../utils/i18n';
 import { Volume2, VolumeX, Music, Zap, X, Sliders, Play, Disc3, ShieldCheck, Sparkles } from 'lucide-react';
 
@@ -15,6 +16,17 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
   const [isSfxMuted, setIsSfxMuted] = useState<boolean>(sound.getIsSfxMuted());
   const [currentTrack, setCurrentTrack] = useState<string>(sound.getTrack());
   const [breathingPauses, setBreathingPauses] = useState<boolean>(sound.getBreathingPausesEnabled());
+  const [playlistIndex, setPlaylistIndex] = useState<number>(sound.getPlaylistIndex());
+  const [shuffle, setShuffle] = useState<boolean>(sound.getPlaylistShuffle());
+
+  // The engine advances the playlist on its own when a track ends, so the now-playing
+  // readout has to follow the engine rather than only local clicks.
+  useEffect(() => {
+    return sound.subscribePlaylist(() => {
+      setPlaylistIndex(sound.getPlaylistIndex());
+      setShuffle(sound.getPlaylistShuffle());
+    });
+  }, []);
 
   useEffect(() => {
     return sound.subscribe(() => {
@@ -58,6 +70,11 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
   const handleTrackChange = (track: string) => {
     sound.playUiClick();
     sound.setTrack(track);
+    // setTrack only restarts music that is already playing. Opening the settings from the
+    // menu, before a run has started, meant picking a track did nothing audible until the
+    // next wave began. Selecting a track is a deliberate user gesture, which is also what
+    // the autoplay policy needs, so start playback right here and let the player hear it.
+    sound.enableAudio();
     setCurrentTrack(track);
   };
 
@@ -145,6 +162,13 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
       nameEn: 'Pure Atmospheric Ambient (No Melody)',
       descRu: 'Теплый морской ветер и аналоговый суб-бас — абсолютный фокус на уклонении от врагов',
       descEn: 'Warm ocean wind and sub-harmonics without any repeating melody',
+    },
+    {
+      id: 'custom_playlist',
+      nameRu: 'Тестовый саундтрек (аудиофайлы)',
+      nameEn: 'Test Soundtrack (audio files)',
+      descRu: 'Плейлист из 6 треков. Играет подряд и не прерывается на боссов',
+      descEn: 'Six-track playlist. Plays straight through, boss fights do not interrupt it',
     },
     {
       id: 'boss_battle',
@@ -328,6 +352,69 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
                   );
                 })}
               </div>
+
+              {/* Test soundtrack transport, shown only while that option is active */}
+              {currentTrack === 'custom_playlist' && (
+                <div className="mt-2 p-2.5 rounded-lg bg-black/50 border border-pink-500/30 flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[9px] font-mono uppercase tracking-wider text-pink-400 font-bold">
+                        {isRu ? 'СЕЙЧАС ИГРАЕТ' : 'NOW PLAYING'}
+                      </div>
+                      <div className="text-xs text-white font-bold truncate">
+                        {CUSTOM_PLAYLIST[playlistIndex]?.title}
+                      </div>
+                      <div className="text-[10px] text-gray-400 truncate">
+                        {CUSTOM_PLAYLIST[playlistIndex]?.artist}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => { sound.prevPlaylistTrack(); setPlaylistIndex(sound.getPlaylistIndex()); }}
+                        className="px-2 py-1 rounded bg-neutral-900 border border-white/10 text-gray-300 hover:text-white hover:border-white/25 text-xs font-mono cursor-pointer"
+                        title={isRu ? 'Предыдущий' : 'Previous'}
+                      >
+                        {String.fromCharCode(9664)}
+                      </button>
+                      <button
+                        onClick={() => { sound.nextPlaylistTrack(); setPlaylistIndex(sound.getPlaylistIndex()); }}
+                        className="px-2 py-1 rounded bg-neutral-900 border border-white/10 text-gray-300 hover:text-white hover:border-white/25 text-xs font-mono cursor-pointer"
+                        title={isRu ? 'Следующий' : 'Next'}
+                      >
+                        {String.fromCharCode(9654)}
+                      </button>
+                      <button
+                        onClick={() => { const v = !shuffle; sound.setPlaylistShuffle(v); setShuffle(v); }}
+                        className={`px-2 py-1 rounded border text-[10px] font-mono font-bold cursor-pointer transition-colors ${
+                          shuffle
+                            ? 'bg-pink-950/60 border-pink-500/60 text-pink-300'
+                            : 'bg-neutral-900 border-white/10 text-gray-400 hover:text-gray-200'
+                        }`}
+                        title={isRu ? 'Случайный порядок' : 'Shuffle'}
+                      >
+                        {isRu ? 'МИКС' : 'SHUF'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-0.5 max-h-32 overflow-y-auto">
+                    {CUSTOM_PLAYLIST.map((tr, i) => (
+                      <button
+                        key={tr.id}
+                        onClick={() => { sound.selectPlaylistTrack(i); setPlaylistIndex(i); }}
+                        className={`text-left px-2 py-1 rounded text-[11px] font-mono transition-colors cursor-pointer flex items-center gap-2 ${
+                          i === playlistIndex
+                            ? 'bg-pink-950/50 text-pink-200'
+                            : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+                        }`}
+                      >
+                        <span className="text-gray-600 w-4 shrink-0">{i + 1}</span>
+                        <span className="truncate">{tr.artist} — {tr.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

@@ -27,7 +27,7 @@ import {
   WeaponTag,
 } from '../types';
 import { sound } from './sound';
-import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG } from '../data/gameData';
+import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG, FINAL_CAMPAIGN_WAVE } from '../data/gameData';
 import { PSYCHIC_MUTATION_TREES, PsychicMutationNode } from '../data/psychicMutationsData';
 import { getLanguage } from './i18n';
 import { getAppliedMetaStats, recordRunCompleted, checkAchievements, recordAchievementProgress } from './metaProgression';
@@ -61,6 +61,12 @@ export interface GameEngineState {
     // Bot Anti-Vector Countermeasures: EMP / Sonic Resonance Disruption
     vectorSuppressedTimer: number;
     vectorSuppressedMax: number;
+    // Seconds the subject has held position. Drives Nana's anchored stance.
+    stationaryTimer: number;
+    // Current movement speed in px/s, sampled each frame. Drives Lucy's velocity damage.
+    currentSpeed: number;
+    // Bando: seconds left on the "pain conversion" fire-rate surge.
+    painSurgeTimer: number;
   };
   mutationState: PsychicMutationState;
   baseStatBonuses: Partial<Record<keyof PlayerStats, number>>;
@@ -109,6 +115,12 @@ export interface GameEngineState {
   maxKillStreak: number;
   surgeLevel: number; // 0: None, 1: Пси-Резонанс, 2: Гипер-Транс, 3: Сингулярный Разрыв
 
+  // Two-beat wave rhythm: open exploration, then a telegraphed elite assault (2.Б.1)
+  assaultPhaseActive: boolean;
+  assaultTriggeredInWave: boolean;
+  assaultWarningText: string | null;
+  assaultWarningTimer: number;
+
   // Mid-Wave Tactical Artillery Crisis Event (Wave 7+)
   artilleryHazards: ArtilleryHazard[];
   crisisWarningText: string | null;
@@ -148,6 +160,226 @@ export interface GameEngineState {
   viewportHeight: number;
 }
 
+// Piggy-bank dividend paid on unspent DNA at the end of each wave.
+// Exported so the shop can project the exact number the engine will pay,
+// instead of maintaining a second copy of the rules that drifts out of sync.
+export const DNA_VAULT_ITEM_ID = 'cryo_dna_vault';
+export const DIVIDEND_BASE_RATE = 0.08;
+export const DIVIDEND_BASE_CAP = 35;
+export const DIVIDEND_VAULT_RATE = 0.15;
+export const DIVIDEND_VAULT_CAP = 90;
+
+export function getDividendConfig(passiveItems: { id: string }[]): { rate: number; cap: number; hasVault: boolean } {
+  const hasVault = passiveItems.some((p) => p.id === DNA_VAULT_ITEM_ID);
+  return {
+    rate: hasVault ? DIVIDEND_VAULT_RATE : DIVIDEND_BASE_RATE,
+    cap: hasVault ? DIVIDEND_VAULT_CAP : DIVIDEND_BASE_CAP,
+    hasVault,
+  };
+}
+
+export function projectDividend(dna: number, passiveItems: { id: string }[]): number {
+  const { rate, cap } = getDividendConfig(passiveItems);
+  return Math.min(cap, Math.floor(Math.max(0, dna) * rate));
+}
+
+// Durability curve for spawned enemies (HP / shields).
+export function getEnemyHpScaling(wave: number): number {
+  if (wave <= 3) return 1 + (wave - 1) * 0.25;
+  if (wave <= 6) return 1.5 + (wave - 3) * 0.52;
+  if (wave <= 10) return 3.06 + (wave - 6) * 0.95;
+  if (wave <= 15) return 6.86 + (wave - 10) * 1.5;
+  return 14.36 + (wave - 15) * 2.2;
+}
+
+// Offence curve. Deliberately much flatter than the HP curve: the player's max HP and
+// armour grow ~2.6x across a full run, so incoming damage must grow on that order too.
+export function getEnemyDamageScaling(wave: number): number {
+  if (wave <= 3) return 1 + (wave - 1) * 0.18;
+  if (wave <= 7) return 1.36 + (wave - 3) * 0.22;
+  if (wave <= 11) return 2.24 + (wave - 7) * 0.26;
+  if (wave <= 15) return 3.28 + (wave - 11) * 0.30;
+  if (wave <= 20) return 4.48 + (wave - 15) * 0.34;
+  return 6.18 + (wave - 20) * 0.38;
+}
+
+// Fraction of the bagged reserve released per qualifying drop (~15 kills to drain).
+// Rotates an arm toward a heading along the shortest arc. Plain (target - current)
+// interpolation makes an arm crossing the +/-PI seam whip a full turn the wrong way.
+export function approachAngle(current: number, target: number, rate: number, maxStep?: number): number {
+  let delta = target - current;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  let step = delta * Math.min(1, Math.max(0, rate));
+  if (maxStep !== undefined) {
+    step = Math.max(-maxStep, Math.min(maxStep, step));
+  }
+  return current + step;
+}
+
+// Diminishing-returns law for PSI power. Applied identically by every damage path so a
+// build's damage stat behaves predictably wherever it is spent.
+export function effectivePsi(rawPsiPower: number): number {
+  const raw = Math.max(-50, rawPsiPower);
+  return raw <= 60 ? raw : 60 + (raw - 60) * 0.5;
+}
+
+// Picks the string matching the active language. The engine emits a lot of runtime combat
+// copy (boss alerts, dropship warnings, elite affixes, floating numbers) that used to be
+// hardcoded Russian even though the game ships a language toggle.
+function loc(ru: string, en: string): string {
+  return getLanguage() === 'ru' ? ru : en;
+}
+
+// English display names for units. Kept as a lookup rather than a second field on every
+// spec so the (already large) stat tables stay readable.
+const UNIT_NAMES_EN: Record<string, string> = {
+  sat_grunt: 'SAT Patrolman',
+  sat_shotgunner: 'SAT Breacher',
+  riot_shield: 'SAT Shield Bearer',
+  hazmat_flamer: 'Hazmat Flamer',
+  assault_drone: 'Liquidator Drone',
+  sat_sniper: 'SAT Marksman',
+  emp_disruptor: 'EMP Vector Suppressor',
+  silpelit_clone: 'Silpelit Clone',
+  sat_anti_vector_infiltrator: 'SAT Infiltrator (Net Gun)',
+  sat_heavy_commando: 'SAT Heavy Juggernaut',
+  mutant_beast: 'Laboratory Mutant',
+  boss_silpelit_14: 'Silpelit No.14 (Runaway)',
+  boss_silpelit_19: 'Silpelit No.19 (Hunter)',
+  boss_silpelit_22: 'Silpelit No.22 (Executioner)',
+  boss_silpelit_27: 'Silpelit No.27 (Phantom)',
+  boss_bando: 'Cyborg Bando (SAT Commander)',
+  boss_silpelit_31: 'Silpelit No.31 (Needle Caster)',
+  boss_arakhaki: 'Arakaki (Heavy Mutant)',
+  boss_silpelit_33: 'Silpelit No.33 (Reaper)',
+  boss_nana_duty: 'Nana (Protection Protocol)',
+  boss_silpelit_34: 'Silpelit No.34 (Goldilocks)',
+  boss_chimera_apocalypse: 'Chimera Apocalypse',
+  boss_mariko_unbound: 'Mariko No.35 (Awakening)',
+  boss_lucy_clone_alpha: 'Lucy Clone: Alpha',
+  boss_mariko_berserk: 'Mariko No.35 (Absolute Berserk)',
+  boss_kakuzawa: 'Director Kakuzawa: Race Maker',
+  boss_goliath_mech: 'SAT Battle Mech "Goliath"',
+  boss_silpelit_archon: 'Silpelit Archon No.42',
+  boss_dual_silpelit_prime: 'Dual Silpelit Prime (DNA Resonance)',
+  boss_leviathan_gunship: 'Airborne Dreadnought "Leviathan"',
+  boss_primordial_singularity: 'Primordial Diclonius Singularity',
+};
+
+function localiseUnitName(type: string, russianName: string): string {
+  if (getLanguage() === 'ru') return russianName;
+  return UNIT_NAMES_EN[type] || russianName;
+}
+
+// Kinetic throw (vector_snatch). Measured before tuning: 688 px/s launch, friction 0.93
+// per frame, so a thrown body stopped after 0.60 s and only 155 px - 12% of viewport
+// width. It read as a flicker, not a throw: the player could not see where the body went.
+// Lower friction and a higher stop threshold trade the same launch impulse for a long,
+// legible arc (~520 px over ~1.2 s).
+export const THROW_LAUNCH_SPEED = 760;
+export const THROW_FRICTION_PER_FRAME = 0.982;
+export const THROW_STOP_SPEED = 200;
+// Time the victim hangs in the vector grip. The last 40% is a visible wind-up: the arm
+// draws the body back along the reverse of the throw vector, so the launch has an
+// anticipation beat instead of appearing out of nowhere.
+export const THROW_HOLD_DURATION = 0.5;
+export const THROW_WINDUP_FRACTION = 0.4;
+export const THROW_WINDUP_PULL = 42;
+
+// Distance a body still travels before it drops below THROW_STOP_SPEED.
+// Geometric decay: sum(v*k^i/60) with v*k^n = stop, so it collapses to (v - stop)/(60*(1-k)).
+export function predictThrowDistance(speed: number): number {
+  if (speed <= THROW_STOP_SPEED) return 0;
+  return (speed - THROW_STOP_SPEED) / (60 * (1 - THROW_FRICTION_PER_FRAME));
+}
+
+// Vector duel posture system. Measured before tuning, 60s duel vs a wave-10 boss:
+// 100% of contested strikes deflected, zero flank strikes possible, and the boss spent
+// 89.8% of the fight stunned with guard pinned at 0/816.
+// Cause 1: every boss arm fans toward the player, so the "is an arm covering this angle"
+//   test always found one. Parry had no rate limit.
+// Cause 2: guard damage was 28 + psi*0.4 (about 64 a hit) while a 4-arm player lands ~16
+//   strikes a second in a boss duel: roughly 1000 guard per second against a 816 pool,
+//   so posture collapsed in under half a second and the stun loop never ended.
+// Aim prediction for travelling projectiles. Every firearm fired at the target's current
+// position; against a boss moving 130-155 px/s with a 0.4s time of flight the shot lands
+// roughly 60px behind it, which is a clean miss. Once bosses stopped being frozen by the
+// hitstop bug this made projectile characters unable to damage them at all.
+// Solves |target + v*t - origin| = projectileSpeed * t for t, then aims at that point.
+export function predictAimPoint(
+  originX: number,
+  originY: number,
+  targetX: number,
+  targetY: number,
+  targetVx: number,
+  targetVy: number,
+  projectileSpeed: number
+): { x: number; y: number } {
+  const rx = targetX - originX;
+  const ry = targetY - originY;
+  const a = targetVx * targetVx + targetVy * targetVy - projectileSpeed * projectileSpeed;
+  const b = 2 * (rx * targetVx + ry * targetVy);
+  const c = rx * rx + ry * ry;
+
+  let time = 0;
+  if (Math.abs(a) < 1e-6) {
+    if (Math.abs(b) > 1e-6) time = -c / b;
+  } else {
+    const disc = b * b - 4 * a * c;
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc);
+      const t1 = (-b + sq) / (2 * a);
+      const t2 = (-b - sq) / (2 * a);
+      const valid = [t1, t2].filter((x) => x > 0);
+      if (valid.length > 0) time = Math.min(...valid);
+    }
+  }
+  // No solution (target outruns the projectile) or a silly one: fall back to no lead.
+  if (!isFinite(time) || time <= 0 || time > 2.5) {
+    return { x: targetX, y: targetY };
+  }
+  return { x: targetX + targetVx * time, y: targetY + targetVy * time };
+}
+
+// Vector arms are a spatial resource, not a damage stat: every extra arm adds another
+// line across the screen and another autonomous attacker. With no cap at all, a player
+// stacking the +1 vector sources (weapon set tags, passives at tier 4, synergies, two
+// mutation nodes, Apex overcharge, and the repeatable elite upgrade) reached 27 arms by
+// wave 12, which turns the arena into unreadable spaghetti and trivialises the fight.
+// Weapons were capped at 6 slots; passives had no cap at all, so a run accumulated 20-30
+// of them, each scaling x2.5 at tier 4. That is where the 5x max HP and the runaway stats
+// came from. A cap also gives the duplicate-merge mechanic a reason to exist.
+// Ceiling on how much DNA Harvest can multiply an orb, and the point past which the
+// stat stops compounding at wave end.
+export const HARVEST_MULTIPLIER_CAP = 120;
+
+export const MAX_PASSIVE_ITEMS = 12;
+
+export const MAX_VECTOR_ARMS = 10;
+export const MARIKO_VECTOR_ARMS = 26;
+
+// Reach has the same problem in the other axis. An arm is 110px * (1 + reach/100), so
+// 800% reach is a ~1000px arm: longer than the visible half-screen, so positioning stops
+// mattering entirely. Full value up to the soft cap, half rate above it, hard ceiling.
+export const VECTOR_REACH_SOFT_CAP = 90;
+export const VECTOR_REACH_HARD_CAP = 210;
+
+export function effectiveVectorReach(raw: number): number {
+  if (raw <= VECTOR_REACH_SOFT_CAP) return raw;
+  return Math.min(VECTOR_REACH_HARD_CAP, VECTOR_REACH_SOFT_CAP + (raw - VECTOR_REACH_SOFT_CAP) * 0.5);
+}
+
+export const GUARD_DAMAGE_BASE = 10;
+export const GUARD_DAMAGE_PSI_SCALE = 0.12;
+
+// Minimum gap between two parries by the same boss. More arms parry more often.
+export function bossParryCooldown(armCount: number): number {
+  return Math.max(0.06, 0.3 - armCount * 0.012);
+}
+
+export const BAGGED_PAYOUT_FRACTION = 0.12;
+
 export class GameEngine {
   public state: GameEngineState;
   public readonly WORLD_WIDTH = 2600;
@@ -162,6 +394,8 @@ export class GameEngine {
   private keysDown: Set<string> = new Set();
   private virtualJoystick: { active: boolean; dx: number; dy: number } = { active: false, dx: 0, dy: 0 };
   private nyuRepulseTimer: number = 0;
+  private armAnimTime: number = 0;
+  private bankedDnaSnapshot: number = 0;
   private tacticalAmbushTimer: number = 14;
 
   public onLevelUpCallback?: (newLevel: number) => void;
@@ -199,6 +433,9 @@ export class GameEngine {
         dashVy: 0,
         vectorSuppressedTimer: 0,
         vectorSuppressedMax: 0,
+        stationaryTimer: 0,
+        currentSpeed: 0,
+        painSurgeTimer: 0,
       },
       mutationState: {
         mutationPoints: 0, // Mutation points must be earned through milestones and boss fights
@@ -259,6 +496,10 @@ export class GameEngine {
       killStreakTimer: 0,
       maxKillStreak: 0,
       surgeLevel: 0,
+      assaultPhaseActive: false,
+      assaultTriggeredInWave: false,
+      assaultWarningText: null,
+      assaultWarningTimer: 0,
       artilleryHazards: [],
       crisisWarningText: null,
       crisisWarningTimer: 0,
@@ -315,7 +556,6 @@ export class GameEngine {
   }
 
   public unlockMutation(nodeId: string): boolean {
-    if (this.state.mutationState.mutationPoints < 1) return false;
     if (this.hasMutation(nodeId)) return false;
 
     const charTree = PSYCHIC_MUTATION_TREES[this.state.character.id];
@@ -339,7 +579,11 @@ export class GameEngine {
       return false;
     }
 
-    this.state.mutationState.mutationPoints -= targetNode.cost;
+    // Must be able to afford the full node cost (nodes may cost more than 1 point)
+    const nodeCost = Math.max(1, targetNode.cost || 1);
+    if (this.state.mutationState.mutationPoints < nodeCost) return false;
+
+    this.state.mutationState.mutationPoints -= nodeCost;
     this.state.mutationState.unlockedNodeIds.push(nodeId);
     this.recalculateStats();
     sound.playLevelUp();
@@ -379,8 +623,11 @@ export class GameEngine {
         quantumCleave: 0,
       };
     }
-    const totalRefund = nodeCount + overchargeCount;
-    if (totalRefund === 0) return false;
+    // Genetic resequencing is lossy: 25% of invested points are burned so branch
+    // commitment stays a real decision instead of a free toggle.
+    const invested = nodeCount + overchargeCount;
+    if (invested === 0) return false;
+    const totalRefund = Math.max(1, Math.floor(invested * 0.75));
     this.state.mutationState.mutationPoints += totalRefund;
     this.state.mutationState.unlockedNodeIds = [];
     this.recalculateStats();
@@ -537,8 +784,8 @@ export class GameEngine {
 
     // -1. Apply Permanent Meta-Progression Stats (Capped Soft Buffer 2.Е.1)
     const metaStats = getAppliedMetaStats();
-    for (const [key, value] of Object.entries(metaStats)) {
-      if (value !== undefined && typeof value === 'number' && key !== 'startingDna') {
+    for (const [key, value] of Object.entries(metaStats.stats)) {
+      if (value !== undefined && typeof value === 'number') {
         (stats as any)[key] = ((stats as any)[key] || 0) + value;
       }
     }
@@ -803,6 +1050,17 @@ export class GameEngine {
       stats.maxHp = Math.min(85, stats.maxHp);
     }
 
+    // Upper bounds. Every +1 vector and +% reach source stacks additively with no ceiling
+    // of its own, so the ceiling has to live here, after everything has been summed.
+    const armCap = this.state.character.id === 'mariko' ? MARIKO_VECTOR_ARMS : MAX_VECTOR_ARMS;
+    if (this.state.character.baseStats.vectorCount > 0) {
+      stats.vectorCount = Math.min(armCap, Math.max(1, Math.round(stats.vectorCount)));
+    } else {
+      // Bando and Kurama have no biological vectors; nothing may grant them any.
+      stats.vectorCount = 0;
+    }
+    stats.vectorReach = effectiveVectorReach(stats.vectorReach);
+
     // Minimum constraints
     stats.maxHp = Math.max(20, stats.maxHp);
     stats.moveSpeed = Math.max(120, stats.moveSpeed);
@@ -824,6 +1082,10 @@ export class GameEngine {
     }
     const current = this.state.baseStatBonuses[option.statKey] || 0;
     this.state.baseStatBonuses[option.statKey] = current + option.amount;
+    if (option.secondaryStatKey && option.secondaryAmount) {
+      const cur2 = this.state.baseStatBonuses[option.secondaryStatKey] || 0;
+      this.state.baseStatBonuses[option.secondaryStatKey] = cur2 + option.secondaryAmount;
+    }
     if (option.statKey === 'maxHp') {
       this.state.player.hp = Math.min(this.state.player.maxHp + option.amount, this.state.player.hp + option.amount);
     }
@@ -831,8 +1093,11 @@ export class GameEngine {
   }
 
   private initVectorArms() {
-    // Bando is a human cyborg - STRICTLY NO BIOLOGICAL VECTORS!
-    if (this.state.character.kind === 'human_cyborg') {
+    // Subjects whose sheet says zero vectors get zero vectors. Bando (cyborg) was handled,
+    // but Chief Kurama is an ordinary human with vectorCount 0 and still received one arm,
+    // because the count was floored at 1. His card, his inhibitor aura and the shop filter
+    // all say he has none.
+    if (this.state.character.kind === 'human_cyborg' || this.state.character.baseStats.vectorCount <= 0) {
       this.state.vectorArms = [];
       return;
     }
@@ -883,12 +1148,13 @@ export class GameEngine {
   public startWave(waveNum: number) {
     this.resetInput();
     let duration = 35;
-    if (waveNum <= 15) {
-      const waveConfig = WAVES.find((w) => w.waveNumber === waveNum) || WAVES[WAVES.length - 1];
-      duration = waveConfig.duration;
+    const authoredWave = WAVES.find((w) => w.waveNumber === waveNum);
+    if (authoredWave) {
+      duration = authoredWave.duration;
     } else {
-      // Endless Survival Waves: 75s + 5s for each wave beyond 15
-      duration = 75 + (waveNum - 15) * 5;
+      // Endless Survival Waves beyond the authored campaign: keep growing from the last authored duration
+      const lastAuthored = WAVES[WAVES.length - 1];
+      duration = lastAuthored.duration + (waveNum - lastAuthored.waveNumber) * 5;
     }
 
     this.state.wave = waveNum;
@@ -911,6 +1177,10 @@ export class GameEngine {
     this.state.crisisWarningTimer = 0;
     this.state.crisisWarningText = null;
     this.state.crisisTriggeredInWave = false;
+    this.state.assaultPhaseActive = false;
+    this.state.assaultTriggeredInWave = false;
+    this.state.assaultWarningText = null;
+    this.state.assaultWarningTimer = 0;
     this.state.projectiles = [];
     this.state.vectorClashes = [];
     this.state.player.vectorGuard = this.state.player.maxVectorGuard;
@@ -920,6 +1190,9 @@ export class GameEngine {
     this.state.player.mobilityActiveTimer = 0;
     this.state.player.vectorSuppressedTimer = 0;
     this.state.player.vectorSuppressedMax = 0;
+    this.state.player.stationaryTimer = 0;
+    this.state.player.currentSpeed = 0;
+    this.state.player.painSurgeTimer = 0;
     this.lastEnemySpawn = 0;
     this.tacticalAmbushTimer = 12 + Math.random() * 4;
     this.recalculateStats();
@@ -1106,7 +1379,7 @@ export class GameEngine {
         id: ++this.dmgNumIdCounter,
         x: this.state.player.x,
         y: this.state.player.y - 20,
-        text: '+35 HP / ПОЛНЫЙ БАРЬЕР',
+        text: loc('+35 HP / ПОЛНЫЙ БАРЬЕР', '+35 HP / FULL BARRIER'),
         color: '#10b981',
         opacity: 1,
         vy: -30,
@@ -1123,7 +1396,7 @@ export class GameEngine {
         id: ++this.dmgNumIdCounter,
         x: poi.x,
         y: poi.y - 20,
-        text: '+50 ДНК & СИНГУЛЯРНЫЙ РАЗРЫВ!',
+        text: loc('+50 ДНК & СИНГУЛЯРНЫЙ РАЗРЫВ!', '+50 DNA & SINGULARITY RUPTURE!'),
         color: '#a855f7',
         opacity: 1,
         vy: -35,
@@ -1191,7 +1464,7 @@ export class GameEngine {
         this.triggerScreenShake(14, 0.45);
         this.state.characterResource.current = 100;
         this.state.characterResource.isActive = true;
-        this.state.characterResource.name = 'ПРОБУЖДЕНИЕ ЛЮСИ (БЕРСЕРК +60%)';
+        this.state.characterResource.name = loc('ПРОБУЖДЕНИЕ ЛЮСИ (БЕРСЕРК +60%)', 'LUCY AWAKENED (BERSERK +60%)');
         this.state.player.specialActiveTimer = 8.0;
 
         // Big Repulsion Nova + DNA vacuum
@@ -1220,7 +1493,7 @@ export class GameEngine {
           id: Math.random(),
           x: this.state.player.x,
           y: this.state.player.y - 35,
-          text: 'ПРОБУЖДЕНИЕ ЛЮСИ!',
+          text: loc('ПРОБУЖДЕНИЕ ЛЮСИ!', 'LUCY AWAKENS!'),
           color: '#ef4444',
           opacity: 1,
           vy: -40,
@@ -1674,6 +1947,8 @@ export class GameEngine {
   public update(dt: number) {
     if (!this.state.isWaveActive) return;
 
+    this.armAnimTime += dt;
+
     // Shake
     if (this.state.shakeTimer > 0) {
       this.state.shakeTimer -= dt;
@@ -1700,6 +1975,9 @@ export class GameEngine {
     if (this.state.player.invincibleTimer > 0) {
       this.state.player.invincibleTimer -= dt;
     }
+    if (this.state.player.painSurgeTimer > 0) {
+      this.state.player.painSurgeTimer = Math.max(0, this.state.player.painSurgeTimer - dt);
+    }
 
     // Character specific passive systems
     this.updateCharacterMechanics(dt);
@@ -1724,23 +2002,28 @@ export class GameEngine {
         // If boss has not spawned yet, trigger the wave's unique Diclonius Boss encounter!
         if (!this.state.bossSpawnedInWave) {
           this.state.bossSpawnedInWave = true;
-          const waveConfig = WAVES.find((w) => w.waveNumber === this.state.wave) || WAVES[WAVES.length - 1];
-          let bossType = waveConfig?.boss;
-          if (!bossType && this.state.wave > 15) {
+          const authored = WAVES.find((w) => w.waveNumber === this.state.wave);
+          let bossType = authored?.boss;
+          if (!authored) {
+            // Past the authored campaign: rotate the apex boss roster instead of
+            // replaying the single final boss forever.
             const endlessPool: Enemy['type'][] = [
-              'boss_bando',
+              'boss_goliath_mech',
+              'boss_silpelit_archon',
+              'boss_leviathan_gunship',
+              'boss_dual_silpelit_prime',
               'boss_mariko_berserk',
-              'boss_kakuzawa',
               'boss_chimera_apocalypse',
-              'boss_lucy_clone_alpha',
+              'boss_kakuzawa',
+              'boss_primordial_singularity',
             ];
-            bossType = endlessPool[this.state.wave % endlessPool.length];
+            bossType = endlessPool[(this.state.wave - FINAL_CAMPAIGN_WAVE - 1) % endlessPool.length];
           }
 
           if (bossType) {
             this.spawnBoss(bossType);
             this.state.bossWarningTimer = 5.0;
-            this.state.bossWarningText = `ТРЕВОГА: ПОЯВИЛСЯ ВЫСШИЙ МУТАНТ ВОЛНЫ ${this.state.wave}!`;
+            this.state.bossWarningText = loc(`ТРЕВОГА: ПОЯВИЛСЯ ВЫСШИЙ МУТАНТ ВОЛНЫ ${this.state.wave}!`, `ALERT: APEX MUTANT OF WAVE ${this.state.wave} HAS ARRIVED!`);
             sound.playDropshipAlarm();
             sound.startBossBattle();
             this.triggerScreenShake(16, 0.8);
@@ -1821,6 +2104,33 @@ export class GameEngine {
       this.state.crisisWarningTimer -= dt;
       if (this.state.crisisWarningTimer <= 0) {
         this.state.crisisWarningText = null;
+      }
+    }
+
+    // Two-beat wave rhythm (2.Б.1): the wave opens as an exploration window - room to
+    // sweep points of interest and gather - and then hard-cuts into a telegraphed elite
+    // assault for the final third. Previously a wave was one flat spawn stream from the
+    // first second to the boss, so exploration was never actually safe and the ramp into
+    // the boss had no build-up.
+    const elapsedFraction = this.state.maxWaveTimer > 0
+      ? (this.state.maxWaveTimer - this.state.waveTimer) / this.state.maxWaveTimer
+      : 0;
+    if (!this.state.assaultTriggeredInWave && !this.state.isWaveEnding && elapsedFraction >= 0.68) {
+      this.state.assaultTriggeredInWave = true;
+      this.state.assaultPhaseActive = true;
+      this.state.assaultWarningText = getLanguage() === 'ru'
+        ? 'ШТУРМОВАЯ ФАЗА: SAT БРОСАЕТ В БОЙ ЭЛИТНЫЕ ПОДРАЗДЕЛЕНИЯ!'
+        : 'ASSAULT PHASE: SAT COMMITS ITS ELITE UNITS!';
+      this.state.assaultWarningTimer = 3.6;
+      sound.playRadioAlert();
+      this.triggerScreenShake(9, 0.4);
+      this.triggerTacticalAmbushSquad();
+    }
+
+    if (this.state.assaultWarningTimer > 0) {
+      this.state.assaultWarningTimer -= dt;
+      if (this.state.assaultWarningTimer <= 0) {
+        this.state.assaultWarningText = null;
       }
     }
 
@@ -1914,7 +2224,7 @@ export class GameEngine {
         // Trigger Awakening Transition: tear ribbon, flash red
         this.state.characterResource.isActive = true;
         this.state.characterResource.current = 100;
-        this.state.characterResource.name = 'ПРОБУЖДЕНИЕ ЛЮСИ (БЕРСЕРК +60%)';
+        this.state.characterResource.name = loc('ПРОБУЖДЕНИЕ ЛЮСИ (БЕРСЕРК +60%)', 'LUCY AWAKENED (BERSERK +60%)');
         sound.playBossShockwave();
         this.triggerScreenShake(10, 0.35);
 
@@ -1940,7 +2250,7 @@ export class GameEngine {
           id: Math.random(),
           x: pX,
           y: pY - 30,
-          text: 'ПРОБУЖДЕНИЕ ЛЮСИ!',
+          text: loc('ПРОБУЖДЕНИЕ ЛЮСИ!', 'LUCY AWAKENS!'),
           color: '#ef4444',
           opacity: 1,
           vy: -35,
@@ -1950,7 +2260,7 @@ export class GameEngine {
         // Return to Peaceful Innocent Nyu
         this.state.characterResource.isActive = false;
         this.state.characterResource.current = 0;
-        this.state.characterResource.name = 'НЮ: НЕВИННОСТЬ (ДНК ЛЕЧИТ)';
+        this.state.characterResource.name = loc('НЮ: НЕВИННОСТЬ (ДНК ЛЕЧИТ)', 'NYU: INNOCENCE (DNA HEALS)');
         sound.playLevelUp();
 
         // Soft pink restoration circle
@@ -1971,7 +2281,7 @@ export class GameEngine {
           id: Math.random(),
           x: pX,
           y: pY - 30,
-          text: 'НЮ (МИРНЫЙ РЕЖИМ)',
+          text: loc('НЮ (МИРНЫЙ РЕЖИМ)', 'NYU (PEACEFUL MODE)'),
           color: '#f472b6',
           opacity: 1,
           vy: -30,
@@ -1982,7 +2292,22 @@ export class GameEngine {
 
     // 4. NANA: Kinetic bullet reflection field
     if (this.state.character.id === 'nana') {
-      const reflectRadius = 140 * (1 + this.state.stats.vectorReach / 100);
+      // Radical dualism (2.Д): Nana is an anchor, not a runner. Planting her feet spins the
+      // kinetic shield up - wider interception and far heavier vector strikes - while moving
+      // collapses it. Her resource gauge previously had no passive trigger at all, so the
+      // "anchored" damage branch in damageEnemy could only ever fire during her 4s ultimate.
+      const ANCHOR_THRESHOLD = 0.35;
+      const isAnchored = (this.state.player.stationaryTimer || 0) >= ANCHOR_THRESHOLD;
+      if (isAnchored) {
+        this.state.characterResource.isActive = true;
+        this.state.characterResource.current = Math.min(100, this.state.characterResource.current + dt * 55);
+      } else {
+        this.state.characterResource.isActive = false;
+        this.state.characterResource.current = Math.max(0, this.state.characterResource.current - dt * 70);
+      }
+
+      const stanceReachBonus = isAnchored ? 1.6 : 1.0;
+      const reflectRadius = 140 * (1 + this.state.stats.vectorReach / 100) * stanceReachBonus;
       for (const p of this.state.projectiles) {
         if (!p) continue;
         if (!p.isPlayer && Math.hypot(p.x - pX, p.y - pY) < reflectRadius) {
@@ -2001,8 +2326,9 @@ export class GameEngine {
     // 5. MARIKO: Vector Heat, Cellular Degradation & Overheat Penalty
     if (this.state.character.id === 'mariko') {
       if (this.state.characterResource.current > 0) {
-        // Dissipates heat over time
-        this.state.characterResource.current = Math.max(0, this.state.characterResource.current - dt * 14);
+        // Dissipates heat over time - twice as fast when she stops to vent, as her card states.
+        const venting = (this.state.player.stationaryTimer || 0) >= 0.3;
+        this.state.characterResource.current = Math.max(0, this.state.characterResource.current - dt * (venting ? 28 : 14));
       }
 
       if (this.state.characterResource.current >= 100) {
@@ -2046,11 +2372,18 @@ export class GameEngine {
     // 7. KURAMA: Inhibitor Field aura (220px)
     if (this.state.character.id === 'kurama') {
       const auraRadius = 220;
+      const SLOW_FACTOR = 0.62;
       for (const e of this.state.enemies) {
+        if (e.baseSpeed === undefined) e.baseSpeed = e.speed;
         const d = Math.hypot(e.x - pX, e.y - pY);
         if (d < auraRadius) {
-          e.speed = (e.speed || 100) * 0.75;
-          if (e.attackTimer < 1.0) e.attackTimer = Math.min(2.0, e.attackTimer + dt * 0.8);
+          // Set, never multiply. The old code re-applied *0.75 on EVERY frame, so after a
+          // second inside the aura an enemy's speed had decayed by 0.75^60 and it was frozen
+          // permanently - including after leaving the field.
+          e.speed = e.baseSpeed * SLOW_FACTOR;
+          if ((e.attackTimer || 0) < 1.0) e.attackTimer = Math.min(2.0, (e.attackTimer || 0) + dt * 0.8);
+        } else if (e.speed < e.baseSpeed) {
+          e.speed = e.baseSpeed;
         }
       }
       if (Math.random() < 0.08) {
@@ -2190,6 +2523,16 @@ export class GameEngine {
       speed *= 1.15; // +15% movement speed when critically wounded
     }
 
+    // Anchored-stance bookkeeping: how long has the subject stayed planted?
+    const isMoving = dx !== 0 || dy !== 0;
+    if (!isMoving && !p.isDashing) {
+      p.stationaryTimer = (p.stationaryTimer || 0) + dt;
+    } else {
+      p.stationaryTimer = 0;
+    }
+    // Velocity sample for Lucy's kinetic predator scaling.
+    p.currentSpeed = isMoving ? speed * Math.min(1, Math.hypot(dx, dy)) : 0;
+
     p.x += dx * speed * dt;
     p.y += dy * speed * dt;
 
@@ -2201,7 +2544,7 @@ export class GameEngine {
   private updateVectorArms(dt: number) {
     if (this.state.vectorArms.length === 0) return;
 
-    const time = performance.now() * 0.003;
+    const time = this.armAnimTime * 3;
 
     // Bot Anti-Vector Disruption: Ultrasonic / EMP resonance suppression
     const isSuppressed = this.state.player.vectorSuppressedTimer > 0;
@@ -2213,6 +2556,10 @@ export class GameEngine {
     let baseReach = (this.state.character.id === 'nana' ? 145 : this.state.character.id === 'mariko' ? 165 : 110) * reachMultiplier;
     if (isSuppressed) {
       baseReach *= 0.65; // Ultrasonic frequency interference collapses reach by 35%
+    }
+    // Nana's printed cost for mobility: unbraced vectors lose a quarter of their reach.
+    if (this.state.character.id === 'nana' && !this.state.characterResource.isActive) {
+      baseReach *= 0.75;
     }
 
     let atkSpeedMod = 1 + this.state.stats.attackSpeed / 100;
@@ -2338,11 +2685,28 @@ export class GameEngine {
                 }
 
                 arm.grabPhase = 'holding';
-                arm.grabTimer = 0.35; // Hold target suspended in air
+                arm.grabTimer = THROW_HOLD_DURATION;
                 arm.vibrationHz = 850;
+
+                // Decide the throw direction on grab, not on release, so the wind-up pulls
+                // back along the same axis the body will actually travel.
+                let aimAngle = Math.atan2(targetE.y - pY, targetE.x - pX);
+                const cluster = this.state.enemies.filter((oe) => oe.id !== targetE.id && !oe.isGrabbed && !oe.isThrown);
+                if (cluster.length > 0) {
+                  let best = cluster[0];
+                  let bestD = Infinity;
+                  for (const oe of cluster) {
+                    const d = Math.hypot(oe.x - targetE.x, oe.y - targetE.y);
+                    if (d < bestD) { bestD = d; best = oe; }
+                  }
+                  aimAngle = Math.atan2(best.y - targetE.y, best.x - targetE.x);
+                }
+                arm.throwTargetX = Math.cos(aimAngle);
+                arm.throwTargetY = Math.sin(aimAngle);
+
                 targetE.isGrabbed = true;
                 targetE.grabbedByArmIndex = i;
-                targetE.hitstopTimer = 0.35;
+                targetE.hitstopTimer = THROW_HOLD_DURATION;
                 sound.playGoreHit();
                 this.triggerScreenShake(3, 0.1);
               } else {
@@ -2356,6 +2720,17 @@ export class GameEngine {
             arm.grabTimer = (arm.grabTimer || 0) - dt;
             const targetE = this.state.enemies.find((e) => e.id === arm.grabbedEnemyId);
             if (targetE && targetE.hp > 0) {
+              // Wind-up: over the last stretch of the hold, haul the body back along the
+              // reverse of the throw vector. Without this the launch has no anticipation
+              // frame and the eye cannot catch that a throw happened at all.
+              const heldFor = THROW_HOLD_DURATION - Math.max(0, arm.grabTimer || 0);
+              const windupStart = THROW_HOLD_DURATION * (1 - THROW_WINDUP_FRACTION);
+              if (heldFor > windupStart && arm.throwTargetX !== undefined && arm.throwTargetY !== undefined) {
+                const w = Math.min(1, (heldFor - windupStart) / (THROW_HOLD_DURATION * THROW_WINDUP_FRACTION));
+                const pull = Math.sin(w * Math.PI * 0.5) * THROW_WINDUP_PULL;
+                arm.targetX = (arm.targetX || targetE.x) - arm.throwTargetX * pull * dt * 12;
+                arm.targetY = (arm.targetY || targetE.y) - arm.throwTargetY * pull * dt * 12;
+              }
               // Lock enemy position to arm tip!
               targetE.x = arm.segments[3]?.x || arm.targetX;
               targetE.y = arm.segments[3]?.y || arm.targetY;
@@ -2367,22 +2742,22 @@ export class GameEngine {
                 arm.grabPhase = 'throwing';
                 arm.strikeProgress = 0;
 
-                // Find cluster of other hostiles to fling into
-                let bestThrowAngle = Math.atan2(targetE.y - pY, targetE.x - pX);
-                const otherEnemies = this.state.enemies.filter((oe) => oe.id !== targetE.id && !oe.isGrabbed);
-                if (otherEnemies.length > 0) {
-                  const nearestOther = otherEnemies[0];
-                  bestThrowAngle = Math.atan2(nearestOther.y - targetE.y, nearestOther.x - targetE.x);
-                }
+                // Direction was fixed when the grab landed, and the wind-up already pulled
+                // back along it. Re-picking a target here would fire off the telegraphed axis.
+                const bestThrowAngle =
+                  arm.throwTargetX !== undefined && arm.throwTargetY !== undefined
+                    ? Math.atan2(arm.throwTargetY, arm.throwTargetX)
+                    : Math.atan2(targetE.y - pY, targetE.x - pX);
 
                 targetE.isGrabbed = false;
                 targetE.isThrown = true;
-                const throwSpeed = 740;
+                const throwSpeed = THROW_LAUNCH_SPEED;
                 targetE.throwVx = Math.cos(bestThrowAngle) * throwSpeed;
                 targetE.throwVy = Math.sin(bestThrowAngle) * throwSpeed;
                 targetE.throwRotation = 0;
                 targetE.throwDamage = arm.flingObj?.damage || 60;
                 targetE.throwImpactRadius = 95;
+                this.updateThrowLanding(targetE);
 
                 sound.playVectorSlash();
                 this.triggerScreenShake(6, 0.18);
@@ -2457,14 +2832,17 @@ export class GameEngine {
                 const deflectedSpeed = Math.max(550, baseProjSpeed * 1.8);
                 proj.vx = Math.cos(bestTargetAngle) * deflectedSpeed;
                 proj.vy = Math.sin(bestTargetAngle) * deflectedSpeed;
-                proj.damage = Math.round((45 + this.state.stats.psiPower * 0.85) * psiMultiplier);
+                const stanceReflectBonus =
+                  this.state.character.id === 'nana' && this.state.characterResource.isActive ? 2.5 : 1;
+                proj.damage = Math.round((45 + this.state.stats.psiPower * 0.85) * psiMultiplier * stanceReflectBonus);
                 proj.penetration = 3;
 
                 // Nana Kinetic Battery Heal & Impenetrable Anchor Achievement (2.Е.2)
                 if (this.hasMutation('nana_kinetic_battery')) {
                   this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 3);
                 }
-                if (this.state.character.id === 'nana') {
+                // "Impenetrable Anchor" asks for deflections made while stationary.
+                if (this.state.character.id === 'nana' && this.state.characterResource.isActive) {
                   recordAchievementProgress('ach_kinetic_shield', 1);
                 }
                 this.state.bulletsDeflected = (this.state.bulletsDeflected || 0) + 1;
@@ -2567,8 +2945,11 @@ export class GameEngine {
           arm.targetEnemyId = bestDropship.id;
           arm.strikeType = 'slash';
 
-          // Base independent vector unit damage (scaled by psi power, character passives and weapon tier)
-          const baseDmg = (16 + this.state.stats.psiPower * 0.4) * psiMultiplier;
+          // Base independent vector unit damage. Uses the same soft-capped PSI law as every
+          // other damage path - this branch used to scale uncapped and quadratically.
+          const psiEffAir = effectivePsi(this.state.stats.psiPower);
+          const charBonusAir = psiMultiplier / Math.max(0.1, 1 + this.state.stats.psiPower / 100);
+          const baseDmg = (16 + psiEffAir * 0.4) * (1 + psiEffAir / 100) * charBonusAir;
           const isCrit = Math.random() < (this.state.stats.critChance / 100);
           const finalDmg = Math.round((isCrit ? baseDmg * this.state.stats.critDamage : baseDmg) * 1.35);
 
@@ -2636,10 +3017,9 @@ export class GameEngine {
           arm.strikeType = Math.random() < 0.45 ? 'pierce' : 'slash';
 
           // Base independent vector unit damage (scaled cleanly by psi power with soft cap and character state)
-          const rawPsi = Math.max(-50, this.state.stats.psiPower);
-          const effectivePsi = rawPsi <= 60 ? rawPsi : 60 + (rawPsi - 60) * 0.45;
+          const psiEff = effectivePsi(this.state.stats.psiPower);
           const charBonus = psiMultiplier / Math.max(0.1, 1 + this.state.stats.psiPower / 100);
-          const baseDmg = (13 + effectivePsi * 0.22) * (1 + effectivePsi / 100) * charBonus;
+          const baseDmg = (13 + psiEff * 0.22) * (1 + psiEff / 100) * charBonus;
           const isCrit = Math.random() < (this.state.stats.critChance / 100);
           let finalDmg = isCrit ? baseDmg * this.state.stats.critDamage : baseDmg;
 
@@ -2658,22 +3038,33 @@ export class GameEngine {
             // Direction from enemy to player (angle from which attack arrives at enemy)
             const incomingAngleAtTarget = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
 
-            // Vector Duel: Check if target has an available vector arm positioned to intercept this angle
+            // Vector Duel: a parry needs an arm that covers the angle AND is free AND the
+            // boss must be off its parry cooldown. Previously any arm within the arc
+            // parried, every frame, so no strike ever landed while guard held.
             let interceptingArm: BossVectorArm | null = null;
+            let isUnguardedAngle = false;
             if (bestTarget.vectorArms && bestTarget.vectorArms.length > 0) {
               let minAngleDiff = Infinity;
+              let candidate: BossVectorArm | null = null;
               for (const bArm of bestTarget.vectorArms) {
                 let diff = Math.abs(bArm.currentAngle - incomingAngleAtTarget);
                 if (diff > Math.PI) diff = Math.PI * 2 - diff;
-                if (diff < minAngleDiff) {
+                // An arm already committed to its own attack cannot also parry.
+                const armFree = !bArm.striking && !bArm.clashing;
+                if (diff < minAngleDiff && armFree) {
                   minAngleDiff = diff;
-                  interceptingArm = bArm;
+                  candidate = bArm;
                 }
               }
-              // Guarding arc: coverage of ~85° (Math.PI * 0.48). If outside, it's an unguarded flank/rear strike!
-              if (minAngleDiff > Math.PI * 0.48) {
-                interceptingArm = null;
+              // Guarding arc: coverage of ~85 degrees (Math.PI * 0.48).
+              isUnguardedAngle = minAngleDiff > Math.PI * 0.48;
+              const parryReady = (bestTarget.parryCooldownTimer || 0) <= 0;
+              if (!isUnguardedAngle && parryReady && candidate) {
+                interceptingArm = candidate;
+                bestTarget.parryCooldownTimer = bossParryCooldown(bestTarget.vectorArms.length);
               }
+            } else {
+              isUnguardedAngle = true;
             }
 
             if (interceptingArm) {
@@ -2700,7 +3091,7 @@ export class GameEngine {
               this.triggerScreenShake(5, 0.12);
 
               // 100% of damage to HP is BLOCKED; posture (vectorGuard) is depleted instead
-              const guardDmg = Math.round((28 + this.state.stats.psiPower * 0.4) * (isCrit ? 1.5 : 1.0));
+              const guardDmg = Math.round((GUARD_DAMAGE_BASE + this.state.stats.psiPower * GUARD_DAMAGE_PSI_SCALE) * (isCrit ? 1.5 : 1.0));
               bestTarget.vectorGuard = Math.max(0, (bestTarget.vectorGuard || 0) - guardDmg);
               bestTarget.guardBreakRecoverTimer = 2.5;
 
@@ -2746,7 +3137,7 @@ export class GameEngine {
                   type: 'psychic_ring',
                 });
               }
-            } else {
+            } else if (isUnguardedAngle) {
               // FLANK / REAR STRIKE! Enemy vectors were facing away or occupied!
               const flankDmg = Math.round(finalDmg * 1.4);
               this.damageEnemy(bestTarget, flankDmg, true);
@@ -2763,12 +3154,23 @@ export class GameEngine {
                 isCrit: true,
                 vy: -45,
               });
+            } else {
+              // Guard covers the angle but every arm is busy or the parry is on cooldown:
+              // the strike lands clean. This is the pressure valve that lets a duel
+              // actually progress instead of every hit pinging off the guard.
+              this.damageEnemy(bestTarget, finalDmg, isCrit);
+              sound.playVectorSlash();
+              this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
             }
           } else {
             // Check for Ballistic Riot Shield Directional Defense
             const hasShield = (bestTarget.type === 'riot_shield' || (bestTarget.shield !== undefined && bestTarget.shield > 0)) && !bestTarget.isStunned;
             if (hasShield) {
-              const facingAngle = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
+              // Where the shield is actually pointing (it lags behind the player), versus
+              // where this strike is coming from.
+              const facingAngle = bestTarget.shieldAngle !== undefined
+                ? bestTarget.shieldAngle
+                : Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
               const incomingAngle = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
               let angleDiff = Math.abs(facingAngle - incomingAngle);
               if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
@@ -3017,7 +3419,7 @@ export class GameEngine {
         targetAngle = Math.atan2(arm.targetY - pY, arm.targetX - pX);
       }
 
-      arm.currentAngle += (targetAngle - arm.currentAngle) * (dt * 12);
+      arm.currentAngle = approachAngle(arm.currentAngle, targetAngle, dt * 12, 7.0 * dt);
 
       const angle = arm.currentAngle;
       const armLen = arm.length;
@@ -3083,6 +3485,10 @@ export class GameEngine {
     if (this.state.character.id === 'bando' && this.state.characterResource.current > 0) {
       atkSpeedMod += (this.state.characterResource.current / 100) * 0.5;
     }
+    // Pain conversion surge: three seconds of +40% cadence after being hit.
+    if (this.state.character.id === 'bando' && this.state.player.painSurgeTimer > 0) {
+      atkSpeedMod *= 1.4;
+    }
 
     for (const weapon of this.state.weapons) {
       let cd = this.weaponCooldowns.get(weapon.id) || 0;
@@ -3113,9 +3519,7 @@ export class GameEngine {
     enemiesInRange.sort((a, b) => Math.hypot(a.x - pX, a.y - pY) - Math.hypot(b.x - pX, b.y - pY));
     const target = enemiesInRange[0];
 
-    const rawPsi = Math.max(-50, this.state.stats.psiPower);
-    const effectivePsi = rawPsi <= 60 ? rawPsi : 60 + (rawPsi - 60) * 0.5;
-    let psiMultiplier = 1 + effectivePsi / 100;
+    let psiMultiplier = 1 + effectivePsi(this.state.stats.psiPower) / 100;
     if (this.state.character.id === 'nyu' && this.state.characterResource.isActive) {
       psiMultiplier *= 2.0;
     }
@@ -3143,7 +3547,10 @@ export class GameEngine {
         this.triggerScreenShake(4, 0.15);
         this.ejectShellCasing();
 
-        const baseAngle = Math.atan2(target.y - pY, target.x - pX);
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, 600);
+        const baseAngle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
         const pelletCount = 6 + (weapon.tier - 1) * 2;
 
         for (let i = 0; i < pelletCount; i++) {
@@ -3174,8 +3581,11 @@ export class GameEngine {
         sound.playMinigun();
         this.ejectShellCasing();
 
-        const angle = Math.atan2(target.y - pY, target.x - pX) + (Math.random() - 0.5) * 0.12;
         const speed = 720;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX) + (Math.random() - 0.5) * 0.12;
         this.state.projectiles.push({
           id: ++this.projectileIdCounter,
           x: pX,
@@ -3197,8 +3607,11 @@ export class GameEngine {
       case 'sat_wrist_rockets': {
         if (!target) return false;
         sound.playRocketLaunch();
-        const angle = Math.atan2(target.y - pY, target.x - pX);
         const speed = 420;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
         this.state.projectiles.push({
           id: ++this.projectileIdCounter,
           x: pX,
@@ -3221,8 +3634,11 @@ export class GameEngine {
       case 'sat_anti_vector_laser': {
         if (!target) return false;
         sound.playLaser();
-        const angle = Math.atan2(target.y - pY, target.x - pX);
         const speed = 900;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
         this.state.projectiles.push({
           id: ++this.projectileIdCounter,
           x: pX,
@@ -3267,8 +3683,11 @@ export class GameEngine {
         this.triggerScreenShake(7, 0.2);
         this.ejectShellCasing();
 
-        const angle = Math.atan2(target.y - pY, target.x - pX);
         const speed = 1200;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
         this.state.projectiles.push({
           id: ++this.projectileIdCounter,
           x: pX,
@@ -3290,8 +3709,11 @@ export class GameEngine {
       case 'sat_vector_cutter': {
         if (!target) return false;
         sound.playLaser();
-        const angle = Math.atan2(target.y - pY, target.x - pX);
         const speed = 640;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
         this.state.projectiles.push({
           id: ++this.projectileIdCounter,
           x: pX,
@@ -3387,8 +3809,11 @@ export class GameEngine {
       case 'telekinetic_shard': {
         if (!target) return false;
         sound.playVectorSlash();
-        const angle = Math.atan2(target.y - pY, target.x - pX);
         const speed = 500;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
         this.state.projectiles.push({
           id: ++this.projectileIdCounter,
           x: pX,
@@ -3476,8 +3901,11 @@ export class GameEngine {
       case 'psychic_javelin': {
         if (!target) return false;
         sound.playSpecialAbility();
-        const angle = Math.atan2(target.y - pY, target.x - pX);
         const speed = 760;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
         this.state.projectiles.push({
           id: ++this.projectileIdCounter,
           x: pX,
@@ -3579,11 +4007,12 @@ export class GameEngine {
           // Bando or armless fallback: kinetic shotgun grapple kick
           sound.playGoreHit();
           target.isThrown = true;
-          target.throwVx = Math.cos(targetAngle) * 650;
-          target.throwVy = Math.sin(targetAngle) * 650;
+          target.throwVx = Math.cos(targetAngle) * THROW_LAUNCH_SPEED;
+          target.throwVy = Math.sin(targetAngle) * THROW_LAUNCH_SPEED;
           target.throwRotation = 0;
           target.throwDamage = baseDamage * 1.5;
           target.throwImpactRadius = 85;
+          this.updateThrowLanding(target);
           this.createBloodExplosion(target.x, target.y, 10);
         }
         return true;
@@ -3688,8 +4117,11 @@ export class GameEngine {
         if (!target) return false;
         sound.playPistol();
         this.ejectShellCasing();
-        const angle = Math.atan2(target.y - pY, target.x - pX);
         const speed = 760;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
 
         this.state.projectiles.push({
           id: ++this.projectileIdCounter,
@@ -3712,8 +4144,11 @@ export class GameEngine {
       case 'gravity_singularity': {
         if (!target) return false;
         sound.playVectorSwarm();
-        const angle = Math.atan2(target.y - pY, target.x - pX);
         const speed = 280;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
 
         this.state.projectiles.push({
           id: ++this.projectileIdCounter,
@@ -3815,8 +4250,11 @@ export class GameEngine {
         sound.playRailgun();
         this.triggerScreenShake(10, 0.3);
 
-        const angle = Math.atan2(target.y - pY, target.x - pX);
         const speed = 1600;
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, speed);
+        const angle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
 
         // Pierces infinite targets across the whole arena, detonating on impact
         this.state.projectiles.push({
@@ -3973,7 +4411,10 @@ export class GameEngine {
         this.triggerScreenShake(8, 0.2);
         this.ejectShellCasing();
 
-        const baseAngle = Math.atan2(target.y - pY, target.x - pX);
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, 600);
+        const baseAngle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
 
         // Fires 3 heavy cluster flak shells
         for (let s = -1; s <= 1; s++) {
@@ -4024,7 +4465,10 @@ export class GameEngine {
         this.triggerScreenShake(3, 0.08);
         this.ejectShellCasing();
 
-        const baseAngle = Math.atan2(target.y - pY, target.x - pX);
+        // Lead the shot: aim where the target will be when the projectile arrives, not
+        // where it is now. Without this, firearms miss anything that moves across.
+        const aimPoint = predictAimPoint(pX, pY, target.x, target.y, target.trackVx || 0, target.trackVy || 0, 600);
+        const baseAngle = Math.atan2(aimPoint.y - pY, aimPoint.x - pX);
 
         // 3 parallel streams of high-velocity incendiary explosive rounds
         for (let stream = -1; stream <= 1; stream++) {
@@ -4187,11 +4631,17 @@ export class GameEngine {
     const waveConfig = WAVES.find((w) => w.waveNumber === this.state.wave) || WAVES[WAVES.length - 1];
     this.lastEnemySpawn += dt;
 
-    const interval = 1 / waveConfig.enemySpawnRate;
-    if (this.lastEnemySpawn >= interval && this.state.enemies.length < waveConfig.maxConcurrentEnemies) {
+    // Exploration beat is calmer; the assault beat is denser and seeds elites.
+    const phaseRateMult = this.state.assaultPhaseActive ? 1.55 : 0.78;
+    const interval = 1 / (waveConfig.enemySpawnRate * phaseRateMult);
+    const concurrentCap = this.state.assaultPhaseActive
+      ? waveConfig.maxConcurrentEnemies
+      : Math.round(waveConfig.maxConcurrentEnemies * 0.72);
+
+    if (this.lastEnemySpawn >= interval && this.state.enemies.length < concurrentCap) {
       this.lastEnemySpawn = 0;
       const type = waveConfig.allowedEnemies[Math.floor(Math.random() * waveConfig.allowedEnemies.length)];
-      this.spawnEnemy(type);
+      this.spawnEnemy(type, undefined, undefined, this.state.assaultPhaseActive && Math.random() < 0.22);
     }
 
     // Mid-Wave Tactical Flanking Ambush (Waves 4+)
@@ -4285,7 +4735,7 @@ export class GameEngine {
     });
 
     this.state.dropshipWarningTimer = 4.0;
-    this.state.dropshipWarningText = 'ВНИМАНИЕ: БОЕВОЙ ВЕРТОЛЕТ SAT ЗАХОДИТ НА ВЫСАДКУ ШТУРМОВОГО ОТРЯДА!';
+    this.state.dropshipWarningText = loc('ВНИМАНИЕ: БОЕВОЙ ВЕРТОЛЕТ SAT ЗАХОДИТ НА ВЫСАДКУ ШТУРМОВОГО ОТРЯДА!', 'WARNING: SAT GUNSHIP INBOUND - ASSAULT SQUAD DEPLOYING!');
     sound.playDropshipAlarm();
     this.triggerScreenShake(8, 0.4);
   }
@@ -4311,7 +4761,7 @@ export class GameEngine {
         d.crashRot = (Math.random() > 0.5 ? 1 : -1) * 8;
         sound.playHelicopterCrash();
         this.triggerScreenShake(14, 0.7);
-        this.state.dropshipWarningText = 'КРУШЕНИЕ: БОЕВОЙ ВЕРТОЛЕТ SAT СБИТ И ПАДАЕТ!';
+        this.state.dropshipWarningText = loc('КРУШЕНИЕ: БОЕВОЙ ВЕРТОЛЕТ SAT СБИТ И ПАДАЕТ!', 'MAYDAY: SAT GUNSHIP SHOT DOWN - GOING DOWN!');
         this.state.dropshipWarningTimer = 3.0;
       }
 
@@ -4513,7 +4963,7 @@ export class GameEngine {
   }
 
   private triggerTacticalArtilleryCrisis() {
-    this.state.crisisWarningText = 'ТРЕВОГА: МАССИРОВАННЫЙ АРТОБСТРЕЛ SAT! ПОКИНЬТЕ ЗОНЫ ПОРАЖЕНИЯ!';
+    this.state.crisisWarningText = loc('ТРЕВОГА: МАССИРОВАННЫЙ АРТОБСТРЕЛ SAT! ПОКИНЬТЕ ЗОНЫ ПОРАЖЕНИЯ!', 'ALERT: SAT SATURATION BARRAGE - CLEAR THE IMPACT ZONES!');
     this.state.crisisWarningTimer = 4.0;
     sound.playHelicopterMinigun();
     this.triggerScreenShake(12, 0.6);
@@ -4645,37 +5095,55 @@ export class GameEngine {
       x = customX;
       y = customY;
     } else {
-      const side = Math.floor(Math.random() * 4);
-      const pad = 20;
+      // Spawn on a ring just beyond the camera rather than on the world border.
+      // On a 2600x2200 map with a ~1280x720 viewport, border spawning meant 8-13 seconds
+      // of walking before the first contact, so every wave opened with dead air and the
+      // player was punished for exploring away from the middle of the map.
+      const pX = this.state.player.x;
+      const pY = this.state.player.y;
+      // Band hugging the camera rectangle, not a circle: a circle of the screen's
+      // half-diagonal puts vertical spawns ~430px past the top edge, which is most of
+      // the dead air we are trying to remove.
+      const halfW = this.state.viewportWidth / 2;
+      const halfH = this.state.viewportHeight / 2;
+      const near = 70;
+      const far = 260;
+      const margin = 30;
 
-      if (side === 0) {
-        x = Math.random() * this.state.arenaWidth;
-        y = -pad;
-      } else if (side === 1) {
-        x = this.state.arenaWidth + pad;
-        y = Math.random() * this.state.arenaHeight;
-      } else if (side === 2) {
-        x = Math.random() * this.state.arenaWidth;
-        y = this.state.arenaHeight + pad;
-      } else {
-        x = -pad;
-        y = Math.random() * this.state.arenaHeight;
+      const pickOffscreenPoint = (): { x: number; y: number } => {
+        const depth = near + Math.random() * (far - near);
+        const side = Math.floor(Math.random() * 4);
+        if (side === 0) return { x: pX + (Math.random() * 2 - 1) * (halfW + far), y: pY - halfH - depth };
+        if (side === 1) return { x: pX + (Math.random() * 2 - 1) * (halfW + far), y: pY + halfH + depth };
+        if (side === 2) return { x: pX - halfW - depth, y: pY + (Math.random() * 2 - 1) * (halfH + far) };
+        return { x: pX + halfW + depth, y: pY + (Math.random() * 2 - 1) * (halfH + far) };
+      };
+
+      let placed = false;
+      for (let attempt = 0; attempt < 14 && !placed; attempt++) {
+        const p = pickOffscreenPoint();
+        if (p.x >= margin && p.x <= this.state.arenaWidth - margin && p.y >= margin && p.y <= this.state.arenaHeight - margin) {
+          x = p.x;
+          y = p.y;
+          placed = true;
+        }
+      }
+
+      if (!placed) {
+        // Player is hugging an arena corner: come in from the open side, still off-camera.
+        const towardCenterX = this.state.arenaWidth / 2 - pX;
+        const towardCenterY = this.state.arenaHeight / 2 - pY;
+        const angle = Math.atan2(towardCenterY, towardCenterX) + (Math.random() - 0.5) * 1.1;
+        const r = Math.max(halfW, halfH) + near + Math.random() * (far - near);
+        x = Math.max(margin, Math.min(this.state.arenaWidth - margin, pX + Math.cos(angle) * r));
+        y = Math.max(margin, Math.min(this.state.arenaHeight - margin, pY + Math.sin(angle) * r));
       }
     }
 
-    // Accelerating curve for late-game tension (prevents late-game from falling flat)
-    let waveScaling: number;
-    if (this.state.wave <= 3) {
-      waveScaling = 1 + (this.state.wave - 1) * 0.25;
-    } else if (this.state.wave <= 6) {
-      waveScaling = 1.5 + (this.state.wave - 3) * 0.52;
-    } else if (this.state.wave <= 10) {
-      waveScaling = 3.06 + (this.state.wave - 6) * 0.95;
-    } else if (this.state.wave <= 15) {
-      waveScaling = 6.86 + (this.state.wave - 10) * 1.5;
-    } else {
-      waveScaling = 14.36 + (this.state.wave - 15) * 2.2;
-    }
+    // Accelerating durability curve for late-game tension, paired with a much flatter
+    // offence curve so late waves stay lethal-but-readable instead of one-shotting.
+    const waveScaling = getEnemyHpScaling(this.state.wave);
+    const dmgScaling = getEnemyDamageScaling(this.state.wave);
 
     const lateSpeedBonus = Math.min(18, Math.max(0, (this.state.wave - 4) * 2.0));
     const eliteChance = Math.min(0.38, 0.12 + Math.max(0, this.state.wave - 4) * 0.035);
@@ -4689,7 +5157,7 @@ export class GameEngine {
       hp: 30 * waveScaling,
       maxHp: 30 * waveScaling,
       speed: 75 + lateSpeedBonus,
-      damage: 8 * waveScaling,
+      damage: 8 * dmgScaling,
       radius: 14,
       color: '#64748b',
       scoreValue: 2,
@@ -4704,7 +5172,7 @@ export class GameEngine {
           hp: 32 * waveScaling,
           maxHp: 32 * waveScaling,
           speed: 82 + lateSpeedBonus * 0.6,
-          damage: 9 * waveScaling,
+          damage: 9 * dmgScaling,
           radius: 13,
           color: '#475569',
           name: 'Патрульный SAT',
@@ -4727,7 +5195,7 @@ export class GameEngine {
           hp: 52 * waveScaling,
           maxHp: 52 * waveScaling,
           speed: 68 + lateSpeedBonus * 0.5,
-          damage: 6 * waveScaling,
+          damage: 6 * dmgScaling,
           radius: 15,
           color: '#334155',
           name: 'Дробовик спецназа SAT',
@@ -4750,7 +5218,7 @@ export class GameEngine {
           hp: 68 * waveScaling,
           maxHp: 68 * waveScaling,
           speed: 62 + lateSpeedBonus * 0.4,
-          damage: 12 * waveScaling,
+          damage: 12 * dmgScaling,
           radius: 16,
           color: '#334155',
           shield: 50 * waveScaling,
@@ -4767,7 +5235,7 @@ export class GameEngine {
           hp: 52 * waveScaling,
           maxHp: 52 * waveScaling,
           speed: 74 + lateSpeedBonus * 0.5,
-          damage: 13 * waveScaling,
+          damage: 13 * dmgScaling,
           radius: 15,
           color: '#eab308',
           name: 'Огнемётчик химзащиты',
@@ -4790,7 +5258,7 @@ export class GameEngine {
           hp: 26 * waveScaling,
           maxHp: 26 * waveScaling,
           speed: 105 + lateSpeedBonus * 0.5,
-          damage: 9 * waveScaling,
+          damage: 9 * dmgScaling,
           radius: 12,
           color: '#0284c7',
           name: 'Дрон-ликвидатор',
@@ -4813,7 +5281,7 @@ export class GameEngine {
           hp: 38 * waveScaling,
           maxHp: 38 * waveScaling,
           speed: 55,
-          damage: 22 * waveScaling,
+          damage: 22 * dmgScaling,
           radius: 13,
           color: '#1e293b',
           name: 'Снайпер SAT',
@@ -4836,7 +5304,7 @@ export class GameEngine {
           hp: 36 * waveScaling,
           maxHp: 36 * waveScaling,
           speed: 95 + lateSpeedBonus * 0.5,
-          damage: 10 * waveScaling,
+          damage: 10 * dmgScaling,
           radius: 12,
           color: '#06b6d4',
           name: 'ЭМИ-Подавитель векторов',
@@ -4884,7 +5352,7 @@ export class GameEngine {
           hp: 60 * waveScaling,
           maxHp: 60 * waveScaling,
           speed: 110 + lateSpeedBonus * 0.5,
-          damage: 16 * waveScaling,
+          damage: 16 * dmgScaling,
           radius: 14,
           color: '#f43f5e',
           name: 'Клон Силпелита',
@@ -4908,7 +5376,7 @@ export class GameEngine {
           hp: 46 * waveScaling,
           maxHp: 46 * waveScaling,
           speed: 105 + lateSpeedBonus * 0.5,
-          damage: 13 * waveScaling,
+          damage: 13 * dmgScaling,
           radius: 14,
           color: '#eab308',
           name: 'Диверсант SAT (Сеткомёт)',
@@ -4931,7 +5399,7 @@ export class GameEngine {
           hp: 140 * waveScaling,
           maxHp: 140 * waveScaling,
           speed: 56 + lateSpeedBonus * 0.3,
-          damage: 22 * waveScaling,
+          damage: 22 * dmgScaling,
           radius: 19,
           color: '#475569',
           name: 'Тяжёлый Джаггернаут SAT',
@@ -4957,7 +5425,7 @@ export class GameEngine {
           hp: 130 * waveScaling,
           maxHp: 130 * waveScaling,
           speed: 95,
-          damage: 20 * waveScaling,
+          damage: 20 * dmgScaling,
           radius: 20,
           color: '#7c2d12',
           name: 'Мутант лаборатории',
@@ -4969,16 +5437,19 @@ export class GameEngine {
         break;
     }
 
+    enemyData.name = localiseUnitName(type, enemyData.name || '');
+
     if (isElite) {
       enemyData.isElite = true;
       enemyData.hp = Math.round((enemyData.hp || 30) * 1.8);
       enemyData.maxHp = Math.round((enemyData.maxHp || 30) * 1.8);
       enemyData.damage = Math.round((enemyData.damage || 10) * 1.25);
       enemyData.speed = Math.round((enemyData.speed || 100) * 1.15);
+      enemyData.baseSpeed = enemyData.speed;
       enemyData.radius = (enemyData.radius || 14) + 2;
       enemyData.scoreValue = (enemyData.scoreValue || 2) * 2;
       enemyData.dnaDrop = Math.min(3, (enemyData.dnaDrop || 1) + 1);
-      enemyData.name = `[СПЕЦНАЗ] ${enemyData.name}`;
+      enemyData.name = `${loc('[СПЕЦНАЗ]', '[SPEC-OPS]')} ${enemyData.name}`;
       if (enemyData.maxAmmo) {
         enemyData.maxAmmo = Math.round(enemyData.maxAmmo * 1.5);
         enemyData.currentAmmo = enemyData.maxAmmo;
@@ -4995,20 +5466,20 @@ export class GameEngine {
         const chosenAffix = affixes[Math.floor(Math.random() * affixes.length)];
         enemyData.eliteAffix = chosenAffix;
         if (chosenAffix === 'armored') {
-          enemyData.eliteAffixName = 'БРОНЯ';
-          enemyData.name = `[БРОНЯ] ${enemyData.name}`;
+          enemyData.eliteAffixName = loc('БРОНЯ', 'ARMORED');
+          enemyData.name = `${loc('[БРОНЯ]', '[ARMORED]')} ${enemyData.name}`;
         } else if (chosenAffix === 'berserker') {
-          enemyData.eliteAffixName = 'БЕРСЕРК';
-          enemyData.name = `[БЕРСЕРК] ${enemyData.name}`;
+          enemyData.eliteAffixName = loc('БЕРСЕРК', 'BERSERKER');
+          enemyData.name = `${loc('[БЕРСЕРК]', '[BERSERKER]')} ${enemyData.name}`;
         } else if (chosenAffix === 'kinetic_shield') {
-          enemyData.eliteAffixName = 'КИНЕТИКА';
-          enemyData.name = `[КИНЕТИКА] ${enemyData.name}`;
+          enemyData.eliteAffixName = loc('КИНЕТИКА', 'KINETIC');
+          enemyData.name = `${loc('[КИНЕТИКА]', '[KINETIC]')} ${enemyData.name}`;
           const shieldVal = Math.round((enemyData.maxHp || 100) * 0.45);
           enemyData.shield = shieldVal;
           enemyData.maxShield = shieldVal;
         } else if (chosenAffix === 'phase_dash') {
-          enemyData.eliteAffixName = 'ФАЗОВЫЙ';
-          enemyData.name = `[ФАЗОВЫЙ] ${enemyData.name}`;
+          enemyData.eliteAffixName = loc('ФАЗОВЫЙ', 'PHASING');
+          enemyData.name = `${loc('[ФАЗОВЫЙ]', '[PHASING]')} ${enemyData.name}`;
           enemyData.phaseDashTimer = 2.5 + Math.random() * 1.5;
         }
       }
@@ -5018,17 +5489,24 @@ export class GameEngine {
   }
 
   private spawnBoss(type: Enemy['type']) {
+    // Boss durability. The BOSS_SPECS table already encodes its own progression
+    // (2 400 -> 92 000 base HP across the roster), so this multiplier only has to cover the
+    // gap between that ramp and the player's measured damage growth. The previous curve
+    // reached 28.8x on top of the spec ramp, which pushed the wave-15 fight to ~230 s of
+    // uninterruptible attrition. Halving its steepness targets 20-45 s climaxes.
     let waveScaling: number;
     if (this.state.wave <= 3) {
       waveScaling = 1 + (this.state.wave - 1) * 0.3;
     } else if (this.state.wave <= 6) {
-      waveScaling = 1.6 + (this.state.wave - 3) * 0.6;
+      waveScaling = 1.6 + (this.state.wave - 3) * 0.45;
     } else if (this.state.wave <= 10) {
-      waveScaling = 3.4 + (this.state.wave - 6) * 1.1;
+      waveScaling = 2.95 + (this.state.wave - 6) * 0.72;
     } else if (this.state.wave <= 15) {
-      waveScaling = 7.8 + (this.state.wave - 10) * 1.7;
+      waveScaling = 5.83 + (this.state.wave - 10) * 0.95;
+    } else if (this.state.wave <= 20) {
+      waveScaling = 10.58 + (this.state.wave - 15) * 1.9;
     } else {
-      waveScaling = 16.3 + (this.state.wave - 15) * 2.5;
+      waveScaling = 20.08 + (this.state.wave - 20) * 1.6;
     }
 
     interface BossSpec {
@@ -5292,7 +5770,17 @@ export class GameEngine {
     const spec = BOSS_SPECS[type] || BOSS_SPECS['boss_silpelit_14'];
     const maxHp = Math.round(spec.baseHp * waveScaling);
     const maxShield = Math.round(spec.baseShield * waveScaling);
-    const damage = Math.round(spec.baseDamage * waveScaling);
+
+    // Boss damage is NOT multiplied by the durability curve.
+    // The roster already encodes its own progression (22 -> 140 base damage across the
+    // campaign); multiplying that by the wave curve on top produced 1467 damage at wave 15
+    // and 4032 at wave 20 against a ~180 HP player, i.e. a guaranteed one-shot no matter
+    // what the player built. The authored base value lands at ~25-40% of max HP per hit,
+    // which is what a boss blow should cost. Endless repeats add a gentle ramp only.
+    const endlessBossRamp = this.state.wave > FINAL_CAMPAIGN_WAVE
+      ? 1 + (this.state.wave - FINAL_CAMPAIGN_WAVE) * 0.06
+      : 1;
+    const damage = Math.round(spec.baseDamage * endlessBossRamp);
     const maxVectorGuard = spec.vectorCount && spec.vectorCount > 0
       ? Math.round(350 + waveScaling * 80)
       : 0;
@@ -5318,8 +5806,9 @@ export class GameEngine {
         role,
         segments: [
           { x: bossSpawnX, y: bossSpawnY },
+          { x: bossSpawnX + Math.cos(angle) * (spec.vectorReach * 0.25), y: bossSpawnY + Math.sin(angle) * (spec.vectorReach * 0.25) },
           { x: bossSpawnX + Math.cos(angle) * (spec.vectorReach * 0.5), y: bossSpawnY + Math.sin(angle) * (spec.vectorReach * 0.5) },
-          { x: bossSpawnX + Math.cos(angle) * spec.vectorReach, y: bossSpawnY + Math.sin(angle) * spec.vectorReach },
+          { x: bossSpawnX + Math.cos(angle) * (spec.vectorReach * 0.75), y: bossSpawnY + Math.sin(angle) * (spec.vectorReach * 0.75) },
         ],
         color: spec.color,
       });
@@ -5345,7 +5834,7 @@ export class GameEngine {
       color: spec.color,
       scoreValue: 100 + this.state.wave * 15,
       dnaDrop: 18 + this.state.wave * 2,
-      name: spec.name,
+      name: localiseUnitName(type, spec.name),
       isBoss: true,
       isHeavyMass: true,
       vectorCount: spec.vectorCount,
@@ -5380,6 +5869,75 @@ export class GameEngine {
     for (let i = this.state.enemies.length - 1; i >= 0; i--) {
       const e = this.state.enemies[i];
 
+      // Rate limiter for the boss projectile parry, so a boss swats individual shots
+      // instead of erasing sustained fire.
+      if (e.deflectionCooldown !== undefined && e.deflectionCooldown > 0) {
+        e.deflectionCooldown = Math.max(0, e.deflectionCooldown - dt);
+      }
+      if (e.parryCooldownTimer !== undefined && e.parryCooldownTimer > 0) {
+        e.parryCooldownTimer = Math.max(0, e.parryCooldownTimer - dt);
+      }
+      if (e.hitstopCooldown !== undefined && e.hitstopCooldown > 0) {
+        e.hitstopCooldown = Math.max(0, e.hitstopCooldown - dt);
+      }
+
+      // A braced shield cannot snap around instantly. Turning it at a limited rate is what
+      // makes flanking a shield trooper a real option rather than a decorative stat.
+      if (e.shield !== undefined && e.shield > 0) {
+        const towardPlayer = Math.atan2(pY - e.y, pX - e.x);
+        if (e.shieldAngle === undefined) {
+          e.shieldAngle = towardPlayer;
+        } else if (!e.isStunned) {
+          e.shieldAngle = approachAngle(e.shieldAngle, towardPlayer, dt * 2.2, 1.8 * dt);
+        }
+      }
+
+      // Measure real velocity from the position delta. Enemies move through several
+      // different code paths (chase, strafe, knockback, dash), so deriving it here is the
+      // only reliable source for aim prediction.
+      if (dt > 0) {
+        if (e.trackLastX !== undefined && e.trackLastY !== undefined) {
+          const nvx = (e.x - e.trackLastX) / dt;
+          const nvy = (e.y - e.trackLastY) / dt;
+          // Smooth it so a single dash frame does not throw the aim off.
+          e.trackVx = (e.trackVx || 0) * 0.7 + nvx * 0.3;
+          e.trackVy = (e.trackVy || 0) * 0.7 + nvy * 0.3;
+        }
+        e.trackLastX = e.x;
+        e.trackLastY = e.y;
+      }
+
+      // Status timers run on real time, never on hitstop time. Hitstop is a rendering
+      // freeze for impact weight; when it also froze the state machine, a player landing
+      // ~16 strikes a second kept a boss in hitstop 72% of all frames, so its stun timer
+      // drained 0.17s over 2.5s, its guard never regenerated and it never acted again.
+      if (e.isStunned) {
+        e.stunTimer = (e.stunTimer || 0) - dt;
+        if (e.stunTimer <= 0) {
+          e.isStunned = false;
+          e.stunTimer = 0;
+          if (e.maxVectorGuard) {
+            e.vectorGuard = Math.round(e.maxVectorGuard * 0.5);
+          }
+        }
+      } else if (e.vectorGuard !== undefined && e.maxVectorGuard && e.vectorGuard < e.maxVectorGuard) {
+        e.guardBreakRecoverTimer = (e.guardBreakRecoverTimer || 0) - dt;
+        if (e.guardBreakRecoverTimer <= 0) {
+          e.vectorGuard = Math.min(e.maxVectorGuard, e.vectorGuard + dt * 45);
+        }
+      }
+
+      // Lesser vector units (Silpelit clones) carry arms too, but the kinematics pass lived
+      // inside the boss-only branch. Their segments were written once at spawn and never
+      // again, so the arms stayed pinned to the spawn point while the body walked away.
+      if (!e.isBoss && e.vectorArms && e.vectorArms.length > 0) {
+        const armAngle = Math.atan2(pY - e.y, pX - e.x);
+        const armReach = e.vectorReach || 120;
+        for (let v = 0; v < e.vectorArms.length; v++) {
+          this.updateEnemyArmKinematics(e, e.vectorArms[v], v, dt, armReach, armAngle, !!e.isStunned);
+        }
+      }
+
       // 0. Hitstop pause check (micro-pause for impactful combat weight and tactile readability)
       if (e.hitstopTimer !== undefined && e.hitstopTimer > 0) {
         e.hitstopTimer -= dt;
@@ -5396,7 +5954,8 @@ export class GameEngine {
       if (e.isThrown) {
         e.x += (e.throwVx || 0) * dt;
         e.y += (e.throwVy || 0) * dt;
-        e.throwRotation = (e.throwRotation || 0) + 16 * dt;
+        // 16 rad/s is 2.5 turns per second: a blur. Slow enough to read as a tumbling body.
+        e.throwRotation = (e.throwRotation || 0) + 7 * dt;
 
         // Visual kinetic trail particles
         if (Math.random() < 0.45) {
@@ -5436,13 +5995,19 @@ export class GameEngine {
         }
 
         // Friction and landing
-        e.throwVx = (e.throwVx || 0) * 0.93;
-        e.throwVy = (e.throwVy || 0) * 0.93;
+        e.throwVx = (e.throwVx || 0) * THROW_FRICTION_PER_FRAME;
+        e.throwVy = (e.throwVy || 0) * THROW_FRICTION_PER_FRAME;
         const currentSpeed = Math.hypot(e.throwVx || 0, e.throwVy || 0);
 
-        if (currentSpeed < 90 || e.x < 30 || e.x > this.state.arenaWidth - 30 || e.y < 30 || e.y > this.state.arenaHeight - 30) {
+        // Keep the landing telegraph honest: mid-air collisions bleed speed, which moves
+        // the impact point, so recompute it every frame rather than only at launch.
+        this.updateThrowLanding(e);
+
+        if (currentSpeed < THROW_STOP_SPEED || e.x < 30 || e.x > this.state.arenaWidth - 30 || e.y < 30 || e.y > this.state.arenaHeight - 30) {
           // SLAM IMPACT ON GROUND!
           e.isThrown = false;
+          e.throwLandingX = undefined;
+          e.throwLandingY = undefined;
           sound.playExplosion();
           sound.playGoreHit();
           this.triggerScreenShake(8, 0.25);
@@ -5482,14 +6047,9 @@ export class GameEngine {
 
       // BOSS SPECIFIC MECHANICS
       if (e.isBoss) {
-        // Stunned check: boss cannot move, rotate vectors, or act while posture is broken!
+        // Stunned check: boss cannot move, rotate vectors, or act while posture is broken.
+        // The countdown itself lives at the top of the loop so hitstop cannot freeze it.
         if (e.isStunned) {
-          e.stunTimer = (e.stunTimer || 0) - dt;
-          if (e.stunTimer <= 0) {
-            e.isStunned = false;
-            e.stunTimer = 0;
-            e.vectorGuard = Math.round((e.maxVectorGuard || 300) * 0.5);
-          }
           if (Math.random() < 0.35) {
             this.state.particles.push({
               x: e.x + (Math.random() - 0.5) * e.radius * 2,
@@ -5507,13 +6067,8 @@ export class GameEngine {
           continue;
         }
 
-        // Gradual vector guard regeneration if not broken
-        if (e.vectorGuard !== undefined && e.maxVectorGuard && e.vectorGuard < e.maxVectorGuard) {
-          e.guardBreakRecoverTimer = (e.guardBreakRecoverTimer || 0) - dt;
-          if (e.guardBreakRecoverTimer <= 0) {
-            e.vectorGuard = Math.min(e.maxVectorGuard, e.vectorGuard + dt * 45);
-          }
-        }
+        // (Vector guard regeneration is handled with the other status timers at the top of
+        // the loop, so it keeps running through hitstop.)
 
         // 1. Kinetic Shield Regeneration if not damaged for 6.0s
         if (e.maxShield && e.shield !== undefined && e.shield < e.maxShield) {
@@ -5540,10 +6095,11 @@ export class GameEngine {
         // 2. Enrage / Berserk Phase Trigger (HP < 50%)
         if (!e.isEnraged && e.hp < e.maxHp * 0.5) {
           e.isEnraged = true;
-          e.speed = Math.round(e.speed * 1.35);
+          e.speed = Math.round((e.baseSpeed !== undefined ? e.baseSpeed : e.speed) * 1.35);
+          e.baseSpeed = e.speed;
           sound.playDropshipAlarm();
           this.triggerScreenShake(15, 0.7);
-          this.state.bossWarningText = `ЯРОСТЬ: ${e.name.toUpperCase()} ВХОДИТ В ФАЗУ БЕРСЕРКА!`;
+          this.state.bossWarningText = loc(`ЯРОСТЬ: ${e.name.toUpperCase()} ВХОДИТ В ФАЗУ БЕРСЕРКА!`, `ENRAGED: ${e.name.toUpperCase()} ENTERS BERSERK PHASE!`);
           this.state.bossWarningTimer = 4.0;
           this.state.particles.push({
             x: e.x,
@@ -5561,7 +6117,12 @@ export class GameEngine {
 
         // 3. Boss & Diclonius Vector Arms Dynamics & Cinematic Combat System
         if (e.vectorArms && e.vectorArms.length > 0) {
-          const vReach = e.vectorReach || 160;
+          // Kurama's inhibitor field collapses hostile vector reach by 40%, as his card states.
+          let vReach = e.vectorReach || 160;
+          if (this.state.character.id === 'kurama') {
+            const distToKurama = Math.hypot(e.x - this.state.player.x, e.y - this.state.player.y);
+            if (distToKurama < 220) vReach *= 0.6;
+          }
           const isEnraged = e.isEnraged || false;
           const isStunned = e.isStunned || false;
           const angleToPlayer = Math.atan2(pY - e.y, pX - e.x);
@@ -5966,59 +6527,8 @@ export class GameEngine {
               }
             }
 
-            // 3. Segment kinematics & stance orientation
-            if (!arm.segments || arm.segments.length < 3) {
-              arm.segments = [{ x: e.x, y: e.y }, { x: e.x, y: e.y }, { x: e.x, y: e.y }];
-            }
-
-            arm.segments[0] = { x: e.x, y: e.y };
-
-            if (isStunned) {
-              const droopAngle = Math.PI * 0.5 + (v - e.vectorArms.length / 2) * 0.12;
-              arm.currentAngle = droopAngle;
-              arm.segments[1] = {
-                x: e.x + Math.cos(droopAngle) * (vReach * 0.4),
-                y: e.y + Math.sin(droopAngle) * (vReach * 0.4),
-              };
-              arm.segments[2] = {
-                x: e.x + Math.cos(droopAngle) * (vReach * 0.7),
-                y: e.y + Math.sin(droopAngle) * (vReach * 0.7) + 14,
-              };
-            } else if (arm.striking && arm.targetX !== undefined && arm.targetY !== undefined) {
-              const reachProg = Math.sin((arm.strikeProgress || 0) * Math.PI);
-              const tx = e.x + (arm.targetX - e.x) * reachProg;
-              const ty = e.y + (arm.targetY - e.y) * reachProg;
-              const vibPower = arm.clashing ? 6 : 14;
-              const midX = (e.x + tx) * 0.5 + Math.sin(arm.vibrationPhase) * vibPower;
-              const midY = (e.y + ty) * 0.5 + Math.cos(arm.vibrationPhase) * vibPower;
-              arm.segments[1] = { x: midX, y: midY };
-              arm.segments[2] = { x: tx, y: ty };
-            } else {
-              // Combat fan oriented threateningly towards player, or cyclone spin
-              if (e.vectorAttackState === 'cyclone') {
-                const baseAngle = e.vectorRotation + (v / e.vectorArms.length) * Math.PI * 2;
-                arm.currentAngle = baseAngle;
-              } else {
-                const count = e.vectorArms.length;
-                const armRatio = count > 1 ? (v / (count - 1)) - 0.5 : 0;
-                const spreadAngle = Math.min(Math.PI * 1.5, 0.6 + count * 0.1);
-                const idleAngle = angleToPlayer + armRatio * spreadAngle;
-                const idleWave = Math.sin(Date.now() * 0.007 + v * 1.1) * 0.22;
-                arm.currentAngle = idleAngle + idleWave;
-              }
-
-              const midAng = arm.currentAngle + Math.sin(arm.vibrationPhase * 0.5) * 0.2;
-              const tipAng = arm.currentAngle + Math.cos(arm.vibrationPhase * 0.7) * 0.12;
-              const armRestLen = vReach * 0.75;
-              arm.segments[1] = {
-                x: e.x + Math.cos(midAng) * (armRestLen * 0.55),
-                y: e.y + Math.sin(midAng) * (armRestLen * 0.55),
-              };
-              arm.segments[2] = {
-                x: e.x + Math.cos(tipAng) * armRestLen,
-                y: e.y + Math.sin(tipAng) * armRestLen,
-              };
-            }
+            // 3. Segment kinematics & stance orientation (shared with non-boss vector units).
+            this.updateEnemyArmKinematics(e, arm, v, dt, vReach, angleToPlayer, isStunned);
           }
         }
 
@@ -6339,6 +6849,105 @@ export class GameEngine {
     }
   }
 
+  // Vector-arm kinematics shared by every unit that has arms: bosses and the lesser
+  // Silpelit clones alike. Modelled on the player arms - the heading is eased toward its
+  // target rather than snapped to it each frame, and the chain extends from a resting
+  // length toward the strike point instead of collapsing into the body and firing out.
+  private updateEnemyArmKinematics(
+    e: Enemy,
+    arm: BossVectorArm,
+    index: number,
+    dt: number,
+    vReach: number,
+    angleToPlayer: number,
+    isStunned: boolean
+  ) {
+    const armCount = e.vectorArms ? e.vectorArms.length : 1;
+
+    if (!arm.segments || arm.segments.length < 4) {
+      arm.segments = [
+        { x: e.x, y: e.y },
+        { x: e.x, y: e.y },
+        { x: e.x, y: e.y },
+        { x: e.x, y: e.y },
+      ];
+    }
+
+    const armTime = this.armAnimTime;
+    const restLen = vReach * 0.75;
+
+    // a) Where does this arm want to point?
+    let targetAngle: number;
+    if (isStunned) {
+      targetAngle = Math.PI * 0.5 + (index - armCount / 2) * 0.12;
+    } else if (arm.striking && arm.targetX !== undefined && arm.targetY !== undefined) {
+      targetAngle = Math.atan2(arm.targetY - e.y, arm.targetX - e.x);
+    } else if (e.vectorAttackState === 'cyclone') {
+      targetAngle = (e.vectorRotation || 0) + (index / armCount) * Math.PI * 2;
+    } else {
+      const armRatio = armCount > 1 ? (index / (armCount - 1)) - 0.5 : 0;
+      const spreadAngle = Math.min(Math.PI * 1.5, 0.6 + armCount * 0.1);
+      targetAngle = angleToPlayer + armRatio * spreadAngle + Math.sin(armTime + index * 1.5) * 0.22;
+    }
+
+    // b) Ease into it. A strike tracks harder than idle drift, but the angular speed is
+    //    capped either way so no single frame can snap the arm across the body.
+    const turnRate = arm.striking ? dt * 11 : dt * 6;
+    const maxStep = (arm.striking ? 5.5 : 2.6) * dt; // rad/s ceiling
+    arm.currentAngle = approachAngle(arm.currentAngle, targetAngle, turnRate, maxStep);
+
+    // c) Extension. Rest length by default; a strike drives the tip out toward the target
+    //    and draws it back, without ever retracting into the body.
+    let reach = restLen;
+    if (isStunned) {
+      reach = vReach * 0.55;
+    } else if (arm.striking && arm.targetX !== undefined && arm.targetY !== undefined) {
+      const punch = Math.sin(Math.min(1, Math.max(0, arm.strikeProgress || 0)) * Math.PI);
+      const rawDist = Math.hypot(arm.targetX - e.x, arm.targetY - e.y);
+      // Clamped both ways: a strike reaches out, it never retracts into the torso.
+      const targetDist = Math.max(restLen * 0.72, Math.min(vReach * 1.15, rawDist));
+      reach = restLen + (targetDist - restLen) * punch;
+    }
+
+    // d) 4-node chain with the same gentle travelling wave the player arms use. The old
+    //    mid-point jitter swung +/-14px at ~7Hz, which read as a seizure rather than a blade.
+    const vibScale = arm.clashing ? 3.2 : 1.0;
+    const shoulderAng = arm.currentAngle + Math.sin(armTime * 2.2 + index) * 0.10;
+    const elbowAng = arm.currentAngle + Math.sin(armTime * 3.5 + index * 1.6) * 0.16;
+    const micro = Math.sin(armTime * 22 + index * 3) * 1.6 * vibScale;
+    const droop = isStunned ? 14 : 0;
+
+    arm.segments[0] = { x: e.x, y: e.y };
+    arm.segments[1] = {
+      x: e.x + Math.cos(shoulderAng) * (reach * 0.33),
+      y: e.y + Math.sin(shoulderAng) * (reach * 0.33) + droop * 0.3,
+    };
+    arm.segments[2] = {
+      x: e.x + Math.cos(elbowAng) * (reach * 0.66) + micro * 0.5,
+      y: e.y + Math.sin(elbowAng) * (reach * 0.66) + micro * 0.5 + droop * 0.7,
+    };
+    arm.segments[3] = {
+      x: e.x + Math.cos(arm.currentAngle) * reach + micro,
+      y: e.y + Math.sin(arm.currentAngle) * reach + micro + droop,
+    };
+  }
+
+  // Projects where a thrown body will come down, clamped to the arena, so the renderer
+  // can telegraph the impact crater while the body is still in the air.
+  private updateThrowLanding(e: Enemy) {
+    const vx = e.throwVx || 0;
+    const vy = e.throwVy || 0;
+    const speed = Math.hypot(vx, vy);
+    if (speed <= 0) {
+      e.throwLandingX = e.x;
+      e.throwLandingY = e.y;
+      return;
+    }
+    const travel = predictThrowDistance(speed);
+    e.throwLandingX = Math.max(30, Math.min(this.state.arenaWidth - 30, e.x + (vx / speed) * travel));
+    e.throwLandingY = Math.max(30, Math.min(this.state.arenaHeight - 30, e.y + (vy / speed) * travel));
+  }
+
   private enemyShoot(enemy: Enemy) {
     if (enemy.isReloading) return;
 
@@ -6624,27 +7233,46 @@ export class GameEngine {
           const enemy = this.state.enemies[j];
           const dist = Math.hypot(enemy.x - p.x, enemy.y - p.y);
 
-          // Boss vector deflection if projectile is inside vector reach
-          if (enemy.isBoss && enemy.vectorCount && enemy.vectorCount > 0) {
+          // Boss vector deflection if projectile is inside vector reach.
+          // This used to re-roll 45% EVERY FRAME the projectile spent inside the parry
+          // radius. A bullet crossing a 300px radius is inside for ~35 frames, so survival
+          // odds were 0.55^35 ~ 0: every projectile weapon dealt literally zero damage to
+          // any boss with vectors, which made Bando (all firearms, no vector arms) unable
+          // to hurt most bosses at all. Now it is one contested roll per shot, rate-limited
+          // so a boss cannot swat an entire burst.
+          if (
+            enemy.isBoss &&
+            enemy.vectorCount &&
+            enemy.vectorCount > 0 &&
+            !(p.parryCheckedBy && p.parryCheckedBy.includes(enemy.id))
+          ) {
             const parryReach = (enemy.vectorReach || 160) * 0.72;
-            if (dist < parryReach && Math.random() < (enemy.isEnraged ? 0.65 : 0.45)) {
-              sound.playVectorClash();
-              for (let sp = 0; sp < 4; sp++) {
-                this.state.particles.push({
-                  x: p.x,
-                  y: p.y,
-                  vx: (Math.random() - 0.5) * 200,
-                  vy: (Math.random() - 0.5) * 200,
-                  life: 0.25,
-                  maxLife: 0.25,
-                  size: 3,
-                  color: '#38bdf8',
-                  alpha: 1,
-                  type: 'spark',
-                });
+            if (dist < parryReach) {
+              if (!p.parryCheckedBy) p.parryCheckedBy = [];
+              p.parryCheckedBy.push(enemy.id);
+
+              const parryReady = (enemy.deflectionCooldown || 0) <= 0;
+              const parryChance = enemy.isEnraged ? 0.35 : 0.22;
+              if (parryReady && Math.random() < parryChance) {
+                enemy.deflectionCooldown = 0.25; // at most ~4 swats per second
+                sound.playVectorClash();
+                for (let sp = 0; sp < 4; sp++) {
+                  this.state.particles.push({
+                    x: p.x,
+                    y: p.y,
+                    vx: (Math.random() - 0.5) * 200,
+                    vy: (Math.random() - 0.5) * 200,
+                    life: 0.25,
+                    maxLife: 0.25,
+                    size: 3,
+                    color: '#38bdf8',
+                    alpha: 1,
+                    type: 'spark',
+                  });
+                }
+                this.state.projectiles.splice(i, 1);
+                break;
               }
-              this.state.projectiles.splice(i, 1);
-              break;
             }
           }
 
@@ -6761,7 +7389,11 @@ export class GameEngine {
 
     // Radical Dualism: Polar Character Combat Modifiers (2.Д)
     if (this.state.character.id === 'lucy') {
-      // Kinetic predator: sprint damage boost
+      // Kinetic predator. Her card promises damage that scales with running speed and with
+      // kill streaks; only the streak half existed, so the defining half of her identity -
+      // "never stop moving" - had no mechanical weight at all.
+      const speedRatio = Math.min(1, (this.state.player.currentSpeed || 0) / Math.max(1, this.state.stats.moveSpeed));
+      finalDamage = Math.round(finalDamage * (1 + speedRatio * 0.4));
       if (this.state.characterResource.isActive) {
         finalDamage = Math.round(finalDamage * 1.5);
       }
@@ -6773,7 +7405,7 @@ export class GameEngine {
         finalDamage = Math.max(1, Math.round(finalDamage * 0.7));
       }
     } else if (this.state.character.id === 'nana') {
-      // Anchored stance: bonus damage if standing still
+      // Anchored stance, as printed on her character card.
       if (this.state.characterResource.isActive) {
         finalDamage = Math.round(finalDamage * 1.35);
       }
@@ -6787,6 +7419,10 @@ export class GameEngine {
       if (this.state.characterResource.isActive) {
         finalDamage = Math.round(finalDamage * 0.85);
       }
+    } else if (this.state.character.id === 'kurama') {
+      // The heavier his conscience, the less willing his hand.
+      const guilt = Math.max(0, Math.min(100, this.state.characterResource.current)) / 100;
+      finalDamage = Math.max(1, Math.round(finalDamage * (1 - guilt * 0.35)));
     }
 
     if (enemy.eliteAffix === 'armored') {
@@ -6828,7 +7464,14 @@ export class GameEngine {
     this.state.damageDealt += finalDamage;
 
     // Tactical micro-hitstop for tangible combat weight
-    enemy.hitstopTimer = Math.max(enemy.hitstopTimer || 0, isCrit ? 0.08 : 0.03);
+    // Hitstop sells the weight of a hit, but it must not stack. Refreshing it on every
+    // hit let a fast attacker hold an enemy frozen permanently, which is what made boss
+    // duels read as beating up a statue that never swung back.
+    if ((enemy.hitstopTimer || 0) <= 0 && (enemy.hitstopCooldown || 0) <= 0) {
+      const stopDuration = isCrit ? 0.08 : 0.03;
+      enemy.hitstopTimer = stopDuration;
+      enemy.hitstopCooldown = stopDuration + 0.12;
+    }
 
     // Color-coded damage numbers based on weapon identity (clarity of causality)
     let dmgColor = isCrit ? '#facc15' : '#ffffff';
@@ -6928,7 +7571,7 @@ export class GameEngine {
       this.state.activeBoss = null;
       // High-stakes progression: exactly 1 mutation point awarded exclusively for defeating a major boss!
       this.state.mutationState.mutationPoints += 1;
-      this.state.bossWarningText = `БОСС ${enemy.name.toUpperCase()} УНИЧТОЖЕН! +1 ОЧКО МУТАЦИИ`;
+      this.state.bossWarningText = loc(`БОСС ${enemy.name.toUpperCase()} УНИЧТОЖЕН! +1 ОЧКО МУТАЦИИ`, `BOSS ${enemy.name.toUpperCase()} ELIMINATED! +1 MUTATION POINT`);
       this.state.bossWarningTimer = 4.0;
 
       // Check if any other bosses remain in this wave
@@ -6944,6 +7587,32 @@ export class GameEngine {
       }
     }
 
+    // Kurama's Burden of Guilt. His card promises that killing Diclonius subjects weighs on
+    // him (less damage, far more DNA) while cutting down SAT troopers clears his conscience.
+    // None of it existed - his resource gauge simply never moved outside his ultimate.
+    if (this.state.character.id === 'kurama') {
+      const isDiclonius =
+        enemy.type === 'silpelit_clone' ||
+        enemy.type === 'mutant_beast' ||
+        (enemy.isBoss && (enemy.vectorCount || 0) > 0);
+      if (isDiclonius) {
+        this.state.characterResource.current = Math.min(100, this.state.characterResource.current + (enemy.isBoss ? 30 : 12));
+        this.state.damageNumbers.push({
+          id: ++this.dmgNumIdCounter,
+          x: enemy.x,
+          y: enemy.y - 30,
+          text: loc('БРЕМЯ ВИНЫ', 'BURDEN OF GUILT'),
+          color: '#a78bfa',
+          opacity: 1,
+          isCrit: false,
+          vy: -40,
+        });
+      } else {
+        this.state.characterResource.current = Math.max(0, this.state.characterResource.current - 6);
+      }
+      this.state.characterResource.isActive = this.state.characterResource.current >= 50;
+    }
+
     // Increase character resource on kill
     if (this.state.character.id === 'bando') {
       this.state.characterResource.current = Math.min(100, this.state.characterResource.current + 4);
@@ -6957,7 +7626,17 @@ export class GameEngine {
     else if (this.state.surgeLevel === 2) surgeMultiplier = 1.5;
     else if (this.state.surgeLevel === 3) surgeMultiplier = 2.0;
 
-    const harvestBonus = (1 + this.state.stats.dnaHarvest / 100) * surgeMultiplier;
+    // Orb value. Two separate multipliers used to stack here: harvest (up to x2.5) times
+    // the kill-streak surge (up to x2), so an orb could be worth five times base and a run
+    // held 25-50k DNA by wave 12 with nothing to spend it on.
+    // Harvest stays a real investment but bounded, and the surge no longer multiplies DNA:
+    // it already multiplies XP, and paying it twice is what made the curve explode.
+    const harvestPct = Math.min(HARVEST_MULTIPLIER_CAP, Math.max(0, this.state.stats.dnaHarvest));
+    let harvestBonus = 1 + (harvestPct / 100) * 0.6;
+    if (this.state.character.id === 'kurama') {
+      // Penance pays: guilt converts directly into research material (up to +100% DNA).
+      harvestBonus *= 1 + Math.max(0, Math.min(100, this.state.characterResource.current)) / 100;
+    }
     const luckBonus = (this.state.stats.luck || 0) * 0.005;
 
     if (enemy.isBoss) {
@@ -6968,7 +7647,8 @@ export class GameEngine {
       for (let i = 0; i < orbCount; i++) {
         let baggedBonus = 0;
         if (this.state.baggedDna > 0) {
-          baggedBonus = Math.min(this.state.baggedDna, valPerOrb);
+          // A boss cracks the reserve wide open: a fifth of the bank per orb.
+          baggedBonus = Math.max(1, Math.min(this.state.baggedDna, Math.ceil(this.state.baggedDna * 0.2)));
           this.state.baggedDna -= baggedBonus;
         }
         this.state.dnaDrops.push({
@@ -7000,24 +7680,23 @@ export class GameEngine {
       }
 
       if (Math.random() < dropChance) {
-        let orbValue = 1;
-        if (enemy.isElite) {
-          orbValue = Math.min(3, Math.max(2, Math.round(2 * harvestBonus)));
-        } else if (enemy.dnaDrop > 2) {
-          orbValue = Math.min(2, Math.max(1, Math.round(enemy.dnaDrop * 0.5 * harvestBonus)));
-        }
+        // Harvest now multiplies the orb instead of being swallowed by a hard cap.
+        // The old Math.min(2, ...) meant 0% and 200% DNA Harvest produced literally the
+        // same drop, which made the game's only investment stat inert.
+        const baseWorth = enemy.isElite ? 2 : Math.max(1, Math.round(enemy.dnaDrop * 0.5));
+        const orbValue = Math.max(1, Math.round(baseWorth * harvestBonus));
 
-        // Bagged Materials Reserve Payout (2.Г.1): Uncollected materials from previous wave paid back 2x
+        // Bagged Materials Reserve Payout (2.Г.1): released as a share of the reserve.
         let baggedBonus = 0;
         if (this.state.baggedDna > 0) {
-          baggedBonus = Math.min(this.state.baggedDna, orbValue);
+          baggedBonus = Math.max(1, Math.min(this.state.baggedDna, Math.ceil(this.state.baggedDna * BAGGED_PAYOUT_FRACTION)));
           this.state.baggedDna -= baggedBonus;
           sound.playBaggedCashback();
           this.state.damageNumbers.push({
             id: ++this.dmgNumIdCounter,
             x: enemy.x,
             y: enemy.y - 25,
-            text: getLanguage() === 'ru' ? `+${orbValue + baggedBonus} ДНК (2x МЕШОК)` : `+${orbValue + baggedBonus} DNA (2x BAGGED)`,
+            text: getLanguage() === 'ru' ? `+${orbValue + baggedBonus} ДНК (МЕШОК)` : `+${orbValue + baggedBonus} DNA (BAGGED)`,
             color: '#fbbf24',
             opacity: 1,
             isCrit: true,
@@ -7048,12 +7727,18 @@ export class GameEngine {
     else if (this.state.surgeLevel === 2) xpMultiplier = 1.45;
     else if (this.state.surgeLevel === 3) xpMultiplier = 1.8;
 
-    this.state.player.currentXp += Math.round(amount * xpMultiplier);
+    // Later sectors are worth more research value per subject neutralised.
+    // Was 0.35 per wave, which combined with the softened curve produced level 24+ by
+    // wave 12 and a landslide of elite upgrades.
+    const waveWorth = 1 + (this.state.wave - 1) * 0.18;
+
+    this.state.player.currentXp += Math.max(1, Math.round(amount * xpMultiplier * waveWorth));
     while (this.state.player.currentXp >= this.state.player.xpToNextLevel) {
       this.state.player.currentXp -= this.state.player.xpToNextLevel;
       this.state.player.level++;
-      // XP scaling so levels are earned strategically; mutations are reserved strictly for major bosses
-      this.state.player.xpToNextLevel = Math.round(this.state.player.xpToNextLevel * 1.45 + 30);
+      // Levels stay meaningful but must keep arriving: mutations remain boss-exclusive.
+      // 1.28 was too shallow once XP also scaled with the wave; both were compounding.
+      this.state.player.xpToNextLevel = Math.round(this.state.player.xpToNextLevel * 1.38 + 26);
       sound.playLevelUp();
       if (this.onLevelUpCallback) {
         this.onLevelUpCallback(this.state.player.level);
@@ -7072,7 +7757,7 @@ export class GameEngine {
         id: ++this.dmgNumIdCounter,
         x: this.state.player.x,
         y: this.state.player.y - 20,
-        text: 'УКЛОНЕНИЕ',
+        text: loc('УКЛОНЕНИЕ', 'DODGE'),
         color: '#38bdf8',
         opacity: 1,
         isCrit: false,
@@ -7081,11 +7766,33 @@ export class GameEngine {
       return;
     }
 
-    const armorReduction = 100 / (100 + this.state.stats.armor * 5);
+    // Nana braces behind her kinetic shield while stationary.
+    const stanceArmor =
+      this.state.character.id === 'nana' && this.state.characterResource.isActive ? 8 : 0;
+    const armorReduction = 100 / (100 + (this.state.stats.armor + stanceArmor) * 5);
     const finalDamage = Math.max(1, Math.round(amount * armorReduction));
 
     this.state.player.hp -= finalDamage;
     this.state.player.invincibleTimer = 0.22; // Brief grace period prevents instant deletion from overlapping attacks
+
+    // Bando converts pain into tempo.
+    if (this.state.character.id === 'bando') {
+      this.state.characterResource.current = Math.min(100, this.state.characterResource.current + 35);
+      this.state.player.painSurgeTimer = 3.0;
+      // Every barrel slams a fresh magazine home.
+      this.weaponCooldowns.clear();
+      sound.playReloadClick();
+      this.state.damageNumbers.push({
+        id: ++this.dmgNumIdCounter,
+        x: this.state.player.x,
+        y: this.state.player.y - 34,
+        text: loc('+35 АДРЕНАЛИН / ПЕРЕЗАРЯДКА', '+35 ADRENALINE / RELOAD'),
+        color: '#38bdf8',
+        opacity: 1,
+        isCrit: true,
+        vy: -45,
+      });
+    }
     this.triggerScreenShake(6, 0.2);
     sound.playGoreHit();
 
@@ -7108,7 +7815,7 @@ export class GameEngine {
       this.state.player.hp = 0;
       this.state.isWaveActive = false;
       checkAchievements(this.state);
-      recordRunCompleted(false, this.state.wave, this.state.kills, this.state.totalDnaCollected, this.state.character.id, this.state.maxKillStreak);
+      this.bankRunProgress(false);
       if (this.onGameOverCallback) {
         this.onGameOverCallback(false);
       }
@@ -7496,6 +8203,14 @@ export class GameEngine {
     }
   }
 
+  // Banks only the DNA earned since the last bank, so a campaign victory followed by an
+  // endless continuation pays out once for each stretch instead of twice for the same run.
+  private bankRunProgress(won: boolean) {
+    const unbanked = Math.max(0, this.state.totalDnaCollected - this.bankedDnaSnapshot);
+    this.bankedDnaSnapshot = this.state.totalDnaCollected;
+    recordRunCompleted(won, this.state.wave, this.state.kills, unbanked, this.state.character.id, this.state.maxKillStreak);
+  }
+
   private finishWave() {
     this.resetInput();
     this.state.isWaveActive = false;
@@ -7523,19 +8238,16 @@ export class GameEngine {
       this.state.totalDnaCollected += harvestPayout;
     }
     // +10% compound interest growth on positive dnaHarvest stat for late-game economic scaling
-    if (this.state.stats.dnaHarvest > 0) {
+    // Compound growth, but it stops compounding once the payout multiplier is capped out.
+    if (this.state.stats.dnaHarvest > 0 && this.state.stats.dnaHarvest < HARVEST_MULTIPLIER_CAP) {
       const growth = Math.max(1, Math.round(this.state.stats.dnaHarvest * 0.10));
       this.state.stats.dnaHarvest += growth;
       this.state.baseStatBonuses.dnaHarvest = (this.state.baseStatBonuses.dnaHarvest || 0) + growth;
     }
 
-    // Macro-economy: DNA Savings Dividend (Piggy Bank mechanics)
-    // 8% base interest on remaining unspent DNA, up to +25 DNA.
-    // If player has 'cryo_dna_vault', upgraded to 15% interest, up to +50 DNA.
-    const hasCryoVault = this.state.passiveItems.some((p) => p.id === 'cryo_dna_vault');
-    const dividendRate = hasCryoVault ? 0.15 : 0.08;
-    const maxDividend = hasCryoVault ? 50 : 25;
-    const dividend = Math.min(maxDividend, Math.floor(this.state.player.dna * dividendRate));
+    // Macro-economy: DNA Savings Dividend (Piggy Bank mechanics).
+    // Rules live in getDividendConfig so the shop projection cannot drift from the payout.
+    const dividend = projectDividend(this.state.player.dna, this.state.passiveItems);
     this.state.lastWaveDividend = dividend;
     if (dividend > 0) {
       this.state.player.dna += dividend;
@@ -7548,8 +8260,8 @@ export class GameEngine {
     sound.playLevelUp();
     checkAchievements(this.state);
 
-    if (this.state.wave >= 15 && !this.state.isEndlessMode) {
-      recordRunCompleted(true, this.state.wave, this.state.kills, this.state.totalDnaCollected, this.state.character.id, this.state.maxKillStreak);
+    if (this.state.wave >= FINAL_CAMPAIGN_WAVE && !this.state.isEndlessMode) {
+      this.bankRunProgress(true);
       if (this.onGameOverCallback) {
         this.onGameOverCallback(true);
       }

@@ -74,7 +74,7 @@ export const TRANSLATIONS = {
     startExperiment: 'НАЧАТЬ ТЕСТИРОВАНИЕ',
     unlockReq: 'ТРЕБОВАНИЯ РАЗБЛОКИРОВКИ',
     available: 'Доступен сразу',
-    needWins: 'Требуется побед на 10 волне: {count}',
+    needWins: 'Требуется побед в кампании: {count}',
 
     // Character Card & Details
     startingWeapon: 'СТАРТОВОЕ ВООРУЖЕНИЕ',
@@ -250,7 +250,7 @@ export const TRANSLATIONS = {
     startExperiment: 'BEGIN EXPERIMENT',
     unlockReq: 'UNLOCK REQUIREMENTS',
     available: 'Available immediately',
-    needWins: 'Requires {count} wins at wave 10',
+    needWins: 'Campaign victories required: {count}',
 
     // Character Card & Details
     startingWeapon: 'STARTING WEAPON',

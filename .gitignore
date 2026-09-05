@@ -1,8 +1,18 @@
 node_modules/
 build/
 dist/
+release/
 coverage/
 .DS_Store
 *.log
 .env*
 !.env.example
+
+# Desktop build output
+win-unpacked/
+*.exe
+*.blockmap
+
+# Local tooling, not part of the game
+.claude/
+CLAUDE.md

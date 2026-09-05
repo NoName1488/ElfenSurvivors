@@ -5,7 +5,12 @@
  * and an evolving multi-movement progressive soundtrack system.
  */
 
+import { CUSTOM_PLAYLIST, trackUrl, MusicTrack } from '../data/musicPlaylist';
+
 const AUDIO_SETTINGS_KEY = 'elfen_lied_audio_settings';
+
+/** Track id for the file-based test soundtrack. */
+export const CUSTOM_PLAYLIST_TRACK = 'custom_playlist';
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
@@ -42,6 +47,17 @@ class SoundEngine {
   private sessionGain: GainNode | null = null;
   private currentCharacterId: string = 'lucy';
   private currentTrack: string = 'hero_theme';
+
+  // File-based playlist. The <audio> element is created once and reused: a media element
+  // may only be attached to one MediaElementAudioSourceNode for its lifetime.
+  private fileAudio: HTMLAudioElement | null = null;
+  private fileSource: MediaElementAudioSourceNode | null = null;
+  private fileGain: GainNode | null = null;
+  private fileCompressor: DynamicsCompressorNode | null = null;
+  private playlistIndex: number = 0;
+  private playlistShuffle: boolean = false;
+  private playlistListeners: (() => void)[] = [];
+  private trackBeforeBoss: string | null = null;
   private breathingPausesEnabled: boolean = true;
 
   // Throttling Timestamps to prevent abrasive audio stacking on swarm hits
@@ -239,6 +255,14 @@ class SoundEngine {
       this.musicGain.gain.cancelScheduledValues(now);
       this.musicGain.gain.linearRampToValueAtTime(effectiveMusic, now + 0.05);
     }
+    if (this.fileGain) {
+      const target = this.computeFileGain();
+      this.fileGain.gain.cancelScheduledValues(now);
+      this.fileGain.gain.linearRampToValueAtTime(target, now + 0.05);
+    } else if (this.fileAudio && !this.fileSource) {
+      // Fallback path: no Web Audio graph, so drive the element volume directly.
+      this.fileAudio.volume = this.isMuted || this.musicMuted ? 0 : this.musicVolume;
+    }
   }
 
   /**
@@ -302,6 +326,8 @@ class SoundEngine {
   public setCharacter(characterId: string) {
     if (this.currentCharacterId === characterId) return;
     this.currentCharacterId = characterId;
+    // The file playlist is not character-scoped, so a subject swap must not restart it.
+    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK) return;
     if (this.isMusicPlaying) {
       this.stopMusic();
       this.startMusic();
@@ -309,15 +335,22 @@ class SoundEngine {
   }
 
   public startBossBattle() {
+    // The file playlist plays straight through. Cutting a five-minute track in half to
+    // start a boss stinger, then cutting back, is worse than letting it run.
+    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK) return;
     if (this.currentTrack === 'boss_battle') return;
+    this.trackBeforeBoss = this.currentTrack;
     this.currentTrack = 'boss_battle';
     this.stopMusic();
     this.startMusic();
   }
 
   public endBossBattle() {
+    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK) return;
     if (this.currentTrack !== 'boss_battle') return;
-    this.currentTrack = 'hero_theme';
+    // Return to whatever was playing, not unconditionally to 'hero_theme'.
+    this.currentTrack = this.trackBeforeBoss || 'hero_theme';
+    this.trackBeforeBoss = null;
     this.stopMusic();
     this.startMusic();
   }
@@ -430,7 +463,9 @@ class SoundEngine {
       this.sessionGain.connect(this.musicGain);
     }
 
-    if (this.currentTrack === 'boss_battle') {
+    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK) {
+      this.startFilePlaylist();
+    } else if (this.currentTrack === 'boss_battle') {
       this.startBossBattleMusic(sessionId);
     } else if (this.currentTrack === 'lilium' || this.currentTrack === 'lilium_complete') {
       this.startLiliumMusic(sessionId);
@@ -466,8 +501,182 @@ class SoundEngine {
     }
   }
 
+  // ─── File-based test soundtrack ────────────────────────────────────────────
+
+  private ensureFilePlayer(): HTMLAudioElement | null {
+    if (typeof document === 'undefined') return null;
+    if (this.fileAudio) return this.fileAudio;
+
+    const el = document.createElement('audio');
+    el.preload = "auto";
+    el.crossOrigin = "anonymous";
+    el.addEventListener("ended", () => this.advanceTrack(1, true));
+    el.addEventListener("error", () => {
+      // A missing or unreadable file must not stall the whole playlist.
+      this.advanceTrack(1, true);
+    });
+    this.fileAudio = el;
+
+    // Files get their own full-bandwidth chain straight to the output.
+    //
+    // The music bus is voiced for the procedural synthesizer: a lowpass at 1900 Hz plus a
+    // 260ms echo send. That is a deliberate warmth curve for oscillator tones, but on a
+    // real recording it removes cymbals, air and every sibilant, and the echo smears the
+    // mix. The master chain then lowpasses again at 9500 Hz.
+    // So the file player bypasses both filters and the delay send, keeping only its own
+    // gain (driven by the same music volume and mute) and a gentle compressor so a loud
+    // master does not clip against the SFX bus.
+    this.init();
+    if (this.ctx) {
+      try {
+        this.fileGain = this.ctx.createGain();
+        this.fileGain.gain.value = this.computeFileGain();
+
+        this.fileCompressor = this.ctx.createDynamicsCompressor();
+        this.fileCompressor.threshold.setValueAtTime(-8, this.ctx.currentTime);
+        this.fileCompressor.knee.setValueAtTime(12, this.ctx.currentTime);
+        this.fileCompressor.ratio.setValueAtTime(2.5, this.ctx.currentTime);
+        this.fileCompressor.attack.setValueAtTime(0.008, this.ctx.currentTime);
+        this.fileCompressor.release.setValueAtTime(0.18, this.ctx.currentTime);
+
+        this.fileSource = this.ctx.createMediaElementSource(el);
+        this.fileSource.connect(this.fileGain);
+        this.fileGain.connect(this.fileCompressor);
+        this.fileCompressor.connect(this.ctx.destination);
+      } catch (e) {
+        // Web Audio routing unavailable: fall back to plain element playback.
+        this.fileSource = null;
+        this.fileGain = null;
+        this.fileCompressor = null;
+        el.volume = this.musicVolume;
+      }
+    }
+    return el;
+  }
+
+  // The file bus sits outside masterGain, so it has to fold in the master mute and the
+  // same 0.85 headroom the master bus uses.
+  private computeFileGain(): number {
+    if (this.isMuted || this.musicMuted) return 0;
+    return this.musicVolume * 0.85;
+  }
+
+  private startFilePlaylist() {
+    const el = this.ensureFilePlayer();
+    if (!el || CUSTOM_PLAYLIST.length === 0) return;
+
+    const track = CUSTOM_PLAYLIST[this.playlistIndex % CUSTOM_PLAYLIST.length];
+    const url = trackUrl(track);
+    // Only reload when the source actually changes, otherwise resume where we paused.
+    if (!el.src.endsWith(url)) {
+      el.src = url;
+    }
+    if (!this.fileSource) el.volume = this.isMuted || this.musicMuted ? 0 : this.musicVolume;
+    const playAttempt = el.play();
+    if (playAttempt && typeof playAttempt.catch === "function") {
+      // Autoplay policy: playback starts on the next user gesture via enableAudio().
+      playAttempt.catch(() => {});
+    }
+    this.notifyPlaylistChange();
+  }
+
+  private pauseFilePlaylist() {
+    if (this.fileAudio && !this.fileAudio.paused) {
+      try { this.fileAudio.pause(); } catch (e) {}
+    }
+  }
+
+  private advanceTrack(delta: number, autoplay: boolean) {
+    if (CUSTOM_PLAYLIST.length === 0) return;
+    if (this.playlistShuffle && delta > 0 && CUSTOM_PLAYLIST.length > 1) {
+      let next = this.playlistIndex;
+      while (next === this.playlistIndex) {
+        next = Math.floor(Math.random() * CUSTOM_PLAYLIST.length);
+      }
+      this.playlistIndex = next;
+    } else {
+      const len = CUSTOM_PLAYLIST.length;
+      this.playlistIndex = ((this.playlistIndex + delta) % len + len) % len;
+    }
+    if (this.fileAudio) {
+      try { this.fileAudio.pause(); } catch (e) {}
+      this.fileAudio.currentTime = 0;
+    }
+    if (autoplay && this.currentTrack === CUSTOM_PLAYLIST_TRACK && this.canPlayMusic()) {
+      this.isMusicPlaying = true;
+      this.startFilePlaylist();
+    } else {
+      this.notifyPlaylistChange();
+    }
+  }
+
+  public nextPlaylistTrack() {
+    this.advanceTrack(1, true);
+  }
+
+  public prevPlaylistTrack() {
+    this.advanceTrack(-1, true);
+  }
+
+  public selectPlaylistTrack(index: number) {
+    if (index < 0 || index >= CUSTOM_PLAYLIST.length) return;
+    this.playlistIndex = index;
+    if (this.fileAudio) {
+      try { this.fileAudio.pause(); } catch (e) {}
+      this.fileAudio.currentTime = 0;
+    }
+    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK && this.canPlayMusic()) {
+      this.isMusicPlaying = true;
+      this.startFilePlaylist();
+    } else {
+      this.notifyPlaylistChange();
+    }
+  }
+
+  public getPlaylist(): MusicTrack[] {
+    return CUSTOM_PLAYLIST;
+  }
+
+  public getPlaylistIndex(): number {
+    return this.playlistIndex;
+  }
+
+  public getCurrentPlaylistTrack(): MusicTrack | null {
+    if (CUSTOM_PLAYLIST.length === 0) return null;
+    return CUSTOM_PLAYLIST[this.playlistIndex % CUSTOM_PLAYLIST.length];
+  }
+
+  public isPlaylistActive(): boolean {
+    return this.currentTrack === CUSTOM_PLAYLIST_TRACK;
+  }
+
+  public getPlaylistShuffle(): boolean {
+    return this.playlistShuffle;
+  }
+
+  public setPlaylistShuffle(on: boolean) {
+    this.playlistShuffle = on;
+    this.notifyPlaylistChange();
+  }
+
+  /** UI subscription so the now-playing readout follows auto-advance. */
+  public subscribePlaylist(cb: () => void): () => void {
+    this.playlistListeners.push(cb);
+    return () => {
+      const i = this.playlistListeners.indexOf(cb);
+      if (i !== -1) this.playlistListeners.splice(i, 1);
+    };
+  }
+
+  private notifyPlaylistChange() {
+    this.playlistListeners.forEach((cb) => {
+      try { cb(); } catch (e) {}
+    });
+  }
+
   public stopMusic() {
     this.isMusicPlaying = false;
+    this.pauseFilePlaylist();
     // Invalidate session ID immediately so any active timer callback halts
     this.musicSessionId++;
     this.clearAllMusicTimeouts();
