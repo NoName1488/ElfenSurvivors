@@ -83,6 +83,18 @@ export interface GameEngineState {
   maxWaveTimer: number;
   isWaveActive: boolean;
   isWaveEnding: boolean;
+  /**
+   * How far past containment the situation has gone, 0 to 1.
+   *
+   * Rises with what the player has done - bodies, bosses, waves survived. Below the
+   * threshold the institute is still trying to recover its property; above it the recovery
+   * order is rescinded. Shown in the HUD, because a doctrine the player cannot read is a
+   * doctrine that may as well not be there.
+   */
+  threatLevel: number;
+
+  /** Bosses put down this run. The clearest evidence that nothing here can hold the player. */
+  bossesKilled: number;
   waveEndingTimer: number;
   isEndlessMode: boolean;
   enemies: Enemy[];
@@ -187,6 +199,16 @@ export function projectDividend(dna: number, passiveItems: { id: string }[]): nu
 }
 
 // Durability curve for spawned enemies (HP / shields).
+/**
+ * Whether a unit is a Diclonius rather than an institute soldier.
+ *
+ * They sit outside the containment doctrine: the SAT is trying to recover the player alive,
+ * a hostile Diclonius is simply trying to kill her.
+ */
+export function isDiclonius(type: Enemy['type']): boolean {
+  return type.startsWith('silpelit_') || type.startsWith('boss_');
+}
+
 export function getEnemyHpScaling(wave: number): number {
   if (wave <= 3) return 1 + (wave - 1) * 0.25;
   if (wave <= 6) return 1.5 + (wave - 3) * 0.52;
@@ -540,6 +562,8 @@ export class GameEngine {
       maxWaveTimer: WAVES[0].duration,
       isWaveActive: true,
       isWaveEnding: false,
+      threatLevel: 0,
+      bossesKilled: 0,
       waveEndingTimer: 0,
       isEndlessMode: false,
       enemies: [],
@@ -2336,6 +2360,22 @@ export class GameEngine {
         this.state.assaultWarningText = null;
       }
     }
+
+    /*
+     * How badly containment is going.
+     *
+     * Deliberately a function of what the player has done rather than of the clock. A
+     * careful run keeps the institute trying to take her alive for longer; a run that
+     * leaves a thousand bodies gets the recovery order cancelled early. A downed boss
+     * counts for a great deal, because it is the clearest possible demonstration that
+     * nothing on this island can hold her.
+     */
+    this.state.threatLevel = Math.min(
+      1,
+      this.state.kills / 900 +
+        this.state.bossesKilled * 0.11 +
+        Math.max(0, this.state.wave - 4) * 0.035
+    );
 
     this.updatePlayerMovement(dt);
     this.updateVectorArms(dt);
@@ -7776,11 +7816,81 @@ export class GameEngine {
         }
       }
 
-      if (e.vx !== undefined && e.vy !== undefined && (Math.abs(e.vx) > 1 || Math.abs(e.vy) > 1)) {
-        e.x += e.vx * dt;
-        e.y += e.vy * dt;
-        e.vx *= 0.94;
-        e.vy *= 0.94;
+      /*
+       * Containment posture.
+       *
+       * Decided before the individual movement rules, because it decides whether a soldier
+       * is trying to close at all. Knockback still overrides it - a man being thrown is not
+       * making decisions - and so does an ambush squad already committed to its formation.
+       *
+       * Alone, he falls back toward the nearest group: dying by yourself against a specimen
+       * achieves nothing and costs the institute a man. With support, the group rings the
+       * player and holds, spreading around rather than queueing up. Six on the ring is deep
+       * enough to close it, which is the moment the room should feel like it is shutting.
+       */
+      let containmentHandled = false;
+      // Read by the damage paths: a soldier under a recovery order shoots to pin, not kill.
+      e.isContained = false;
+      const knockedBack =
+        e.vx !== undefined && e.vy !== undefined && (Math.abs(e.vx) > 1 || Math.abs(e.vy) > 1);
+      const underContainment =
+        !e.isBoss &&
+        !e.isRouted &&
+        !knockedBack &&
+        !isDiclonius(e.type) &&
+        !(e.squadId && !e.squadBroken) &&
+        this.state.threatLevel < 0.62;
+
+      if (underContainment) {
+        const allies = e.nearbyAllies || 0;
+        const ringRadius = this.playerVectorReach() + 170;
+
+        if (allies < 2) {
+          e.isContained = true;
+          let rallyX = 0;
+          let rallyY = 0;
+          let rallyDist = Infinity;
+          for (const other of this.state.enemies) {
+            if (other.id === e.id || other.isRouted) continue;
+            if ((other.nearbyAllies || 0) < 2) continue;
+            const d = Math.hypot(other.x - e.x, other.y - e.y);
+            if (d < rallyDist) { rallyDist = d; rallyX = other.x; rallyY = other.y; }
+          }
+          if (rallyDist < Infinity && rallyDist > 90) {
+            const toRally = Math.atan2(rallyY - e.y, rallyX - e.x);
+            e.x += Math.cos(toRally) * moveSpeed * dt;
+            e.y += Math.sin(toRally) * moveSpeed * dt;
+          } else if (dist < ringRadius * 1.4) {
+            // No one to join, and too close to the specimen. Give ground.
+            e.x -= Math.cos(angle) * moveSpeed * 0.8 * dt;
+            e.y -= Math.sin(angle) * moveSpeed * 0.8 * dt;
+          }
+          containmentHandled = true;
+        } else if (allies < 6) {
+          e.isContained = true;
+          if (dist < ringRadius - 40) {
+            e.x -= Math.cos(angle) * moveSpeed * 0.7 * dt;
+            e.y -= Math.sin(angle) * moveSpeed * 0.7 * dt;
+          } else if (dist > ringRadius + 80) {
+            e.x += Math.cos(angle) * moveSpeed * dt;
+            e.y += Math.sin(angle) * moveSpeed * dt;
+          } else {
+            const orbit = angle + Math.PI * 0.5 * (e.id % 2 === 0 ? 1 : -1);
+            e.x += Math.cos(orbit) * moveSpeed * 0.55 * dt;
+            e.y += Math.sin(orbit) * moveSpeed * 0.55 * dt;
+          }
+          containmentHandled = true;
+        }
+        // Six or more: the cordon can be closed. Fall through to the aggressive rules.
+      }
+
+      if (containmentHandled) {
+        // Position already decided above.
+      } else if (knockedBack) {
+        e.x += e.vx! * dt;
+        e.y += e.vy! * dt;
+        e.vx! *= 0.94;
+        e.vy! *= 0.94;
       } else if (e.squadId && !e.squadBroken) {
         /*
          * Capture squad, closing in formation.
@@ -7964,10 +8074,13 @@ export class GameEngine {
         e.y += Math.sin(angle) * moveSpeed * dt;
       }
 
+      let allyCount = 0;
       for (let j = 0; j < this.state.enemies.length; j++) {
         if (i === j) continue;
         const other = this.state.enemies[j];
         const sepDist = Math.hypot(other.x - e.x, other.y - e.y);
+        // Support range: the men close enough to see him and cover him.
+        if (sepDist < 300) allyCount++;
         const minDist = e.radius + other.radius;
         if (sepDist < minDist && sepDist > 0) {
           const pushAngle = Math.atan2(e.y - other.y, e.x - other.x);
@@ -7976,10 +8089,13 @@ export class GameEngine {
           e.y += Math.sin(pushAngle) * pushAmount;
         }
       }
+      e.nearbyAllies = allyCount;
 
       if (dist < e.radius + this.state.player.radius) {
         if (!e.lastMelee || e.lastMelee <= 0) {
-          this.damagePlayer(e.damage);
+          // Same restraint in contact: a man under a recovery order is trying to hold her,
+          // not to open her up.
+          this.damagePlayer(e.isContained ? Math.round(e.damage * 0.5) : e.damage);
           e.lastMelee = 0.65;
           const pushAngle = Math.atan2(e.y - pY, e.x - pX);
           e.x += Math.cos(pushAngle) * 8;
@@ -8106,6 +8222,17 @@ export class GameEngine {
 
   private enemyShoot(enemy: Enemy) {
     if (enemy.isReloading) return;
+
+    /*
+     * Suppressive fire, while the order is still to recover her alive.
+     *
+     * A cordon that will not close is also a cordon that does not disperse, so under the
+     * old numbers the survivors simply accumulated and shot the player to death from the
+     * ring - measured at 13, 8 and 16 deaths against 5, 3 and 5. That is not what
+     * containment means. These men are firing to pin a specimen the institute wants
+     * breathing, and they are aiming to wound. Once the recovery order is rescinded every
+     * shot is worth its full value again, which is what the HUD banner is warning about.
+     */
 
     // Ammo consumption
     if (enemy.currentAmmo !== undefined) {
@@ -8272,7 +8399,7 @@ export class GameEngine {
         vx: Math.cos(angle) * 310,
         vy: Math.sin(angle) * 310,
         radius: 4,
-        damage: Math.round(enemy.damage * 0.65),
+        damage: Math.round(enemy.damage * 0.65 * (enemy.isContained ? 0.5 : 1)),
         isPlayer: false,
         color: '#38bdf8',
         life: 1.8,
@@ -8290,7 +8417,7 @@ export class GameEngine {
         vx: Math.cos(angle) * bulletSpeed,
         vy: Math.sin(angle) * bulletSpeed,
         radius: 4,
-        damage: Math.round(enemy.damage * 0.65),
+        damage: Math.round(enemy.damage * 0.65 * (enemy.isContained ? 0.5 : 1)),
         isPlayer: false,
         color: enemy.isElite ? '#ef4444' : '#f97316',
         life: 2.0,
@@ -8762,6 +8889,7 @@ export class GameEngine {
     }
 
     this.state.kills++;
+    if (enemy.isBoss) this.state.bossesKilled++;
     this.createBloodExplosion(enemy.x, enemy.y, enemy.isBoss ? 35 : 12);
 
     // Achievement Progress Hooks (2.Е.2)

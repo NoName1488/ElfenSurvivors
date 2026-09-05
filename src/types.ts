@@ -366,6 +366,21 @@ export interface Enemy {
    * clear of the field.
    */
   isRouted?: boolean;
+
+  /**
+   * Friendly units within support range, refreshed every frame.
+   *
+   * Decides whether a soldier holds his ground or falls back. Counted inside the separation
+   * sweep, which already walks every pair, so it costs nothing extra.
+   */
+  nearbyAllies?: number;
+
+  /**
+   * Holding the cordon under a recovery order rather than trying to kill.
+   *
+   * Recomputed every frame. While set, the unit's fire is suppressive and lands for half.
+   */
+  isContained?: boolean;
   id: number;
   type:
     | 'sat_grunt'

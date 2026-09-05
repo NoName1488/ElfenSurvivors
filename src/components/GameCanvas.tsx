@@ -149,6 +149,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
     mobilityDesc: '',
     baggedDna: 0,
     vectorCount: 0,
+    threatLevel: 0,
     avgVibrationHz: 250,
     deflectorsCount: 0,
     recentEvolutionPopup: null as (WeaponEvolution & { timer: number }) | null,
@@ -224,6 +225,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         isEndlessMode: s.isEndlessMode,
         activeSynergies: [...s.activeSynergies],
         currentArena: s.currentArena,
+        threatLevel: s.threatLevel || 0,
         vectorGuard: Math.round(s.player.vectorGuard || 0),
         maxVectorGuard: Math.round(s.player.maxVectorGuard || 150),
         isPlayerStunned: !!s.player.isStunned,
@@ -961,6 +963,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               )}
             </div>
           )}
+
+          {/*
+            * What the institute is currently trying to do to you.
+            *
+            * The SAT is under orders to recover the specimen alive, so its soldiers cordon
+            * and hold rather than charge. Past the threshold that order is rescinded. The
+            * player has to be able to see which of the two is in force, or the whole
+            * doctrine is invisible and reads as the soldiers being timid.
+            */}
+          <div
+            className={`hidden md:flex items-center gap-2 px-2.5 py-1 rounded-lg border text-xs font-mono ${
+              hudState.threatLevel >= 0.62
+                ? 'border-red-500/50 bg-red-950/40 text-red-300 shadow-[0_0_10px_rgba(239,68,68,0.2)]'
+                : 'border-sky-500/30 bg-sky-950/30 text-sky-300'
+            }`}
+            title={
+              isRu
+                ? 'Приказ SAT. Пока институт надеется вернуть объект живым, солдаты берут в кольцо и держат дистанцию, а одиночки отходят к своим. Когда надежды не остаётся, приказ на возврат отменяют.'
+                : 'SAT standing order. While the institute still hopes to recover the specimen alive its soldiers cordon and hold, and stragglers fall back to their group. Once that hope is gone the recovery order is rescinded.'
+            }
+          >
+            <span className="font-bold tracking-wider">
+              {hudState.threatLevel >= 0.62
+                ? (isRu ? 'ПРИКАЗ: ЛИКВИДАЦИЯ' : 'ORDER: TERMINATE')
+                : (isRu ? 'ПРИКАЗ: СДЕРЖИВАНИЕ' : 'ORDER: CONTAIN')}
+            </span>
+            <span className="w-10 h-1.5 rounded-full bg-black/60 overflow-hidden">
+              <span
+                className={`block h-full ${hudState.threatLevel >= 0.62 ? 'bg-red-500' : 'bg-sky-400'}`}
+                style={{ width: `${Math.round(Math.min(1, hudState.threatLevel) * 100)}%` }}
+              />
+            </span>
+          </div>
 
           {/* Actions & Skills */}
           <div className="pointer-events-auto flex items-center gap-2">
