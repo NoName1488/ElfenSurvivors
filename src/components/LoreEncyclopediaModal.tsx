@@ -68,7 +68,61 @@ export const LoreEncyclopediaModal: React.FC<LoreEncyclopediaModalProps> = ({ on
             </p>
           </div>
 
-          {/* Section 3: Brotato Rules */}
+          {/* Section 3: Diclonius bestiary - how to fight the units that fight back */}
+          <div className="glass-panel p-4 rounded-xl border-rose-500/20 bg-rose-950/10">
+            <h3 className="font-cinzel font-bold text-sm text-rose-400 mb-1 flex items-center gap-1.5">
+              <Swords className="w-4 h-4" />
+              <span>{isRu ? 'Враждебные диклониусы: как драться' : 'Hostile Diclonii: how to fight'}</span>
+            </h3>
+            <p className="text-gray-400 mt-1">
+              {isRu
+                ? 'У этих объектов есть собственные векторы. Они парируют ваши удары: урон уходит не в здоровье, а в стойку — синее кольцо вокруг них. Пробейте стойку, и объект оглушён и беззащитен.'
+                : 'These subjects carry vectors of their own. They parry your strikes: the damage goes into posture - the blue ring around them - instead of health. Break the posture and the subject is stunned and defenceless.'}
+            </p>
+            <ul className="mt-2 space-y-1.5 text-gray-400">
+              <li>
+                <strong className="text-rose-300">{isRu ? 'Дуэлянт №27' : 'Duelist No.27'}</strong>
+                {' — '}
+                {isRu
+                  ? 'три вектора и глубокая стойка. В лоб не пробить: обойдите — с фланга и в тыл его векторы не достают, а удар туда бьёт в полтора раза сильнее.'
+                  : 'three vectors and a deep posture pool. Not worth meeting head-on: step around it, its arms do not cover the flank or the rear, and a strike from there lands far harder.'}
+              </li>
+              <li>
+                <strong className="text-purple-300">{isRu ? 'Копейщик №30' : 'Lancer No.30'}</strong>
+                {' — '}
+                {isRu
+                  ? 'один вектор вдвое длиннее вашего, и он держит дистанцию. Стоять на месте против него нельзя — достанет оттуда, куда вы не дотягиваетесь. Зато почти не защищён: сблизьтесь и убейте.'
+                  : 'a single arm at twice your reach, and it holds that distance. Standing still is not an option against one - it strikes from where you cannot answer. Barely guarded in return: close in and kill it.'}
+              </li>
+              <li>
+                <strong className="text-pink-300">{isRu ? 'Векторные близнецы' : 'Vector Twins'}</strong>
+                {' — '}
+                {isRu
+                  ? 'пара на одной стойке: пока живы оба, стойка восстанавливается втрое быстрее и пробить её не выйдет. Убейте одного — второй впадёт в ярость.'
+                  : 'a pair sharing one posture pool: while both live it regenerates three times faster and will not break. Kill one and the survivor goes berserk.'}
+              </li>
+            </ul>
+          </div>
+
+          {/* Section 4: SAT capture squads */}
+          <div className="glass-panel p-4 rounded-xl border-amber-500/20 bg-amber-950/10">
+            <h3 className="font-cinzel font-bold text-sm text-amber-400 mb-1 flex items-center gap-1.5">
+              <Shield className="w-4 h-4" />
+              <span>{isRu ? 'Группы захвата SAT' : 'SAT Capture Squads'}</span>
+            </h3>
+            <p className="text-gray-400 mt-1">
+              {isRu
+                ? 'С 4-й волны SAT перестаёт слать одиночек. Группа захвата идёт строем с одной стороны: джаггернаут в острие, щитоносцы по флангам, сеткомёты сзади. Их задача — не убить, а взять живой.'
+                : 'From wave 4 SAT stops sending stragglers. A capture squad advances in formation on one bearing: a juggernaut at the point, shield bearers on the flanks, net gunners behind. Their orders are to take you alive, not to kill you.'}
+            </p>
+            <p className="text-gray-400 mt-2">
+              {isRu
+                ? 'Опасны сеткомёты: каждая сетка связывает один ваш вектор на 2.4 секунды, а связанный вектор не бьёт и не парирует. Две сетки — и автоматический круг убийства выключен. Убивайте сеткомётов первыми, они идут в последнем ряду.'
+                : 'The net gunners are the threat: each net binds one of your vectors for 2.4 seconds, and a bound vector neither strikes nor parries. Two nets and the automatic kill circle is off. Kill the netters first - they walk in the rear rank.'}
+            </p>
+          </div>
+
+          {/* Section 5: Brotato Rules */}
           <div className="glass-panel p-4 rounded-xl border-white/5">
             <h3 className="font-cinzel font-bold text-sm text-yellow-400 mb-1 flex items-center gap-1.5">
               <Swords className="w-4 h-4" />

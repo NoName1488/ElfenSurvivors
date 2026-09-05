@@ -319,6 +319,11 @@ export interface Enemy {
     | 'sat_anti_vector_infiltrator'
     | 'sat_heavy_commando'
     | 'silpelit_clone'
+    // Diclonius line. These carry vector arms and fight the player's vectors directly
+    // through the duel system (parry arcs, posture, guard break) rather than just walking in.
+    | 'silpelit_duelist'
+    | 'silpelit_lancer'
+    | 'silpelit_twin'
     | 'mutant_beast'
     // Evolving Wave Bosses (Wave 1 to 15)
     | 'boss_silpelit_14'
@@ -428,6 +433,21 @@ export interface Enemy {
   internalRuptureDuration?: number;
   // Anti-Vector Countermeasures & Bot Defenses
   isHeavyMass?: boolean; // Hydraulic anchors / Heavy armored mech - unliftable by vector grab
+
+  // --- SAT capture squad ---
+  // Squad members advance in formation on one bearing instead of drifting in individually,
+  // and hold that formation until they are close enough to break and engage.
+  squadId?: number;
+  squadRole?: 'point' | 'flank' | 'netter';
+  squadFormationX?: number;
+  squadFormationY?: number;
+  squadBroken?: boolean;
+
+  // --- Vector twins ---
+  // A linked pair sharing one posture pool: breaking the guard needs both worked down, and
+  // killing one enrages the survivor.
+  twinPartnerId?: number;
+  twinEnraged?: boolean;
   isSonicPulsing?: boolean; // EMP / Acoustic resonance charge
   sonicPulseTimer?: number;
   netTrapCooldown?: number;

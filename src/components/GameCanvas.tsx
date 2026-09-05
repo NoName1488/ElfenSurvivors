@@ -1972,6 +1972,96 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       ctx.lineTo(enemy.x + 10, enemy.y - 14);
       ctx.lineTo(enemy.x + 3, enemy.y - 9);
       ctx.fill();
+    } else if (
+      enemy.type === 'silpelit_duelist' ||
+      enemy.type === 'silpelit_lancer' ||
+      enemy.type === 'silpelit_twin'
+    ) {
+      /*
+       * Diclonius line. Each reads at a glance by silhouette, because the player has to
+       * decide how to approach one before it is in reach:
+       *   duelist - heavy guard ring, "do not walk into the front"
+       *   lancer  - single long spine, "it hits from out there"
+       *   twin    - linked pair, tether drawn to the partner
+       */
+      const body = enemy.color || '#f43f5e';
+
+      // Posture ring: how much guard is left, drawn as an arc around the unit. This is the
+      // duel's health bar and it belongs on the unit, not in a corner of the screen.
+      if (enemy.maxVectorGuard && enemy.vectorGuard !== undefined && !enemy.isStunned) {
+        const frac = Math.max(0, Math.min(1, enemy.vectorGuard / enemy.maxVectorGuard));
+        ctx.save();
+        ctx.strokeStyle = `rgba(56, 189, 248, ${0.35 + frac * 0.5})`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(enemy.x, enemy.y, enemy.radius + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Tether between living twins: the visual statement of the shared posture pool.
+      if (enemy.type === 'silpelit_twin' && enemy.twinPartnerId) {
+        const partner = s.enemies.find((o) => o.id === enemy.twinPartnerId);
+        if (partner) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(244, 114, 182, 0.5)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 5]);
+          ctx.beginPath();
+          ctx.moveTo(enemy.x, enemy.y);
+          ctx.lineTo(partner.x, partner.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+      }
+
+      ctx.fillStyle = body;
+      ctx.beginPath();
+      ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = enemy.twinEnraged ? '#fbbf24' : '#fecdd3';
+      ctx.lineWidth = enemy.twinEnraged ? 2.5 : 1.8;
+      ctx.stroke();
+
+      // Horns, longer on the duelist: rank within the line.
+      const hornLen = enemy.type === 'silpelit_duelist' ? 17 : 13;
+      ctx.fillStyle = '#fff1f2';
+      ctx.beginPath();
+      ctx.moveTo(enemy.x - 6, enemy.y - 8);
+      ctx.lineTo(enemy.x - 9, enemy.y - hornLen);
+      ctx.lineTo(enemy.x - 2, enemy.y - 9);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(enemy.x + 6, enemy.y - 8);
+      ctx.lineTo(enemy.x + 9, enemy.y - hornLen);
+      ctx.lineTo(enemy.x + 2, enemy.y - 9);
+      ctx.fill();
+
+      /*
+       * Lancer's reach ring, drawn only when it is about to matter.
+       *
+       * Every lancer showing a 232px circle at all times filled the screen with overlapping
+       * decoration that read as arena scenery. It is a telegraph, not an aura: it appears as
+       * the player nears the edge of the threatened area and turns solid once inside, which
+       * is the moment the information is worth anything.
+       */
+      if (enemy.type === 'silpelit_lancer') {
+        const reach = enemy.vectorReach || 232;
+        const toPlayer = Math.hypot(p.x - enemy.x, p.y - enemy.y);
+        if (toPlayer < reach * 1.25) {
+          const inside = toPlayer <= reach;
+          ctx.save();
+          ctx.strokeStyle = inside ? 'rgba(192, 132, 252, 0.5)' : 'rgba(168, 85, 247, 0.2)';
+          ctx.lineWidth = inside ? 1.5 : 1;
+          ctx.setLineDash(inside ? [] : [6, 10]);
+          ctx.beginPath();
+          ctx.arc(enemy.x, enemy.y, reach, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+      }
     } else if (enemy.isBoss) {
       // BOSS: Unique visual presentation with Vector Arms, Shields, Enrage flames & Horns
 

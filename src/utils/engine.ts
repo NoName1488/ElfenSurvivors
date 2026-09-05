@@ -242,6 +242,9 @@ const UNIT_NAMES_EN: Record<string, string> = {
   sat_sniper: 'SAT Marksman',
   emp_disruptor: 'EMP Vector Suppressor',
   silpelit_clone: 'Silpelit Clone',
+  silpelit_duelist: 'Silpelit Duelist No.27',
+  silpelit_lancer: 'Silpelit Lancer No.30',
+  silpelit_twin: 'Vector Twin',
   sat_anti_vector_infiltrator: 'SAT Infiltrator (Net Gun)',
   sat_heavy_commando: 'SAT Heavy Juggernaut',
   mutant_beast: 'Laboratory Mutant',
@@ -270,6 +273,39 @@ const UNIT_NAMES_EN: Record<string, string> = {
 function localiseUnitName(type: string, russianName: string): string {
   if (getLanguage() === 'ru') return russianName;
   return UNIT_NAMES_EN[type] || russianName;
+}
+
+/**
+ * Builds a fan of vector arms for an enemy diclonius.
+ *
+ * Arms are spread evenly over `spread` radians centred on the unit's facing, which is what
+ * gives each type its guard coverage: a three-armed duelist covers most approaches, while a
+ * single-armed lancer leaves everything but its front open to a flank.
+ */
+function makeEnemyVectorArms(
+  count: number,
+  reach: number,
+  color: string,
+  x: number,
+  y: number,
+  spread: number = Math.PI * 0.8
+): BossVectorArm[] {
+  const arms: BossVectorArm[] = [];
+  for (let i = 0; i < count; i++) {
+    const angle = count === 1 ? 0 : -spread / 2 + (spread * i) / (count - 1);
+    arms.push({
+      id: i + 1,
+      baseAngle: angle,
+      currentAngle: angle,
+      length: reach,
+      vibrationPhase: Math.random() * Math.PI * 2,
+      striking: false,
+      strikeProgress: 0,
+      segments: [{ x, y }, { x, y }, { x, y }],
+      color,
+    });
+  }
+  return arms;
 }
 
 // Kinetic throw (vector_snatch). Measured before tuning: 688 px/s launch, friction 0.93
@@ -387,6 +423,10 @@ export class GameEngine {
   private weaponCooldowns: Map<string, number> = new Map();
   private lastEnemySpawn: number = 0;
   private enemyIdCounter: number = 0;
+  private squadIdCounter: number = 0;
+  private spawningTwinPartner: boolean = false;
+  private captureSquadTimer: number = 0;
+  private captureSquadsThisWave: number = 0;
   private projectileIdCounter: number = 0;
   private dnaIdCounter: number = 0;
   private dmgNumIdCounter: number = 0;
@@ -1195,6 +1235,9 @@ export class GameEngine {
     this.state.crisisWarningTimer = 0;
     this.state.crisisWarningText = null;
     this.state.crisisTriggeredInWave = false;
+    this.captureSquadsThisWave = 0;
+    // First squad lands a little after the opening sweep, not on the first second.
+    this.captureSquadTimer = 14 + Math.random() * 5;
     this.state.assaultPhaseActive = false;
     this.state.assaultTriggeredInWave = false;
     this.state.assaultWarningText = null;
@@ -2117,6 +2160,25 @@ export class GameEngine {
     ) {
       this.state.crisisTriggeredInWave = true;
       this.triggerTacticalArtilleryCrisis();
+    }
+
+    /*
+     * SAT capture squads (wave 4+).
+     *
+     * Sent on a timer rather than as a one-off, because a single squad per wave is a story
+     * beat while a repeating one is a mechanic: the player has to keep answering a shaped
+     * threat from a known bearing. The count scales with the wave and the interval shrinks.
+     */
+    if (this.state.wave >= 4 && this.state.isWaveActive && !this.state.isWaveEnding) {
+      const squadBudget = this.state.wave >= 14 ? 3 : this.state.wave >= 8 ? 2 : 1;
+      if (this.captureSquadsThisWave < squadBudget) {
+        this.captureSquadTimer -= dt;
+        if (this.captureSquadTimer <= 0) {
+          this.captureSquadsThisWave++;
+          this.captureSquadTimer = Math.max(16, 30 - this.state.wave * 0.6);
+          this.spawnCaptureSquad();
+        }
+      }
     }
 
     if (this.state.crisisWarningTimer > 0) {
@@ -4651,7 +4713,10 @@ export class GameEngine {
     this.lastEnemySpawn += dt;
 
     // Exploration beat is calmer; the assault beat is denser and seeds elites.
-    const phaseRateMult = this.state.assaultPhaseActive ? 1.55 : 0.78;
+    // The sweep used to run at 0.78, which measured as eleven of twenty waves costing the
+    // player literally no health: the trickle died on the vector perimeter faster than it
+    // arrived, so most of a wave was dead air.
+    const phaseRateMult = this.state.assaultPhaseActive ? 1.65 : 0.95;
     const interval = 1 / (waveConfig.enemySpawnRate * phaseRateMult);
     const concurrentCap = this.state.assaultPhaseActive
       ? waveConfig.maxConcurrentEnemies
@@ -4659,7 +4724,7 @@ export class GameEngine {
 
     if (this.lastEnemySpawn >= interval && this.state.enemies.length < concurrentCap) {
       this.lastEnemySpawn = 0;
-      const type = waveConfig.allowedEnemies[Math.floor(Math.random() * waveConfig.allowedEnemies.length)];
+      const type = this.pickSpawnType(waveConfig.allowedEnemies);
       this.spawnEnemy(type, undefined, undefined, this.state.assaultPhaseActive && Math.random() < 0.22);
     }
 
@@ -4671,6 +4736,40 @@ export class GameEngine {
         this.triggerTacticalAmbushSquad();
       }
     }
+  }
+
+  /**
+   * Chooses the next unit from the wave's roster.
+   *
+   * Not a uniform draw: the diclonius line is weighted up as the campaign runs on, because
+   * they are the only units that answer the player's vectors instead of dying to them, and
+   * a flat draw left them as a garnish on a wave of SAT infantry. By the late campaign
+   * roughly half the arrivals can duel.
+   */
+  private pickSpawnType(roster: Enemy['type'][]): Enemy['type'] {
+    const wave = this.state.wave;
+    // 1.0 at the point of introduction, rising to 3.2 by the end of the campaign.
+    const diclonusWeight = Math.min(3.2, 1.2 + Math.max(0, wave - 3) * 0.14);
+
+    const weights = roster.map((t) => {
+      switch (t) {
+        case 'silpelit_duelist':
+        case 'silpelit_lancer':
+        case 'silpelit_twin':
+        case 'silpelit_clone':
+          return diclonusWeight;
+        default:
+          return 1;
+      }
+    });
+
+    const total = weights.reduce((a, b) => a + b, 0);
+    let roll = Math.random() * total;
+    for (let i = 0; i < roster.length; i++) {
+      roll -= weights[i];
+      if (roll <= 0) return roster[i];
+    }
+    return roster[roster.length - 1];
   }
 
   private triggerTacticalAmbushSquad() {
@@ -5389,6 +5488,104 @@ export class GameEngine {
         break;
       }
 
+      /*
+       * SILPELIT DUELIST - the answer to "everything dies on the perimeter".
+       *
+       * Three arms over a wide arc and a deep posture pool mean it parries the player's
+       * vectors instead of dying to them, so it survives inside vector reach and forces the
+       * duel: work its guard down from the front, or step around to a flank its arms do not
+       * cover. Not especially tough otherwise - once its posture breaks it dies fast.
+       */
+      case 'silpelit_duelist': {
+        const duelReach = 122;
+        enemyData = {
+          ...enemyData,
+          hp: 84 * waveScaling,
+          maxHp: 84 * waveScaling,
+          speed: 94 + lateSpeedBonus * 0.5,
+          damage: 19 * dmgScaling,
+          radius: 15,
+          color: '#e11d48',
+          name: 'Силпелит-дуэлянт №27',
+          scoreValue: 8,
+          dnaDrop: 4,
+          vectorCount: 3,
+          vectorReach: duelReach,
+          vectorArms: makeEnemyVectorArms(3, duelReach, '#e11d48', x, y, Math.PI * 0.9),
+          vectorGuard: 130,
+          maxVectorGuard: 130,
+          vectorAttackState: 'idle',
+          vectorAttackTimer: Math.random() * 1.5,
+          vectorAttackCooldown: 2.0,
+        };
+        break;
+      }
+
+      /*
+       * SILPELIT LANCER - outranges the player.
+       *
+       * One arm at nearly twice the player's base reach, and it holds that distance instead
+       * of closing. Standing in one spot no longer works: the lancer hits from outside the
+       * kill circle, so it has to be walked down. Fragile and nearly unguarded in return -
+       * one flank kills it.
+       */
+      case 'silpelit_lancer': {
+        const lanceReach = 232;
+        enemyData = {
+          ...enemyData,
+          hp: 46 * waveScaling,
+          maxHp: 46 * waveScaling,
+          speed: 70 + lateSpeedBonus * 0.4,
+          damage: 24 * dmgScaling,
+          radius: 13,
+          color: '#a855f7',
+          name: 'Силпелит-копейщик №30',
+          scoreValue: 7,
+          dnaDrop: 4,
+          vectorCount: 1,
+          vectorReach: lanceReach,
+          vectorArms: makeEnemyVectorArms(1, lanceReach, '#a855f7', x, y),
+          vectorGuard: 28,
+          maxVectorGuard: 28,
+          vectorAttackState: 'idle',
+          vectorAttackTimer: Math.random() * 1.2,
+          vectorAttackCooldown: 2.6,
+        };
+        break;
+      }
+
+      /*
+       * VECTOR TWIN - spawns in linked pairs (see spawnEnemy).
+       *
+       * While both are alive they share one posture pool, so chipping at whichever is closer
+       * gets nowhere; the pair has to be split or focused. Killing one enrages the survivor,
+       * which is the punishment for taking the easy half first.
+       */
+      case 'silpelit_twin': {
+        const twinReach = 104;
+        enemyData = {
+          ...enemyData,
+          hp: 62 * waveScaling,
+          maxHp: 62 * waveScaling,
+          speed: 118 + lateSpeedBonus * 0.5,
+          damage: 15 * dmgScaling,
+          radius: 13,
+          color: '#f472b6',
+          name: 'Векторный близнец',
+          scoreValue: 6,
+          dnaDrop: 3,
+          vectorCount: 2,
+          vectorReach: twinReach,
+          vectorArms: makeEnemyVectorArms(2, twinReach, '#f472b6', x, y, Math.PI * 0.7),
+          vectorGuard: 70,
+          maxVectorGuard: 70,
+          vectorAttackState: 'idle',
+          vectorAttackTimer: Math.random() * 1.5,
+          vectorAttackCooldown: 2.4,
+        };
+        break;
+      }
+
       case 'sat_anti_vector_infiltrator':
         enemyData = {
           ...enemyData,
@@ -5504,7 +5701,87 @@ export class GameEngine {
       }
     }
 
-    this.state.enemies.push(enemyData as Enemy);
+    const spawned = enemyData as Enemy;
+    this.state.enemies.push(spawned);
+
+    // Twins are only twins in pairs. The first one spawns its partner beside it and the two
+    // are linked, which is what makes the shared posture pool and the enrage-on-death work.
+    //
+    // The flag is what stops the partner spawning a partner of its own: the link is written
+    // after spawnEnemy returns, so checking twinPartnerId here would recurse forever.
+    if (type === 'silpelit_twin' && !this.spawningTwinPartner) {
+      this.spawningTwinPartner = true;
+      const side = Math.random() * Math.PI * 2;
+      const partnerX = Math.max(40, Math.min(this.state.arenaWidth - 40, spawned.x + Math.cos(side) * 46));
+      const partnerY = Math.max(40, Math.min(this.state.arenaHeight - 40, spawned.y + Math.sin(side) * 46));
+      const before = this.state.enemies.length;
+      this.spawnEnemy('silpelit_twin', partnerX, partnerY, false);
+      const partner = this.state.enemies[before];
+      if (partner) {
+        partner.twinPartnerId = spawned.id;
+        spawned.twinPartnerId = partner.id;
+      }
+      this.spawningTwinPartner = false;
+    }
+
+    return spawned;
+  }
+
+  /**
+   * SAT capture squad.
+   *
+   * A coordinated snatch team rather than another trickle of bodies: a shielded juggernaut
+   * at the point, two shield bearers on the flanks, two net gunners behind. They arrive
+   * together on one bearing and hold formation while they close, so the player sees a wall
+   * coming from a known direction instead of an even ring.
+   *
+   * The point of the squad is the net gunners: each net binds one of the player's vector
+   * arms, and a bound arm neither strikes nor parries. Two nets landing turns the automatic
+   * kill circle off for a few seconds, which is the only thing in the game that makes
+   * standing still lethal.
+   */
+  private spawnCaptureSquad() {
+    const pX = this.state.player.x;
+    const pY = this.state.player.y;
+    const bearing = Math.random() * Math.PI * 2;
+    const distance = Math.max(this.state.viewportWidth, this.state.viewportHeight) * 0.62;
+    const anchorX = pX + Math.cos(bearing) * distance;
+    const anchorY = pY + Math.sin(bearing) * distance;
+
+    // Perpendicular to the approach, used to lay the formation out across its front.
+    const sideX = Math.cos(bearing + Math.PI / 2);
+    const sideY = Math.sin(bearing + Math.PI / 2);
+    // Back along the bearing, used to place the rear rank.
+    const backX = Math.cos(bearing);
+    const backY = Math.sin(bearing);
+
+    const squadId = ++this.squadIdCounter;
+    const members: Array<{ type: Enemy['type']; role: Enemy['squadRole']; across: number; back: number }> = [
+      { type: 'sat_heavy_commando', role: 'point', across: 0, back: 0 },
+      { type: 'riot_shield', role: 'flank', across: -58, back: 26 },
+      { type: 'riot_shield', role: 'flank', across: 58, back: 26 },
+      { type: 'sat_anti_vector_infiltrator', role: 'netter', across: -32, back: 74 },
+      { type: 'sat_anti_vector_infiltrator', role: 'netter', across: 32, back: 74 },
+    ];
+
+    for (const m of members) {
+      const x = Math.max(40, Math.min(this.state.arenaWidth - 40, anchorX + sideX * m.across + backX * m.back));
+      const y = Math.max(40, Math.min(this.state.arenaHeight - 40, anchorY + sideY * m.across + backY * m.back));
+      const unit = this.spawnEnemy(m.type, x, y, false);
+      if (!unit) continue;
+      unit.squadId = squadId;
+      unit.squadRole = m.role;
+      unit.squadFormationX = sideX * m.across + backX * m.back;
+      unit.squadFormationY = sideY * m.across + backY * m.back;
+      unit.squadBroken = false;
+    }
+
+    this.state.crisisWarningText = loc(
+      '⚠ ГРУППА ЗАХВАТА SAT: СЕТКОМЁТЫ СВЯЗЫВАЮТ ВЕКТОРЫ',
+      '⚠ SAT CAPTURE SQUAD INBOUND: NET GUNS BIND VECTORS'
+    );
+    this.state.crisisWarningTimer = 3.2;
+    sound.playDropshipAlarm();
   }
 
   private spawnBoss(type: Enemy['type']) {
@@ -5942,7 +6219,13 @@ export class GameEngine {
       } else if (e.vectorGuard !== undefined && e.maxVectorGuard && e.vectorGuard < e.maxVectorGuard) {
         e.guardBreakRecoverTimer = (e.guardBreakRecoverTimer || 0) - dt;
         if (e.guardBreakRecoverTimer <= 0) {
-          e.vectorGuard = Math.min(e.maxVectorGuard, e.vectorGuard + dt * 45);
+          // Twins prop each other's posture up, so chipping at whichever is nearer never
+          // breaks either. The pair has to be split or one of them focused down first.
+          const twinAlive =
+            e.type === 'silpelit_twin' &&
+            !!e.twinPartnerId &&
+            this.state.enemies.some((o) => o.id === e.twinPartnerId);
+          e.vectorGuard = Math.min(e.maxVectorGuard, e.vectorGuard + dt * (twinAlive ? 120 : 45));
         }
       }
 
@@ -6474,7 +6757,7 @@ export class GameEngine {
                     id: ++this.dmgNumIdCounter,
                     x: clashX,
                     y: clashY - 14,
-                    text: `БЛОК! -${guardCost}`,
+                    text: `${loc('БЛОК!', 'BLOCK!')} -${guardCost}`,
                     color: '#38bdf8',
                     opacity: 1,
                     isCrit: false,
@@ -6735,6 +7018,49 @@ export class GameEngine {
         e.y += e.vy * dt;
         e.vx *= 0.94;
         e.vy *= 0.94;
+      } else if (e.squadId && !e.squadBroken) {
+        /*
+         * Capture squad, closing in formation.
+         *
+         * Each member steers toward its own slot in a formation that is itself anchored on
+         * the player, so the group arrives as a shaped wall on one bearing. The formation
+         * dissolves at 260px, where they are close enough that holding station would just
+         * make them easier to mow down.
+         */
+        const slotX = pX + (e.squadFormationX || 0);
+        const slotY = pY + (e.squadFormationY || 0);
+        const toSlot = Math.hypot(slotX - e.x, slotY - e.y);
+        if (dist < 260) {
+          e.squadBroken = true;
+        } else if (toSlot > 4) {
+          const slotAngle = Math.atan2(slotY - e.y, slotX - e.x);
+          // Slightly faster than their own pace while regrouping, so a straggler catches up
+          // and the squad does not arrive strung out in single file.
+          const closeSpeed = moveSpeed * (toSlot > 90 ? 1.18 : 0.85);
+          e.x += Math.cos(slotAngle) * closeSpeed * dt;
+          e.y += Math.sin(slotAngle) * closeSpeed * dt;
+        }
+      } else if (e.type === 'silpelit_lancer') {
+        /*
+         * Lancer, holding its reach.
+         *
+         * Its arm is 232px against the player's ~120px base, so it wants to sit in that gap
+         * and thrust from where nothing can answer. It backs off when the player closes and
+         * drifts sideways at its preferred range, which is what turns a static kill circle
+         * into a positioning problem.
+         */
+        const preferred = (e.vectorReach || 200) * 0.82;
+        if (dist < preferred - 30) {
+          e.x -= Math.cos(angle) * moveSpeed * 1.25 * dt;
+          e.y -= Math.sin(angle) * moveSpeed * 1.25 * dt;
+        } else if (dist > preferred + 30) {
+          e.x += Math.cos(angle) * moveSpeed * dt;
+          e.y += Math.sin(angle) * moveSpeed * dt;
+        } else {
+          const strafe = angle + Math.PI * 0.5;
+          e.x += Math.cos(strafe) * moveSpeed * 0.45 * dt;
+          e.y += Math.sin(strafe) * moveSpeed * 0.45 * dt;
+        }
       } else if (e.isReloading && (e.weaponType === 'rifle' || e.weaponType === 'shotgun' || e.weaponType === 'sniper')) {
         // Tactical backpedal/cover while reloading
         if (dist < 220) {
@@ -7527,6 +7853,32 @@ export class GameEngine {
     const idx = this.state.enemies.indexOf(enemy);
     if (idx !== -1) {
       this.state.enemies.splice(idx, 1);
+    }
+
+    // A surviving twin loses the shared posture and goes berserk. That is the cost of
+    // killing the easy half of a pair instead of splitting them.
+    if (enemy.type === 'silpelit_twin' && enemy.twinPartnerId) {
+      const partner = this.state.enemies.find((o) => o.id === enemy.twinPartnerId);
+      if (partner && !partner.twinEnraged) {
+        partner.twinEnraged = true;
+        partner.damage = Math.round(partner.damage * 1.45);
+        partner.speed = Math.round(partner.speed * 1.3);
+        partner.baseSpeed = partner.speed;
+        partner.vectorAttackCooldown = Math.max(1.0, (partner.vectorAttackCooldown || 2.4) * 0.6);
+        partner.name = `${loc('[ЯРОСТЬ]', '[FURY]')} ${partner.name}`;
+        this.state.damageNumbers.push({
+          id: ++this.dmgNumIdCounter,
+          x: partner.x,
+          y: partner.y - 34,
+          text: loc('БЛИЗНЕЦ В ЯРОСТИ!', 'TWIN ENRAGED!'),
+          color: '#f472b6',
+          opacity: 1,
+          isCrit: true,
+          vy: -55,
+        });
+        this.triggerScreenShake(8, 0.25);
+        sound.playGuardBreak();
+      }
     }
 
     this.state.kills++;
