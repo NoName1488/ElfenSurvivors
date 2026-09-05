@@ -6,6 +6,7 @@ import { ItemSynergy, ArenaType, WeaponEvolution, PassiveItem } from '../types';
 import { FINAL_CAMPAIGN_WAVE } from '../data/gameData';
 import { vectorBand, vectorBandLabel } from '../utils/engine';
 import { RETRO_HEIGHT, RETRO_MODE_LABELS, applyRetroPostProcess, getRetroMode, nextRetroMode, setRetroMode, RetroMode } from '../utils/retroRender';
+import { drawSprite } from '../utils/sprites';
 import { useLanguage, getLanguage } from '../utils/i18n';
 
 // Canvas overlay strings are drawn outside React, so they read the active language directly.
@@ -18,6 +19,11 @@ const cloc = (ru: string, en: string) => (getLanguage() === 'ru' ? ru : en);
  * uses and unreadable while the arena is moving. These are the only sizes the renderer may
  * use; anything drawn above an enemy belongs in CANVAS_FONT.badge.
  */
+// Player facing, remembered between frames: the sprite is mirrored rather than authored
+// per direction, and the engine does not store a facing of its own.
+let lastPlayerX = 0;
+let playerFacesLeft = false;
+
 /** One colour per vibration band, shared by the HUD readout. */
 const BAND_COLORS: Record<string, string> = {
   phase: '#38bdf8',
@@ -1866,7 +1872,19 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     const facingAngle = Math.atan2(p.y - enemy.y, p.x - enemy.x);
 
     // Specific Enemy Sprite Rendering with Enhanced Details
-    if (enemy.type === 'riot_shield') {
+    /*
+     * Sprite first, vector art second.
+     *
+     * Art arrives one unit at a time, so this cannot be an all-or-nothing switch: any type
+     * with a PNG in public/sprites draws it, everything else keeps the shape it has always
+     * had. Facing comes from horizontal velocity toward the player, since the sprites are
+     * drawn facing the viewer and mirrored rather than authored per direction.
+     */
+    const facingLeft = p.x < enemy.x;
+    if (drawSprite(ctx, `enemy_${enemy.type}`, enemy.x, enemy.y, enemy.radius, facingLeft)) {
+      // Sprite drawn; skip the primitive body but keep every overlay below it (health bars,
+      // status plates, vector arms), which are drawn elsewhere and are not cosmetic.
+    } else if (enemy.type === 'riot_shield') {
       // Riot Shield: Heavy armored core + Frontal Shield Plate with viewport & hazard stripes
       ctx.fillStyle = '#1e293b';
       ctx.beginPath();
@@ -2755,7 +2773,16 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
   ctx.ellipse(p.x, p.y + p.radius * 0.85, p.radius * 0.95, p.radius * 0.45, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  if (s.character.id === 'bando') {
+  // Same rule for the subject: a sprite named after the character replaces the body, and
+  // anything without art keeps the drawing it has now.
+  // The player has no velocity field, so facing is derived from where they were last frame.
+  // The deadband stops the sprite flipping back and forth while standing still.
+  if (Math.abs(p.x - lastPlayerX) > 0.4) playerFacesLeft = p.x < lastPlayerX;
+  lastPlayerX = p.x;
+  const playerFacingLeft = playerFacesLeft;
+  if (drawSprite(ctx, `subject_${s.character.id}`, p.x, p.y, p.radius, playerFacingLeft)) {
+    // Sprite drawn; the vector arms, marker ring and status effects still draw around it.
+  } else if (s.character.id === 'bando') {
     // BANDO: Tactical Military Cyborg (Tactical Armor, Bionic Titanium Prosthetics, Cyber Visor, Cigarette smoke)
     ctx.fillStyle = '#0f172a';
     ctx.beginPath();
