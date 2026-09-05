@@ -148,7 +148,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
               <Sliders className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-400 font-bold block">
+              <span className="text-xs font-mono uppercase tracking-[0.2em] text-red-400 font-bold block">
                 AUDIO MASTERING & SOUNDTRACK
               </span>
               <h2 className="font-cinzel text-xl font-black text-white text-glow">
@@ -176,7 +176,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
               <span className="font-bold text-emerald-300 block">
                 {isRu ? 'Активна защита слуха (Soft Mastering Chain)' : 'Hearing Fatigue Protection Active'}
               </span>
-              <span className="text-gray-400 leading-relaxed text-[11px] block mt-0.5">
+              <span className="text-gray-400 leading-relaxed text-xs block mt-0.5">
                 {isRu
                   ? 'Аналоговый срез частот (1.9-2.1 кГц) и компрессор динамики. Высокие режущие частоты удалены, звуки векторов мягкие, а музыка получила дыхательные паузы.'
                   : 'Analog 1.9-2.1 kHz roll-off & dynamics limiter active. High-frequency ear fatigue eliminated; vector slashes voiced for maximum comfort.'}
@@ -186,25 +186,25 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
 
           {/* Quick Presets */}
           <div className="pt-2 border-t border-emerald-500/20 flex items-center justify-between gap-2">
-            <span className="text-[10px] font-mono text-emerald-400 uppercase font-bold">
+            <span className="text-xs font-mono text-emerald-400 uppercase font-bold">
               {isRu ? 'Пресеты:' : 'Presets:'}
             </span>
             <div className="flex items-center gap-1.5 flex-1 justify-end">
               <button
                 onClick={() => applyPreset('soft')}
-                className="px-2 py-1 rounded bg-emerald-950/80 hover:bg-emerald-900/80 border border-emerald-500/40 text-[10px] font-mono text-emerald-300 transition-colors cursor-pointer"
+                className="px-2 py-1 rounded bg-emerald-950/80 hover:bg-emerald-900/80 border border-emerald-500/40 text-xs font-mono text-emerald-300 transition-colors cursor-pointer"
               >
                 {isRu ? 'Мягкий' : 'Soft'}
               </button>
               <button
                 onClick={() => applyPreset('standard')}
-                className="px-2 py-1 rounded bg-neutral-900/80 hover:bg-neutral-800 border border-white/10 text-[10px] font-mono text-gray-300 transition-colors cursor-pointer"
+                className="px-2 py-1 rounded bg-neutral-900/80 hover:bg-neutral-800 border border-white/10 text-xs font-mono text-gray-300 transition-colors cursor-pointer"
               >
                 {isRu ? 'Базовый' : 'Standard'}
               </button>
               <button
                 onClick={() => applyPreset('ambient')}
-                className="px-2 py-1 rounded bg-neutral-900/80 hover:bg-neutral-800 border border-white/10 text-[10px] font-mono text-pink-300 transition-colors cursor-pointer"
+                className="px-2 py-1 rounded bg-neutral-900/80 hover:bg-neutral-800 border border-white/10 text-xs font-mono text-pink-300 transition-colors cursor-pointer"
               >
                 {isRu ? 'Медитация' : 'Ambient'}
               </button>
@@ -259,7 +259,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
                 <span className="font-bold text-gray-300 block">
                   {isRu ? 'Дыхательные паузы в музыке' : 'Music Breathing Spaces'}
                 </span>
-                <span className="text-[10px] text-gray-500 block">
+                <span className="text-xs text-gray-500 block">
                   {isRu ? '4-5 секунд эмбиентного покоя между циклами мелодии' : '4-5s ambient rest space between melody loops'}
                 </span>
               </div>
@@ -277,7 +277,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
 
             {/* Track Selector */}
             <div className="pt-2 border-t border-white/5 flex flex-col gap-1.5">
-              <div className="flex items-center gap-1.5 text-[11px] font-mono text-gray-400 uppercase">
+              <div className="flex items-center gap-1.5 text-xs font-mono text-gray-400 uppercase">
                 <Disc3 className="w-3 h-3 text-pink-400" />
                 <span>{isRu ? 'Выбор темы саундтрека' : 'Soundtrack Theme Selection'}</span>
               </div>
@@ -296,9 +296,9 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
                     >
                       <div className="font-bold flex items-center justify-between">
                         <span>{isRu ? opt.nameRu : opt.nameEn}</span>
-                        {isSelected && <span className="text-[10px] font-mono text-pink-400 font-bold uppercase">PLAYING</span>}
+                        {isSelected && <span className="text-xs font-mono text-pink-400 font-bold uppercase">PLAYING</span>}
                       </div>
-                      <div className="text-[10px] text-gray-400 mt-0.5 leading-snug">
+                      <div className="text-xs text-gray-400 mt-0.5 leading-snug">
                         {isRu ? opt.descRu : opt.descEn}
                       </div>
                     </button>
@@ -311,13 +311,13 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
                 <div className="mt-2 p-2.5 rounded-lg bg-black/50 border border-pink-500/30 flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="text-[9px] font-mono uppercase tracking-wider text-pink-400 font-bold">
+                      <div className="text-2xs font-mono uppercase tracking-wider text-pink-400 font-bold">
                         {isRu ? 'СЕЙЧАС ИГРАЕТ' : 'NOW PLAYING'}
                       </div>
                       <div className="text-xs text-white font-bold truncate">
                         {CUSTOM_PLAYLIST[playlistIndex]?.title}
                       </div>
-                      <div className="text-[10px] text-gray-400 truncate">
+                      <div className="text-xs text-gray-400 truncate">
                         {CUSTOM_PLAYLIST[playlistIndex]?.artist}
                       </div>
                     </div>
@@ -338,7 +338,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
                       </button>
                       <button
                         onClick={() => { const v = !shuffle; sound.setPlaylistShuffle(v); setShuffle(v); }}
-                        className={`px-2 py-1 rounded border text-[10px] font-mono font-bold cursor-pointer transition-colors ${
+                        className={`px-2 py-1 rounded border text-xs font-mono font-bold cursor-pointer transition-colors ${
                           shuffle
                             ? 'bg-pink-950/60 border-pink-500/60 text-pink-300'
                             : 'bg-neutral-900 border-white/10 text-gray-400 hover:text-gray-200'
@@ -355,7 +355,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
                       <button
                         key={tr.id}
                         onClick={() => { sound.selectPlaylistTrack(i); setPlaylistIndex(i); }}
-                        className={`text-left px-2 py-1 rounded text-[11px] font-mono transition-colors cursor-pointer flex items-center gap-2 ${
+                        className={`text-left px-2 py-1 rounded text-xs font-mono transition-colors cursor-pointer flex items-center gap-2 ${
                           i === playlistIndex
                             ? 'bg-pink-950/50 text-pink-200'
                             : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
@@ -412,14 +412,14 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
 
             {/* Test SFX Interactive Panel */}
             <div className="pt-2 border-t border-white/5 flex flex-col gap-1.5">
-              <span className="text-[10px] font-mono text-gray-400 uppercase">
+              <span className="text-xs font-mono text-gray-400 uppercase">
                 {isRu ? 'Тестирование обновленных эффектов:' : 'Test Re-Voiced Effects:'}
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                 <button
                   onClick={() => sound.playVectorSlash()}
                   disabled={isSfxMuted || sfxVol === 0}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   <Play className="w-2.5 h-2.5 text-amber-400" />
                   <span>{isRu ? 'Вектор' : 'Slash'}</span>
@@ -427,7 +427,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
                 <button
                   onClick={() => sound.playVectorClash()}
                   disabled={isSfxMuted || sfxVol === 0}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   <Play className="w-2.5 h-2.5 text-amber-400" />
                   <span>{isRu ? 'Столкновение' : 'Clash'}</span>
@@ -435,7 +435,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
                 <button
                   onClick={() => sound.playShotgun()}
                   disabled={isSfxMuted || sfxVol === 0}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   <Play className="w-2.5 h-2.5 text-amber-400" />
                   <span>{isRu ? 'Дробовик' : 'Shotgun'}</span>
@@ -443,7 +443,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
                 <button
                   onClick={() => sound.playDeflection()}
                   disabled={isSfxMuted || sfxVol === 0}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   <Play className="w-2.5 h-2.5 text-amber-400" />
                   <span>{isRu ? 'Отражение' : 'Deflect'}</span>
@@ -455,7 +455,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
 
         {/* Footer */}
         <div className="pt-2 border-t border-white/5 flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-[11px] text-gray-500 font-mono">
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-mono">
             <Sparkles className="w-3.5 h-3.5 text-red-400" />
             <span>Multi-Movement Progressive Audio v2.4</span>
           </div>

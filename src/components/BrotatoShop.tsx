@@ -274,6 +274,17 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
   const hasFreeReroll = engine.state.freeRerollAvailable && rerollCount === 0;
   const rerollCost = hasFreeReroll ? 0 : Math.round((6 + engine.state.wave * 1.6) * (1 + rerollCount * 0.8));
 
+  /*
+   * Progressive disclosure for the build-planning panels.
+   *
+   * Archetype thresholds and the synergy matrix are the two densest blocks on this screen and
+   * both read as a wall of zeros on the first visit, when the player owns one starter weapon
+   * and nothing else. They are worth reading only once there is a build to reason about, so
+   * they appear on the third purchase - or from wave 4, for a player who banks DNA instead.
+   */
+  const ownedItemCount = engine.state.weapons.length + engine.state.passiveItems.length;
+  const showBuildPanels = ownedItemCount >= 3 || engine.state.wave >= 4;
+
   const handleReroll = () => {
     if (!hasFreeReroll && currentDna < rerollCost) return;
     if (hasFreeReroll) {
@@ -420,7 +431,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
         <div className="max-w-4xl w-full glass-panel-crimson rounded-2xl p-6 shadow-2xl flex flex-col items-center gap-5 animate-in fade-in zoom-in-95 duration-200 border border-red-500/50 my-auto">
           {/* Header */}
           <div className="text-center w-full relative">
-            <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-400 font-bold mb-1 flex items-center justify-center gap-2">
+            <div className="text-xs font-mono uppercase tracking-[0.2em] text-red-400 font-bold mb-1 flex items-center justify-center gap-2">
               <Sparkles className="w-3.5 h-3.5 text-red-400" />
               <span>{t('geneticEvolution')}</span>
             </div>
@@ -516,7 +527,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                           {isRu ? opt.russianName : opt.name}
                         </div>
                         {isAscended && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-wider bg-rose-500/20 border border-rose-400/50 text-rose-200 shrink-0">
+                          <span className="text-2xs px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-wider bg-rose-500/20 border border-rose-400/50 text-rose-200 shrink-0">
                             {isRu ? 'ЭЛИТА' : 'ELITE'}
                           </span>
                         )}
@@ -592,7 +603,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
               <X className="w-5 h-5" />
             </button>
             <div className="mb-4">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-400 font-bold block">
+              <span className="text-xs font-mono uppercase tracking-[0.2em] text-red-400 font-bold block">
                 SPECIALIZATION
               </span>
               <h2 className="font-cinzel text-2xl font-black text-white text-glow">
@@ -607,12 +618,19 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
       {/* Shop Header */}
       <div className="flex flex-wrap items-center justify-between border-b border-red-900/30 pb-4 mb-4 gap-4">
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-500 font-bold">
+          <div className="text-xs font-mono uppercase tracking-[0.2em] text-red-500 font-bold">
             {t('shopTerminal')}
           </div>
           <h1 className="font-cinzel text-2xl md:text-3xl font-black text-white text-glow mt-0.5">
             {isRu ? `ПОДГОТОВКА К ВОЛНЕ ${engine.state.wave + 1}` : `PREPARATION FOR WAVE ${engine.state.wave + 1}`}
           </h1>
+          {engine.state.wave <= 2 && (
+            <p className="text-xs font-mono text-gray-400 mt-1.5 max-w-xl leading-relaxed">
+              {isRu
+                ? 'Потратьте ДНК на оружие и аугментации справа, затем нажмите «СЛЕДУЮЩАЯ ВОЛНА». Копить тоже можно — за неистраченную ДНК начисляется процент.'
+                : 'Spend DNA on the weapons and augments on the right, then press NEXT WAVE. Banking works too - unspent DNA earns interest.'}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
@@ -644,7 +662,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
             <Cpu className="w-4 h-4 text-red-400" />
             <span>{t('mutationTreeTab')}</span>
             {engine.state.mutationState.mutationPoints > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-black text-[10px] font-mono font-black animate-pulse">
+              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-black text-xs font-mono font-black animate-pulse">
                 {engine.state.mutationState.mutationPoints}
               </span>
             )}
@@ -655,7 +673,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
             <div className="flex items-center gap-2 glass-panel px-3.5 py-1.5 rounded-lg border-white/10 shadow-inner">
               <Dna className="w-4 h-4 text-red-400" />
               <span className="font-mono text-lg font-bold text-red-400">{currentDna}</span>
-              <span className="text-[10px] text-gray-500 font-mono font-bold">{t('dna')}</span>
+              <span className="text-xs text-gray-500 font-mono font-bold">{t('dna')}</span>
             </div>
 
             {/* Micro Incubator Dividend Display */}
@@ -669,15 +687,15 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
             >
               <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
               <div className="flex flex-col leading-tight">
-                <span className="text-[9px] text-gray-400 uppercase tracking-wider">
+                <span className="text-2xs text-gray-400 uppercase tracking-wider">
                   {isRu ? 'Инкубация' : 'Dividend'}
                 </span>
-                <span className="text-emerald-300 font-bold text-[11px]">
+                <span className="text-emerald-300 font-bold text-xs">
                   +{projectedDividend} {isRu ? 'ДНК' : 'DNA'}
                 </span>
               </div>
               {hasCryoVault && (
-                <span className="text-[8px] bg-emerald-500/30 text-emerald-300 px-1 py-0.5 rounded font-bold">
+                <span className="text-2xs bg-emerald-500/30 text-emerald-300 px-1 py-0.5 rounded font-bold">
                   VAULT
                 </span>
               )}
@@ -701,7 +719,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
         <div className="mb-4 p-3 rounded-xl bg-gradient-to-r from-amber-950/40 via-neutral-900/60 to-red-950/40 border border-amber-500/40 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 shadow-lg">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-amber-400 animate-spin flex-shrink-0" />
-            <span className="text-[10px] uppercase font-mono tracking-widest font-black text-amber-300">
+            <span className="text-xs uppercase font-mono tracking-widest font-black text-amber-300">
               {isRu ? 'ЭКОНОМИЧЕСКИЙ ОТЧЕТ СНАБЖЕНИЯ' : 'SUPPLY ECONOMY DEBRIEF'}
             </span>
           </div>
@@ -767,7 +785,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
 
           {/* Stats Breakdown */}
           <div className="glass-panel rounded-xl p-4 border-white/10 flex flex-col gap-2 shadow-md">
-            <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-500 font-bold border-b border-white/5 pb-2">
+            <div className="text-xs font-mono uppercase tracking-[0.2em] text-red-500 font-bold border-b border-white/5 pb-2">
               {t('statsTitle')}
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs font-mono">
@@ -824,10 +842,10 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
 
           {/* Weapons Inventory (Max 6) */}
           <div className="glass-panel rounded-xl p-4 border-white/10 flex flex-col gap-2.5 shadow-md">
-            <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.2em] text-gray-400 font-bold border-b border-white/5 pb-2">
+            <div className="flex items-center justify-between text-xs font-mono uppercase tracking-[0.2em] text-gray-400 font-bold border-b border-white/5 pb-2">
               <span>{t('weaponsInventory')} ({engine.state.weapons.length}/6)</span>
               {engine.state.weapons.length >= 6 && (
-                <span className="text-amber-400 text-[9px] font-bold">
+                <span className="text-amber-400 text-2xs font-bold">
                   {isRu ? 'СЛИЯНИЕ РАЗРЕШЕНО' : 'FUSION READY'}
                 </span>
               )}
@@ -836,7 +854,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
             {/* Combinable Weapons Alert */}
             {combinablePairs.length > 0 && (
               <div className="bg-red-950/40 border border-red-500/50 rounded-lg p-2 flex flex-col gap-1.5">
-                <div className="text-[11px] font-mono text-red-300 font-bold flex items-center gap-1.5">
+                <div className="text-xs font-mono text-red-300 font-bold flex items-center gap-1.5">
                   <Combine className="w-3.5 h-3.5 text-red-400" />
                   <span>{t('autoMergeAvailable')}</span>
                 </div>
@@ -887,7 +905,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                               {isRu ? (w.russianName || w.name) : w.name}
                             </span>
                             <span
-                              className={`font-mono text-[10px] px-1.5 py-0.2 rounded font-black ${
+                              className={`font-mono text-xs px-1.5 py-0.2 rounded font-black ${
                                 isEvo
                                   ? 'bg-amber-400 text-black shadow-[0_0_8px_rgba(245,158,11,0.8)]'
                                   : 'text-red-400 bg-red-950/50'
@@ -896,7 +914,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                               {isEvo ? 'EVO T5' : `T${w.tier}`}
                             </span>
                           </div>
-                          <div className="text-[10px] font-mono text-gray-400">
+                          <div className="text-xs font-mono text-gray-400">
                             {t('damage')}: {Math.round(w.damage * (1 + (w.tier - 1) * 0.4))} | {t('cdShort')}: {w.cooldown}s
                           </div>
                         </div>
@@ -913,14 +931,14 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
 
                     {/* Evolution Status Badge */}
                     {isEvo && (
-                      <div className="text-[10px] font-sans text-amber-200 bg-black/40 p-1.5 rounded border border-amber-500/20 leading-tight">
+                      <div className="text-xs font-sans text-amber-200 bg-black/40 p-1.5 rounded border border-amber-500/20 leading-tight">
                         ✨ {isRu ? (w.description || 'Ультимативная качественная трансформация атаки!') : w.description}
                       </div>
                     )}
 
                     {!isEvo && w.tier === 4 && evoInfo && (
                       <div
-                        className={`text-[9.5px] font-mono px-2 py-1 rounded border flex items-center gap-1.5 ${
+                        className={`text-2xs font-mono px-2 py-1 rounded border flex items-center gap-1.5 ${
                           hasCatalyst
                             ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-bold animate-pulse'
                             : 'bg-neutral-900 border-neutral-700 text-gray-400'
@@ -947,14 +965,14 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
           {/* Equipped Passive Items / Augmentations */}
           {engine.state.passiveItems.length > 0 && (
             <div className="glass-panel rounded-xl p-4 border-white/10 flex flex-col gap-2 shadow-md">
-              <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-gray-400 font-bold border-b border-white/5 pb-2">
+              <div className="text-xs font-mono uppercase tracking-[0.2em] text-gray-400 font-bold border-b border-white/5 pb-2">
                 {t('passivesInventory')} ({engine.state.passiveItems.length})
               </div>
               <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
                 {engine.state.passiveItems.map((p, idx) => (
                   <div
                     key={idx}
-                    className="px-2 py-1 rounded text-[10px] font-mono bg-neutral-900/90 border border-white/10 text-gray-300 flex items-center gap-1.5 hover:border-white/30 transition-all cursor-default"
+                    className="px-2 py-1 rounded text-xs font-mono bg-neutral-900/90 border border-white/10 text-gray-300 flex items-center gap-1.5 hover:border-white/30 transition-all cursor-default"
                     title={`${isRu ? p.russianName : p.name} (T${p.tier || 1})\n${isRu && p.description ? p.description : p.description}`}
                   >
                     <ItemIcon
@@ -978,7 +996,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
           {/* Shop Control Bar */}
           <div className="flex items-center justify-between glass-panel p-3 rounded-xl border-white/10 shadow-md">
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-400 font-bold block">
+              <span className="text-xs font-mono uppercase tracking-[0.2em] text-red-400 font-bold block">
                 {t('availableSamples')}
               </span>
               <span className="text-xs text-gray-400 font-mono">
@@ -1007,14 +1025,15 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
             </button>
           </div>
 
-          {/* Archetype Build Tracker (Macro-Synergies) */}
+          {/* Archetype Build Tracker (Macro-Synergies) - hidden until there is a build */}
+          {showBuildPanels && (
           <div className="glass-panel p-3 rounded-xl border-white/10 shadow-md flex flex-col gap-2">
-            <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.2em] text-gray-400 font-bold border-b border-white/5 pb-1.5">
+            <div className="flex items-center justify-between text-xs font-mono uppercase tracking-[0.2em] text-gray-400 font-bold border-b border-white/5 pb-1.5">
               <div className="flex items-center gap-1.5 text-red-400">
                 <Layers className="w-3.5 h-3.5" />
                 <span>{isRu ? 'АРХЕТИПЫ БОЕВОГО БИЛДА' : 'COMBAT BUILD ARCHETYPES'}</span>
               </div>
-              <span className="text-[10px] text-gray-500 font-normal">
+              <span className="text-xs text-gray-500 font-normal">
                 {isRu ? 'Бонус при 3+ предметах/оружиях' : 'Bonus at 3+ items/weapons'}
               </span>
             </div>
@@ -1043,18 +1062,18 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                         {isRu ? arch.russianName : arch.name}
                       </span>
                       <span
-                        className={`text-[10px] font-mono font-black px-1.5 py-0.2 rounded ${
+                        className={`text-xs font-mono font-black px-1.5 py-0.2 rounded ${
                           isMaxed ? 'bg-white text-black' : 'bg-neutral-800 text-gray-400'
                         }`}
                       >
                         {arch.count}/{arch.threshold}
                       </span>
                     </div>
-                    <div className="text-[9px] font-mono leading-tight" style={{ color: isMaxed ? '#e2e8f0' : '#64748b' }}>
+                    <div className="text-2xs font-mono leading-tight" style={{ color: isMaxed ? '#e2e8f0' : '#64748b' }}>
                       {isRu ? arch.russianBonusText : arch.bonusText}
                     </div>
                     {isMaxed && (
-                      <div className="text-[8px] font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                      <div className="text-2xs font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
                         <Check className="w-2.5 h-2.5 text-emerald-400" />
                         <span>{isRu ? 'АКТИВЕН (+БОНУС)' : 'ACTIVE (+BONUS)'}</span>
                       </div>
@@ -1064,6 +1083,8 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
               })}
             </div>
           </div>
+
+          )}
 
           {/* Shop Items 2x2 Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1129,12 +1150,12 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                 >
                   {/* Auto-Merge or Catalyst Evolution Badge Banner */}
                   {(canMerge || willPassiveMerge) ? (
-                    <div className="absolute top-0 right-0 bg-amber-500 text-black px-2.5 py-0.5 rounded-bl-lg font-mono text-[9px] font-black tracking-wider flex items-center gap-1 shadow-md">
+                    <div className="absolute top-0 right-0 bg-amber-500 text-black px-2.5 py-0.5 rounded-bl-lg font-mono text-2xs font-black tracking-wider flex items-center gap-1 shadow-md">
                       <Sparkles className="w-3 h-3 text-black" />
                       <span>{t('buyAndMerge', { tier: item.tier + 1 })}</span>
                     </div>
                   ) : catalystEvo ? (
-                    <div className="absolute top-0 right-0 bg-gradient-to-r from-amber-500 to-purple-500 text-black px-2.5 py-0.5 rounded-bl-lg font-mono text-[9px] font-black tracking-wider flex items-center gap-1 shadow-md animate-pulse">
+                    <div className="absolute top-0 right-0 bg-gradient-to-r from-amber-500 to-purple-500 text-black px-2.5 py-0.5 rounded-bl-lg font-mono text-2xs font-black tracking-wider flex items-center gap-1 shadow-md animate-pulse">
                       <Sparkles className="w-3 h-3 text-black animate-spin" />
                       <span>
                         {isRu
@@ -1148,7 +1169,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
                       <span
-                        className={`text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
+                        className={`text-2xs font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
                           isExperimental
                             ? 'text-amber-300 border-amber-500/60 bg-amber-950/50'
                             : item.rarity === 'legendary'
@@ -1162,7 +1183,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                       >
                         {isExperimental ? (isRu ? 'ПРОТОТИП' : 'PROTOTYPE') : isWeapon ? `${t('tier')} ${item.tier}` : (isRu ? 'Аугментация' : 'Augment')}
                       </span>
-                      <span className="text-[10px] uppercase font-mono text-gray-500 font-bold">
+                      <span className="text-xs uppercase font-mono text-gray-500 font-bold">
                         {isWeapon ? (isRu ? 'Оружие' : 'Weapon') : (isRu ? `Тир ${item.tier}` : `Tier ${item.tier}`)}
                       </span>
                     </div>
@@ -1202,7 +1223,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
 
                     {/* Experimental Item Detailed Risk/Reward breakdown */}
                     {isExperimental && item.passiveData && (
-                      <div className="mt-2.5 p-2 rounded-lg bg-black/50 border border-amber-500/30 flex flex-col gap-1 text-[10px] font-mono">
+                      <div className="mt-2.5 p-2 rounded-lg bg-black/50 border border-amber-500/30 flex flex-col gap-1 text-xs font-mono">
                         <div className="text-amber-400 font-bold uppercase tracking-wider flex items-center gap-1">
                           <Flame className="w-3 h-3 text-amber-400" />
                           <span>{isRu ? 'ЭКСПЕРИМЕНТ С ВЫСОКИМ РИСКОМ' : 'HIGH-RISK PROTOTYPE'}</span>
@@ -1224,7 +1245,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
 
                     {/* Synergy Hint */}
                     {relatedSynergies.length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-white/5 flex items-center gap-1 text-[10px] font-mono text-amber-300">
+                      <div className="mt-2 pt-2 border-t border-white/5 flex items-center gap-1 text-xs font-mono text-amber-300">
                         <Sparkles className="w-3 h-3 text-amber-400" />
                         <span>Синергия: {relatedSynergies.map((s) => (isRu ? s.russianName : s.name)).join(', ')}</span>
                       </div>
@@ -1264,16 +1285,17 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
             })}
           </div>
 
-          {/* Item Synergies Overview Panel */}
+          {/* Item Synergies Overview Panel - hidden until there is a build */}
+          {showBuildPanels && (
           <div className="glass-panel rounded-xl p-4 border-white/10 flex flex-col gap-3">
             <div className="flex items-center justify-between border-b border-white/5 pb-2">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-400" />
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-amber-400 font-bold">
+                <span className="text-xs font-mono uppercase tracking-[0.2em] text-amber-400 font-bold">
                   {t('synergiesHeader')}
                 </span>
               </div>
-              <span className="text-[10px] font-mono text-gray-400">
+              <span className="text-xs font-mono text-gray-400">
                 {t('synergiesActive')} {engine.state.activeSynergies.length} / {ITEM_SYNERGIES.length}
               </span>
             </div>
@@ -1294,9 +1316,9 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
                       <div className="font-cinzel font-bold text-gray-200">
                         {isRu ? syn.russianName : syn.name}
                       </div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">{syn.description}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">{syn.description}</div>
                     </div>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isActive ? 'bg-amber-500 text-black' : 'text-gray-600'}`}>
+                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${isActive ? 'bg-amber-500 text-black' : 'text-gray-600'}`}>
                       {isActive ? t('active') : t('incomplete')}
                     </span>
                   </div>
@@ -1304,6 +1326,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
               })}
             </div>
           </div>
+          )}
         </div>
       </div>
 

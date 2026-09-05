@@ -50,6 +50,17 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
 
   const isRu = lang === 'ru';
 
+  // "1 ПОБЕДА / 2 ПОБЕДЫ / 5 ПОБЕД" - Russian needs three forms, and the lock badges show
+  // counts from 1 to 4, which crosses two of them.
+  const winsWord = (count: number) => {
+    if (!isRu) return count === 1 ? 'WIN' : 'WINS';
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return 'ПОБЕДА';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'ПОБЕДЫ';
+    return 'ПОБЕД';
+  };
+
   const getKindBadge = (char: Character) => {
     if (char.kind === 'human_cyborg') {
       return {
@@ -74,16 +85,16 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
   return (
     <div
       id="character-select-screen"
-      className="w-full h-full p-4 md:p-8 flex flex-col justify-between overflow-y-auto z-10"
+      className="w-full h-full p-4 md:p-6 flex flex-col overflow-hidden z-10"
     >
       {/* Top Bar / Header */}
-      <div className="max-w-6xl w-full mx-auto flex flex-wrap items-center justify-between border-b border-red-900/30 pb-4 mb-6 gap-4">
+      <div className="max-w-6xl w-full mx-auto shrink-0 flex flex-wrap items-center justify-between border-b border-red-900/30 pb-3 mb-4 gap-3">
         <div className="flex items-center gap-3">
           <div className="p-2.5 rounded-xl bg-red-950/60 border border-red-600/40 text-red-500 shadow-[0_0_15px_rgba(220,38,38,0.3)]">
             <Shield className="w-6 h-6" />
           </div>
           <div>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-500 font-bold block">
+            <span className="text-xs font-mono uppercase tracking-[0.2em] text-red-500 font-bold block">
               {t('appSubtitle')}
             </span>
             <h1 className="font-cinzel text-2xl md:text-3xl font-black text-white tracking-widest text-glow mt-0.5">
@@ -118,7 +129,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
 
           {/* Hardcore Level */}
           <div className="hidden lg:flex flex-col text-right">
-            <span className="text-[9px] uppercase tracking-[0.2em] text-gray-500">{t('securityProtocol')}</span>
+            <span className="text-2xs uppercase tracking-[0.2em] text-gray-500">{t('securityProtocol')}</span>
             <span className="text-xs font-mono text-red-400">{t('hardcoreLvl')}</span>
           </div>
 
@@ -151,14 +162,14 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
       </div>
 
       {/* Main Grid */}
-      <div className="max-w-6xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 items-start">
-        {/* Left: Character List (5 cols) */}
-        <div className="lg:col-span-5 flex flex-col gap-3">
+      <div className="max-w-6xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 items-stretch">
+        {/* Left: Character List (5 cols) - scrolls on its own */}
+        <div className="lg:col-span-5 flex flex-col gap-2.5 min-h-0 overflow-y-auto pr-1">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-[0.2em] text-red-500 font-bold">
+            <span className="text-xs uppercase tracking-[0.2em] text-red-500 font-bold">
               {isRu ? 'СПИСОК ОБЪЕКТОВ' : 'SUBJECT DIRECTORY'}
             </span>
-            <span className="text-[10px] font-mono text-gray-500">
+            <span className="text-xs font-mono text-gray-500">
               {CHARACTERS.length} {isRu ? 'ОБЪЕКТА ДОСТУПНО' : 'SUBJECTS REGISTERED'}
             </span>
           </div>
@@ -167,6 +178,11 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
             const isSelected = char.id === selectedId;
             const isCyborg = char.kind === 'human_cyborg';
             const isUnlocked = isCharacterUnlocked(char.id);
+            const req = CHARACTER_UNLOCK_REQUIREMENTS[char.id];
+            const isSecret = !!req && req.requiredWins < 0;
+            const lockLabel = isSecret
+              ? isRu ? 'СЕКРЕТ' : 'SECRET'
+              : `${req ? req.requiredWins : 0} ${winsWord(req ? req.requiredWins : 0)}`;
             const charName = isRu && char.russianName ? char.russianName : char.name;
             const charTitle = isRu && char.russianTitle ? char.russianTitle : char.title;
 
@@ -209,7 +225,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                       {charName}
                     </span>
                     <span
-                      className={`text-[10px] uppercase tracking-wider font-mono font-bold ${
+                      className={`text-xs uppercase tracking-wider font-mono font-bold ${
                         !isUnlocked
                           ? 'text-amber-400 flex items-center gap-1'
                           : isCyborg
@@ -220,7 +236,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                       {!isUnlocked ? (
                         <>
                           <Lock className="w-3 h-3" />
-                          <span>[10 {isRu ? 'ВОЛН' : 'WAVES'}]</span>
+                          <span>[{lockLabel}]</span>
                         </>
                       ) : isCyborg ? (
                         `[${isRu ? 'КИБОРГ SAT' : 'SAT CYBORG'}]`
@@ -230,7 +246,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                     </span>
                   </div>
                   <div className="text-xs font-mono text-gray-400">{charTitle}</div>
-                  <div className="text-[11px] font-mono text-gray-300 mt-1 flex items-center gap-2">
+                  <div className="text-xs font-mono text-gray-300 mt-1 flex items-center gap-2">
                     {isCyborg ? (
                       <span className="text-sky-400 flex items-center gap-1 font-bold">
                         <Crosshair className="w-3 h-3" /> {isRu ? 'Огнестрел SAT' : 'SAT Firearms'}
@@ -250,7 +266,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
         </div>
 
         {/* Right: Selected Character Dossier (7 cols) */}
-        <div className="lg:col-span-7 glass-panel rounded-2xl p-6 flex flex-col gap-5 shadow-2xl relative overflow-hidden">
+        <div className="lg:col-span-7 glass-panel rounded-2xl p-5 flex flex-col gap-4 shadow-2xl relative min-h-0 overflow-y-auto">
           {/* Top colored accent line */}
           <div
             className="absolute top-0 left-0 right-0 h-1"
@@ -266,10 +282,10 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
           <div className="flex items-start justify-between border-b border-white/10 pb-4">
             <div>
               <div className="flex items-center gap-2">
-                <span className={`text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${badge.color}`}>
+                <span className={`text-xs font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${badge.color}`}>
                   {badge.label}
                 </span>
-                <span className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold">
+                <span className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold">
                   {isRu && selectedChar.russianTitle ? selectedChar.russianTitle : selectedChar.title}
                 </span>
               </div>
@@ -286,7 +302,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {/* Unique Mechanic Card */}
             <div className="glass-panel p-3.5 rounded-xl border-white/10 flex flex-col gap-1">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-sky-400 font-bold flex items-center gap-1.5">
+              <div className="text-xs uppercase tracking-[0.2em] text-sky-400 font-bold flex items-center gap-1.5">
                 <Activity className="w-3.5 h-3.5" />
                 <span>
                   {t('uniqueMechanic')}: {selectedChar.mechanic.resourceName}
@@ -295,14 +311,14 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
               <div className="text-xs text-gray-300 font-mono leading-relaxed mt-1">
                 {selectedChar.mechanic.description}
               </div>
-              <div className="text-[11px] font-mono text-emerald-400 mt-1">
+              <div className="text-xs font-mono text-emerald-400 mt-1">
                 {selectedChar.mechanic.passiveBonusText}
               </div>
             </div>
 
             {/* Special Ability Card */}
             <div className="glass-panel p-3.5 rounded-xl border-red-900/40 bg-red-950/20 flex flex-col gap-1">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-amber-400 font-bold flex items-center gap-1.5">
+              <div className="text-xs uppercase tracking-[0.2em] text-amber-400 font-bold flex items-center gap-1.5">
                 <Zap className="w-3.5 h-3.5 text-amber-400" />
                 <span>
                   {t('specialAbility')}: {selectedChar.specialAbilityName}
@@ -331,13 +347,13 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                 )}
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
+                <div className="text-xs uppercase tracking-[0.2em] text-gray-500 font-bold">
                   {t('startingWeapon')}
                 </div>
                 <div className="font-cinzel font-bold text-white text-sm mt-0.5">
                   {isRu ? starterWeapon.russianName : starterWeapon.name}
                 </div>
-                <div className="text-[11px] font-mono text-gray-400 mt-0.5">
+                <div className="text-xs font-mono text-gray-400 mt-0.5">
                   {starterWeapon.description}
                 </div>
               </div>
@@ -346,22 +362,22 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
 
           {/* Base Stats Matrix */}
           <div className="flex flex-col gap-2">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">
+            <div className="text-xs uppercase tracking-[0.2em] text-gray-500 font-bold">
               {t('statsTitle')}
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
               <div className="glass-panel p-2.5 rounded-lg border-white/5">
-                <div className="text-gray-500 text-[10px] uppercase tracking-wider">{t('maxHp')}</div>
+                <div className="text-gray-500 text-xs uppercase tracking-wider">{t('maxHp')}</div>
                 <div className="text-white font-bold text-sm mt-0.5">{selectedChar.baseStats.maxHp} HP</div>
               </div>
               <div className="glass-panel p-2.5 rounded-lg border-white/5">
-                <div className="text-gray-500 text-[10px] uppercase tracking-wider">
+                <div className="text-gray-500 text-xs uppercase tracking-wider">
                   {selectedChar.kind === 'human_cyborg' ? (isRu ? 'ОГНЕВАЯ МОЩЬ' : 'FIREPOWER') : (isRu ? 'ПСИ-СИЛА' : 'PSI POWER')}
                 </div>
                 <div className="text-red-400 font-bold text-sm mt-0.5">+{selectedChar.baseStats.psiPower}%</div>
               </div>
               <div className="glass-panel p-2.5 rounded-lg border-white/5">
-                <div className="text-gray-500 text-[10px] uppercase tracking-wider">
+                <div className="text-gray-500 text-xs uppercase tracking-wider">
                   {selectedChar.kind === 'human_cyborg' ? (isRu ? 'ТИП ОРУЖИЯ' : 'WEAPON TYPE') : t('vectors')}
                 </div>
                 <div className="text-sky-300 font-bold text-sm mt-0.5">
@@ -369,27 +385,27 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                 </div>
               </div>
               <div className="glass-panel p-2.5 rounded-lg border-white/5">
-                <div className="text-gray-500 text-[10px] uppercase tracking-wider">{t('moveSpeed')}</div>
+                <div className="text-gray-500 text-xs uppercase tracking-wider">{t('moveSpeed')}</div>
                 <div className="text-emerald-400 font-bold text-sm mt-0.5">{selectedChar.baseStats.moveSpeed} px/s</div>
               </div>
             </div>
           </div>
 
-          {/* Lock State Notice or Launch Button */}
+          {/* Lock State Notice or Launch Button - pinned to the bottom of the dossier */}
           {!isSelectedUnlocked ? (
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 sticky bottom-0 -mx-5 -mb-5 px-5 pb-5 pt-3 bg-gradient-to-t from-[#0d0d10] via-[#0d0d10]/95 to-transparent">
               <div className="glass-panel-crimson p-3.5 rounded-xl border border-amber-500/60 bg-gradient-to-r from-amber-950/30 to-red-950/30 flex items-center gap-3">
                 <div className="p-2.5 rounded-lg bg-amber-950/60 border border-amber-500/40 text-amber-400">
                   <Lock className="w-5 h-5" />
                 </div>
                 <div className="flex-1">
-                  <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-amber-400 font-bold">
+                  <div className="text-xs font-mono uppercase tracking-[0.2em] text-amber-400 font-bold">
                     {t('subjectLocked')}
                   </div>
                   <div className="text-xs font-mono text-white font-bold mt-0.5">
                     {t('unlockReq')}: {selectedReq.description}
                   </div>
-                  <div className="text-[11px] font-mono text-gray-300 mt-0.5">
+                  <div className="text-xs font-mono text-gray-300 mt-0.5">
                     {t('winsCount')}: <span className="text-amber-400 font-bold">{totalWins}</span> / {selectedReq.requiredWins}
                   </div>
                 </div>
@@ -407,6 +423,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
               </button>
             </div>
           ) : (
+            <div className="sticky bottom-0 -mx-5 -mb-5 px-5 pb-5 pt-3 bg-gradient-to-t from-[#0d0d10] via-[#0d0d10]/95 to-transparent">
             <button
               id="start-run-btn"
               onClick={handleStartGame}
@@ -419,6 +436,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
               <Play className="w-5 h-5 fill-current" />
               <span>{t('startExperiment')}</span>
             </button>
+            </div>
           )}
         </div>
       </div>

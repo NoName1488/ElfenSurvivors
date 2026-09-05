@@ -138,7 +138,7 @@ export const ItemIcon: React.FC<ItemIconProps> = ({
       {/* Mini Tier Badge for weapon slots */}
       {tier > 1 && size !== 'xs' && (
         <span
-          className={`absolute -bottom-1 -right-1 px-1 rounded text-[8px] font-mono font-black leading-none ${
+          className={`absolute -bottom-1 -right-1 px-1 rounded text-2xs font-mono font-black leading-none ${
             isEvolved
               ? 'bg-amber-400 text-black shadow-sm'
               : tier === 4

@@ -94,7 +94,7 @@ export const MetaProgressionModal: React.FC<MetaProgressionModalProps> = ({ onCl
               <FlaskConical className="w-6 h-6" />
             </div>
             <div>
-              <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-400 font-bold flex items-center gap-1.5">
+              <div className="text-xs font-mono uppercase tracking-[0.2em] text-red-400 font-bold flex items-center gap-1.5">
                 <Sparkles className="w-3 h-3 text-red-400" />
                 <span>{isRu ? 'ЛАБОРАТОРИЯ НИИ • МЕТА-ПРОГРЕССИЯ' : 'RESEARCH INSTITUTE • META-PROGRESSION'}</span>
               </div>
@@ -109,7 +109,7 @@ export const MetaProgressionModal: React.FC<MetaProgressionModalProps> = ({ onCl
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-950/90 border border-red-500/60 shadow-[0_0_15px_rgba(239,68,68,0.3)] font-mono text-xs md:text-sm font-bold text-red-300">
               <Coins className="w-4 h-4 text-amber-400" />
               <span>{metaDna}</span>
-              <span className="text-[10px] text-gray-400 uppercase font-mono">{isRu ? 'ДНК НИИ' : 'LAB DNA'}</span>
+              <span className="text-xs text-gray-400 uppercase font-mono">{isRu ? 'ДНК НИИ' : 'LAB DNA'}</span>
             </div>
 
             <button
@@ -211,7 +211,7 @@ export const MetaProgressionModal: React.FC<MetaProgressionModalProps> = ({ onCl
                           <div className="font-cinzel font-bold text-sm text-white flex items-center gap-2">
                             <span>{isRu ? cfg.russianName : cfg.name}</span>
                             {isMax && (
-                              <span className="px-1.5 py-0.2 rounded bg-amber-400 text-black font-mono font-black text-[9px]">
+                              <span className="px-1.5 py-0.2 rounded bg-amber-400 text-black font-mono font-black text-2xs">
                                 MAX CAP
                               </span>
                             )}
@@ -237,7 +237,7 @@ export const MetaProgressionModal: React.FC<MetaProgressionModalProps> = ({ onCl
                             }`}
                           />
                         ))}
-                        <span className="text-[10px] font-mono text-gray-400 ml-1">
+                        <span className="text-xs font-mono text-gray-400 ml-1">
                           {currentLevel}/{cfg.maxLevel}
                         </span>
                       </div>
@@ -316,20 +316,20 @@ export const MetaProgressionModal: React.FC<MetaProgressionModalProps> = ({ onCl
                           <div className="font-cinzel font-bold text-xs md:text-sm text-white flex items-center gap-1.5">
                             <span>{isRu ? ach.russianTitle : ach.title}</span>
                           </div>
-                          <div className="text-[11px] font-mono text-gray-400 mt-0.5 leading-relaxed">
+                          <div className="text-xs font-mono text-gray-400 mt-0.5 leading-relaxed">
                             {isRu ? ach.russianDescription : ach.description}
                           </div>
                         </div>
                       </div>
 
-                      <div className="px-2 py-0.5 rounded bg-black/60 border border-amber-500/30 text-[10px] font-mono font-bold text-amber-300 shrink-0">
+                      <div className="px-2 py-0.5 rounded bg-black/60 border border-amber-500/30 text-xs font-mono font-bold text-amber-300 shrink-0">
                         {isRu ? ach.russianRewardDesc : ach.rewardDesc}
                       </div>
                     </div>
 
                     {/* Progress Bar */}
                     <div className="flex flex-col gap-1">
-                      <div className="flex items-center justify-between text-[10px] font-mono text-gray-400">
+                      <div className="flex items-center justify-between text-xs font-mono text-gray-400">
                         <span>{isCompleted ? (isRu ? 'ВЫПОЛНЕНО' : 'COMPLETED') : (isRu ? 'ПРОГРЕСС' : 'PROGRESS')}</span>
                         <span>
                           {stored.progress} / {ach.maxProgress}

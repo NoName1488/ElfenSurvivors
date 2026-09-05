@@ -35,7 +35,7 @@ export const LanguageFlagButton: React.FC<LanguageFlagButtonProps> = ({
           <span className="font-mono text-xs font-black tracking-wider text-white group-hover:text-red-300">
             {isRu ? 'RU' : 'EN'}
           </span>
-          <span className="text-[9px] font-mono text-gray-400 leading-none">
+          <span className="text-2xs font-mono text-gray-400 leading-none">
             {isRu ? 'Русский' : 'English'}
           </span>
         </div>

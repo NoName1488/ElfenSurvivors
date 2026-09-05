@@ -17,7 +17,7 @@ export const LoreEncyclopediaModal: React.FC<LoreEncyclopediaModalProps> = ({ on
         {/* Header */}
         <div className="flex items-center justify-between border-b border-red-900/30 pb-4">
           <div>
-            <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-500 font-bold">
+            <div className="text-xs font-mono uppercase tracking-[0.2em] text-red-500 font-bold">
               {isRu ? 'СЕКРЕТНЫЙ АРХИВ НАУЧНОГО ИНСТИТУТА' : 'CLASSIFIED INSTITUTE ARCHIVE'}
             </div>
             <h2 className="font-cinzel text-2xl font-black text-white text-glow mt-0.5">

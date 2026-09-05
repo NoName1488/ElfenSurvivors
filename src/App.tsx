@@ -9,11 +9,12 @@ import { GameOverModal } from './components/GameOverModal';
 import { LoreEncyclopediaModal } from './components/LoreEncyclopediaModal';
 import { AudioSettingsModal } from './components/AudioSettingsModal';
 import { LanguageFlagButton } from './components/LanguageFlagButton';
+import { TutorialOverlay, isTutorialPending, markTutorialSeen } from './components/TutorialOverlay';
 import { useLanguage } from './utils/i18n';
 import { sound } from './utils/sound';
 import { recordCampaignVictory, checkAndUnlockSecretRunFeats } from './utils/progression';
 import { recordAchievementProgress } from './utils/metaProgression';
-import { Sliders } from 'lucide-react';
+import { Sliders, GraduationCap } from 'lucide-react';
 
 export default function App() {
   const { t, lang } = useLanguage();
@@ -26,6 +27,7 @@ export default function App() {
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [showLore, setShowLore] = useState<boolean>(false);
   const [showAudioSettings, setShowAudioSettings] = useState<boolean>(false);
+  const [showTutorial, setShowTutorial] = useState<boolean>(false);
 
   // Initialize a new game run
   const handleStartRun = useCallback((character: Character) => {
@@ -90,6 +92,7 @@ export default function App() {
     setEngine(newEngine);
     setPendingLevelUps(0);
     setNewlyUnlockedCharacter(null);
+    setShowTutorial(isTutorialPending());
     setIsPaused(false);
     setPhase('playing');
     newEngine.startWave(1);
@@ -139,8 +142,19 @@ export default function App() {
       {phase === 'playing' && engine && (
         <GameCanvas
           engine={engine}
-          isPaused={isPaused}
+          isPaused={isPaused || showTutorial}
           onPauseToggle={handlePauseToggle}
+        />
+      )}
+
+      {/* First-run briefing: freezes the arena until the player has read it */}
+      {phase === 'playing' && engine && showTutorial && (
+        <TutorialOverlay
+          character={engine.state.character}
+          onClose={() => {
+            markTutorialSeen();
+            setShowTutorial(false);
+          }}
         />
       )}
 
@@ -171,7 +185,7 @@ export default function App() {
         <div id="pause-overlay" className="fixed inset-0 bg-[#050505]/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-150 select-none">
           <div className="glass-panel border border-white/10 rounded-2xl p-6 max-w-sm w-full text-center flex flex-col items-center gap-4 shadow-2xl">
             <div className="flex items-center justify-between w-full border-b border-white/10 pb-3">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-red-500 font-bold">
+              <span className="text-xs font-mono uppercase tracking-[0.2em] text-red-500 font-bold">
                 {lang === 'ru' ? 'СИСТЕМА ПРИОСТАНОВЛЕНА' : 'SYSTEM PAUSED'}
               </span>
               <LanguageFlagButton />
@@ -203,6 +217,19 @@ export default function App() {
             >
               <Sliders className="w-4 h-4 text-amber-400" />
               <span>{t('audioSettings')}</span>
+            </button>
+
+            <button
+              id="pause-tutorial-btn"
+              onClick={() => {
+                sound.playUiClick();
+                setIsPaused(false);
+                setShowTutorial(true);
+              }}
+              className="w-full py-2.5 rounded-xl glass-panel hover:border-sky-500/50 text-gray-300 hover:text-white font-cinzel font-bold text-xs transition-colors cursor-pointer flex items-center justify-center gap-2"
+            >
+              <GraduationCap className="w-4 h-4 text-sky-400" />
+              <span>{lang === 'ru' ? 'УПРАВЛЕНИЕ И ЦЕЛЬ' : 'CONTROLS & GOAL'}</span>
             </button>
 
             <button

@@ -531,16 +531,34 @@ export class GameEngine {
     this.state.viewportHeight = height;
     this.state.arenaWidth = this.WORLD_WIDTH;
     this.state.arenaHeight = this.WORLD_HEIGHT;
+    this.snapCamera();
+  }
+
+  /** Where the camera wants to be: the player centred, clamped to the arena bounds. */
+  private cameraTarget() {
+    const maxCamX = Math.max(0, this.state.arenaWidth - this.state.viewportWidth);
+    const maxCamY = Math.max(0, this.state.arenaHeight - this.state.viewportHeight);
+    return {
+      x: Math.max(0, Math.min(maxCamX, this.state.player.x - this.state.viewportWidth / 2)),
+      y: Math.max(0, Math.min(maxCamY, this.state.player.y - this.state.viewportHeight / 2)),
+    };
   }
 
   public updateCamera() {
-    const targetCamX = this.state.player.x - this.state.viewportWidth / 2;
-    const targetCamY = this.state.player.y - this.state.viewportHeight / 2;
-    const maxCamX = Math.max(0, this.state.arenaWidth - this.state.viewportWidth);
-    const maxCamY = Math.max(0, this.state.arenaHeight - this.state.viewportHeight);
+    const target = this.cameraTarget();
+    this.state.cameraX += (target.x - this.state.cameraX) * 0.15;
+    this.state.cameraY += (target.y - this.state.cameraY) * 0.15;
+  }
 
-    this.state.cameraX += (Math.max(0, Math.min(maxCamX, targetCamX)) - this.state.cameraX) * 0.15;
-    this.state.cameraY += (Math.max(0, Math.min(maxCamY, targetCamY)) - this.state.cameraY) * 0.15;
+  /**
+   * Places the camera on the player immediately, with no easing.
+   * Used whenever the player appears somewhere new - a fresh run, a new wave - so the
+   * first frame is already framed on them instead of gliding in from the arena corner.
+   */
+  public snapCamera() {
+    const target = this.cameraTarget();
+    this.state.cameraX = target.x;
+    this.state.cameraY = target.y;
   }
 
   public getArenaForWave(wave: number): ArenaType {
@@ -1195,6 +1213,7 @@ export class GameEngine {
     this.state.player.painSurgeTimer = 0;
     this.lastEnemySpawn = 0;
     this.tacticalAmbushTimer = 12 + Math.random() * 4;
+    this.snapCamera();
     this.recalculateStats();
     this.spawnPointsOfInterest();
 

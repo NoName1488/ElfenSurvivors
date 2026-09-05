@@ -1,6 +1,50 @@
 @import "tailwindcss";
 
+/*
+ * Typography scale.
+ *
+ * The UI was built on raw pixel sizes down to 8px, which is unreadable on a normal desk
+ * viewing distance and does not grow on a large monitor. Two changes fix that:
+ *
+ * 1. Every step of the scale is defined here, one notch larger than the Tailwind default,
+ *    plus a `2xs` step so the micro-labels have somewhere to land other than 8-9px.
+ * 2. The steps are in rem, and the root font size below grows with the window height, so
+ *    the whole interface scales up on a 1440p or 4K screen instead of shrinking away.
+ *
+ * Rule for new markup: never write text-[Npx]. Use text-2xs at the very smallest.
+ */
+@theme {
+  --text-2xs: 0.6875rem;      /* 11px at the 16px baseline - the floor for any text */
+  --text-2xs--line-height: 1.45;
+  --text-xs: 0.8125rem;       /* 13px, was 12px */
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.9375rem;       /* 15px, was 14px */
+  --text-sm--line-height: 1.5;
+  --text-base: 1.0625rem;     /* 17px, was 16px */
+  --text-base--line-height: 1.55;
+  --text-lg: 1.1875rem;       /* 19px */
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.375rem;        /* 22px */
+  --text-xl--line-height: 1.45;
+  --text-2xl: 1.625rem;       /* 26px */
+  --text-2xl--line-height: 1.3;
+  --text-3xl: 2rem;           /* 32px */
+  --text-3xl--line-height: 1.2;
+  --text-4xl: 2.5rem;         /* 40px */
+  --text-4xl--line-height: 1.15;
+}
+
 @layer base {
+  html {
+    /*
+     * Everything in the layout is rem-based (Tailwind spacing included), so this single
+     * value scales the interface as a whole. Tied to viewport height rather than width:
+     * the HUD bars are height-constrained, and an ultrawide monitor is not a reason to
+     * enlarge them. 900px tall stays at the 16px baseline, 1440p reaches the 20px cap.
+     */
+    font-size: clamp(16px, 0.74vh + 9.3px, 20px);
+  }
+
   body {
     font-family: 'Rajdhani', sans-serif;
     background-color: #050505;
