@@ -5,6 +5,7 @@ import { sound } from '../utils/sound';
 import { ItemSynergy, ArenaType, WeaponEvolution, PassiveItem } from '../types';
 import { FINAL_CAMPAIGN_WAVE } from '../data/gameData';
 import { vectorBand, vectorBandLabel } from '../utils/engine';
+import { RETRO_HEIGHT, RETRO_MODE_LABELS, applyRetroPostProcess, getRetroMode, nextRetroMode, setRetroMode, RetroMode } from '../utils/retroRender';
 import { useLanguage, getLanguage } from '../utils/i18n';
 
 // Canvas overlay strings are drawn outside React, so they read the active language directly.
@@ -80,6 +81,14 @@ interface GameCanvasProps {
 export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, isPaused, onOpenSoundtrack }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Offscreen low-resolution buffer for the PS1 pass. Created once and resized with the
+  // window, because allocating a canvas every frame would cost more than the effect.
+  const retroBufferRef = useRef<HTMLCanvasElement | null>(null);
+  const [retroMode, setRetroModeState] = useState<RetroMode>(getRetroMode());
+  // The render loop is created once, so it reads the toggle through a ref rather than
+  // capturing the state value and having to be torn down and rebuilt on every switch.
+  const retroModeRef = useRef<RetroMode>(retroMode);
+  retroModeRef.current = retroMode;
   const [hudState, setHudState] = useState({
     hp: 100,
     maxHp: 100,
@@ -252,7 +261,41 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
       if (canvas) {
         const ctx = canvas.getContext('2d');
         if (ctx) {
-          drawScene(ctx, canvas.width, canvas.height, engine);
+          const activeRetro = retroModeRef.current;
+          if (activeRetro !== 'off') {
+            /*
+             * PS1 path: rasterise the whole scene into a small buffer, quantise and dither
+             * it, then blit it up unfiltered. The scene is drawn at its normal logical size
+             * and squeezed by the transform, so nothing in drawScene needs to know about it
+             * - and because the rasteriser is working at 480x270, every line and glyph lands
+             * on the low-res grid by itself.
+             */
+            let buffer = retroBufferRef.current;
+            const bufH = RETRO_HEIGHT[activeRetro];
+            const bufW = Math.max(1, Math.round((canvas.width / canvas.height) * bufH));
+            if (!buffer) {
+              buffer = document.createElement('canvas');
+              retroBufferRef.current = buffer;
+            }
+            if (buffer.width !== bufW || buffer.height !== bufH) {
+              buffer.width = bufW;
+              buffer.height = bufH;
+            }
+            const bctx = buffer.getContext('2d', { willReadFrequently: true });
+            if (bctx) {
+              bctx.save();
+              bctx.scale(bufW / canvas.width, bufH / canvas.height);
+              drawScene(bctx, canvas.width, canvas.height, engine);
+              bctx.restore();
+              applyRetroPostProcess(bctx, bufW, bufH, activeRetro, time / 1000);
+
+              ctx.imageSmoothingEnabled = false;
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(buffer, 0, 0, canvas.width, canvas.height);
+            }
+          } else {
+            drawScene(ctx, canvas.width, canvas.height, engine);
+          }
         }
       }
 
@@ -573,6 +616,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           </div>
 
           <div className="flex items-center gap-1 pointer-events-auto">
+            <button
+              id="retro-toggle-btn"
+              onClick={() => {
+                const next = nextRetroMode(retroMode);
+                setRetroModeState(next);
+                setRetroMode(next);
+                sound.playUiClick();
+              }}
+              className={`px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer shadow-md flex items-center gap-1.5 text-xs font-mono font-bold ${
+                retroMode !== 'off'
+                  ? 'border-fuchsia-500 bg-fuchsia-950/60 text-fuchsia-300'
+                  : 'glass-panel border-white/10 text-gray-400 hover:text-white'
+              }`}
+              title={isRu
+                ? 'Режим картинки: обычный, PS1 (низкое разрешение и дизеринг), Silent Hill (зерно, обесцвечивание, виньетка)'
+                : 'Picture mode: normal, PS1 (low resolution and dithering), Silent Hill (grain, desaturation, vignette)'}
+            >
+              <Sparkle className="w-3.5 h-3.5" />
+              <span>{RETRO_MODE_LABELS[retroMode][isRu ? 'ru' : 'en']}</span>
+            </button>
+
             <button
               id="pause-toggle-btn"
               onClick={onPauseToggle}
