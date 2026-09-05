@@ -453,6 +453,17 @@ export interface Enemy {
   squadFormationY?: number;
   squadBroken?: boolean;
 
+  /*
+   * --- Horns ---
+   *
+   * Canon: a Diclonius' vectors come from the pineal gland, and the horns are what carries
+   * that. Break one and the vectors go with it - the source material gives temporary coma
+   * and reversion; break both and it is permanent. Here, posture breaks take a horn instead
+   * of granting another interchangeable stun, so a duel resolves toward something.
+   */
+  hornsRemaining?: number;
+  vectorsDisabledTimer?: number;
+
   // --- Vector twins ---
   // A linked pair sharing one posture pool: breaking the guard needs both worked down, and
   // killing one enrages the survivor.

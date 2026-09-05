@@ -3154,9 +3154,11 @@ export class GameEngine {
           }
 
           const strikeAngle = Math.atan2(bestTarget.y - pY, bestTarget.x - pX);
+          const vectorsDown = !!bestTarget.vectorsDisabledTimer && bestTarget.vectorsDisabledTimer > 0;
           const isVectorDuel =
             (bestTarget.vectorCount || 0) > 0 &&
             !bestTarget.isStunned &&
+            !vectorsDown &&
             (bestTarget.vectorGuard || 0) > 0;
 
           if (isVectorDuel) {
@@ -3232,18 +3234,47 @@ export class GameEngine {
               });
 
               if (bestTarget.vectorGuard <= 0) {
-                // POSTURE BREAK / STUN!
+                /*
+                 * POSTURE BREAK.
+                 *
+                 * Against anything with horns this takes one, rather than handing out yet
+                 * another interchangeable stun. Canon: the horns carry the vectors, losing
+                 * one costs them, losing both ends them. That turns a duel from a stun
+                 * treadmill into a fight with two milestones and a conclusion.
+                 */
                 bestTarget.isStunned = true;
                 bestTarget.stunTimer = 2.4;
                 sound.playGuardBreak();
                 this.triggerScreenShake(14, 0.45);
 
+                let breakText = getLanguage() === 'ru' ? 'ПРОБИТИЕ ЗАЩИТЫ!' : 'GUARD BREAK!';
+                let breakColor = '#facc15';
+
+                if (bestTarget.hornsRemaining && bestTarget.hornsRemaining > 0) {
+                  bestTarget.hornsRemaining--;
+                  if (bestTarget.hornsRemaining <= 0) {
+                    // Both horns gone: the vectors do not come back. What is left is a body.
+                    bestTarget.vectorsDisabledTimer = Number.POSITIVE_INFINITY;
+                    bestTarget.vectorArms = [];
+                    bestTarget.vectorCount = 0;
+                    bestTarget.stunTimer = 3.2;
+                    breakText = loc('ОБА РОГА СЛОМАНЫ — ВЕКТОРОВ БОЛЬШЕ НЕТ', 'BOTH HORNS BROKEN - VECTORS GONE');
+                    breakColor = '#f87171';
+                  } else {
+                    // One horn: the vectors go quiet for a while and the guard cannot hold.
+                    bestTarget.vectorsDisabledTimer = 4.5;
+                    breakText = loc('РОГ СЛОМАН — ВЕКТОРЫ ОТКАЗАЛИ', 'HORN BROKEN - VECTORS DOWN');
+                    breakColor = '#fb923c';
+                  }
+                  this.triggerScreenShake(11, 0.3);
+                }
+
                 this.state.damageNumbers.push({
                   id: ++this.dmgNumIdCounter,
                   x: bestTarget.x,
                   y: bestTarget.y - 28,
-                  text: getLanguage() === 'ru' ? 'ПРОБИТИЕ ЗАЩИТЫ!' : 'GUARD BREAK!',
-                  color: '#facc15',
+                  text: breakText,
+                  color: breakColor,
                   opacity: 1,
                   isCrit: true,
                   vy: -60,
@@ -5562,8 +5593,9 @@ export class GameEngine {
           vectorCount: 2,
           vectorReach: cloneReach,
           vectorArms: cloneArms,
-          vectorGuard: 50,
-          maxVectorGuard: 50,
+          vectorGuard: 74,
+          maxVectorGuard: 74,
+          hornsRemaining: 2,
           vectorAttackState: 'idle',
           vectorAttackTimer: Math.random() * 1.5,
           vectorAttackCooldown: 2.2,
@@ -5595,8 +5627,9 @@ export class GameEngine {
           vectorCount: 3,
           vectorReach: duelReach,
           vectorArms: makeEnemyVectorArms(3, duelReach, '#e11d48', x, y, Math.PI * 0.9),
-          vectorGuard: 130,
-          maxVectorGuard: 130,
+          vectorGuard: 178,
+          maxVectorGuard: 178,
+          hornsRemaining: 2,
           vectorAttackState: 'idle',
           vectorAttackTimer: Math.random() * 1.5,
           vectorAttackCooldown: 2.0,
@@ -5628,8 +5661,9 @@ export class GameEngine {
           vectorCount: 1,
           vectorReach: lanceReach,
           vectorArms: makeEnemyVectorArms(1, lanceReach, '#a855f7', x, y),
-          vectorGuard: 28,
-          maxVectorGuard: 28,
+          vectorGuard: 42,
+          maxVectorGuard: 42,
+          hornsRemaining: 2,
           vectorAttackState: 'idle',
           vectorAttackTimer: Math.random() * 1.2,
           vectorAttackCooldown: 2.6,
@@ -5660,8 +5694,9 @@ export class GameEngine {
           vectorCount: 2,
           vectorReach: twinReach,
           vectorArms: makeEnemyVectorArms(2, twinReach, '#f472b6', x, y, Math.PI * 0.7),
-          vectorGuard: 70,
-          maxVectorGuard: 70,
+          vectorGuard: 98,
+          maxVectorGuard: 98,
+          hornsRemaining: 2,
           vectorAttackState: 'idle',
           vectorAttackTimer: Math.random() * 1.5,
           vectorAttackCooldown: 2.4,
@@ -6299,7 +6334,26 @@ export class GameEngine {
             e.vectorGuard = Math.round(e.maxVectorGuard * 0.5);
           }
         }
-      } else if (e.vectorGuard !== undefined && e.maxVectorGuard && e.vectorGuard < e.maxVectorGuard) {
+      }
+
+      // A unit with a broken horn has no vectors for the duration - no parry, no vector
+      // attack, and the guard cannot rebuild. This is the window the duel was fought for.
+      if (e.vectorsDisabledTimer !== undefined && e.vectorsDisabledTimer > 0) {
+        if (Number.isFinite(e.vectorsDisabledTimer)) {
+          e.vectorsDisabledTimer -= dt;
+          if (e.vectorsDisabledTimer <= 0) {
+            e.vectorsDisabledTimer = 0;
+            // The horn that is left brings the guard back, but only partway.
+            if (e.maxVectorGuard) e.vectorGuard = Math.round(e.maxVectorGuard * 0.45);
+          }
+        }
+        if ((e.vectorsDisabledTimer || 0) > 0) {
+          e.vectorGuard = 0;
+          e.vectorAttackState = 'idle';
+        }
+      }
+
+      if (e.vectorGuard !== undefined && e.maxVectorGuard && e.vectorGuard < e.maxVectorGuard && !(e.vectorsDisabledTimer && e.vectorsDisabledTimer > 0)) {
         e.guardBreakRecoverTimer = (e.guardBreakRecoverTimer || 0) - dt;
         if (e.guardBreakRecoverTimer <= 0) {
           // Twins prop each other's posture up, so chipping at whichever is nearer never
@@ -6531,7 +6585,8 @@ export class GameEngine {
           }
 
           // Attack State Machine
-          if (!isStunned) {
+          const armsDown = !!e.vectorsDisabledTimer && e.vectorsDisabledTimer > 0;
+          if (!isStunned && !armsDown) {
             e.vectorAttackTimer = (e.vectorAttackTimer || 0) + dt;
             const attackInterval = isEnraged ? 2.6 : (e.isBoss ? 3.6 : 4.2);
 

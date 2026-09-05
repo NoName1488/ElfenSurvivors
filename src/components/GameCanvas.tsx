@@ -2041,19 +2041,40 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
       ctx.lineWidth = enemy.twinEnraged ? 2.5 : 1.8;
       ctx.stroke();
 
-      // Horns, longer on the duelist: rank within the line.
+      /*
+       * Horns, and what is left of them.
+       *
+       * The horn count is the duel's progress bar, so it is drawn on the unit: two intact
+       * horns, one stump after a posture break, two stumps once the vectors are gone for
+       * good. A player should be able to pick the half-broken one out of a crowd and finish
+       * it, without reading a number anywhere.
+       */
       const hornLen = enemy.type === 'silpelit_duelist' ? 17 : 13;
-      ctx.fillStyle = '#fff1f2';
-      ctx.beginPath();
-      ctx.moveTo(enemy.x - 6, enemy.y - 8);
-      ctx.lineTo(enemy.x - 9, enemy.y - hornLen);
-      ctx.lineTo(enemy.x - 2, enemy.y - 9);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(enemy.x + 6, enemy.y - 8);
-      ctx.lineTo(enemy.x + 9, enemy.y - hornLen);
-      ctx.lineTo(enemy.x + 2, enemy.y - 9);
-      ctx.fill();
+      const horns = enemy.hornsRemaining === undefined ? 2 : enemy.hornsRemaining;
+      const drawHorn = (dir: number, intact: boolean) => {
+        const tip = intact ? hornLen : 10.5;
+        ctx.fillStyle = intact ? '#fff1f2' : '#9f1239';
+        ctx.beginPath();
+        ctx.moveTo(enemy.x + dir * 6, enemy.y - 8);
+        ctx.lineTo(enemy.x + dir * 9, enemy.y - tip);
+        ctx.lineTo(enemy.x + dir * 2, enemy.y - 9);
+        ctx.fill();
+      };
+      drawHorn(-1, horns >= 2);
+      drawHorn(1, horns >= 1);
+
+      // Vectors offline: the unit is still walking, but it is not a duelist any more.
+      if (enemy.vectorsDisabledTimer && enemy.vectorsDisabledTimer > 0) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(248, 113, 113, 0.75)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.arc(enemy.x, enemy.y, enemy.radius + 7, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
 
       /*
        * Lancer's reach ring, drawn only when it is about to matter.
