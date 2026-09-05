@@ -425,6 +425,9 @@ export interface Enemy {
    */
   flankBearing?: number;
 
+  /** Seconds left on Nana's stasis touch, which takes a quarter off this unit's pace. */
+  stasisSlowTimer?: number;
+
   /** For a riot shield: the id of the shooter it is currently covering. */
   escortTargetId?: number;
 
@@ -618,6 +621,15 @@ export interface Projectile {
    * institute developed for that, and the item text has always said so.
    */
   antiVector?: boolean;
+
+  /**
+   * Ignores armour plate entirely.
+   *
+   * Set for depleted-uranium rounds: a dense penetrator does not have to cut its way past
+   * a hull, which is the mechanical form of the "reduces armour resistance" its card
+   * promises. Distinct from antiVector, which is about not being swatted out of the air.
+   */
+  armourPiercing?: boolean;
   id: number;
   x: number;
   y: number;

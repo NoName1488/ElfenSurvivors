@@ -71,6 +71,8 @@ export interface GameEngineState {
     currentSpeed: number;
     // Bando: seconds left on the "pain conversion" fire-rate surge.
     painSurgeTimer: number;
+    /** Seconds left on the movement burst from Lucy's bio-absorption. */
+    siphonSurgeTimer?: number;
   };
   mutationState: PsychicMutationState;
   baseStatBonuses: Partial<Record<keyof PlayerStats, number>>;
@@ -1630,7 +1632,7 @@ export class GameEngine {
     if (this.state.player.specialCooldownTimer <= 0 && this.state.isWaveActive) {
       this.state.player.specialCooldownTimer =
         this.state.character.specialAbilityCooldown * (1 - this.state.stats.ultimateCooldown / 100);
-      this.state.player.specialActiveTimer = 6.0;
+      this.state.player.specialActiveTimer = 6.0 * this.awakeningDuration;
       this.triggerScreenShake(16, 0.55);
 
       /*
@@ -1685,7 +1687,7 @@ export class GameEngine {
         this.state.characterResource.current = 100;
         this.state.characterResource.isActive = true;
         this.state.characterResource.name = loc('ПРОБУЖДЕНИЕ ЛЮСИ (БЕРСЕРК +60%)', 'LUCY AWAKENED (BERSERK +60%)');
-        this.state.player.specialActiveTimer = 8.0;
+        this.state.player.specialActiveTimer = 8.0 * this.awakeningDuration;
 
         // Big Repulsion Nova + DNA vacuum
         this.state.particles.push({
@@ -2447,6 +2449,69 @@ export class GameEngine {
       if (this.aegisCooldown <= 0) this.aegisCharge = 25;
     }
 
+    /*
+     * Mutation clocks.
+     *
+     * Three nodes promise something that happens on its own every few seconds. They share
+     * this block so the periods are visible next to each other rather than scattered.
+     */
+    if (this.hasMutation('nyu_repulse_shock')) {
+      this.repulseTimer -= dt;
+      if (this.repulseTimer <= 0) {
+        this.repulseTimer = 8;
+        const px = this.state.player.x;
+        const py = this.state.player.y;
+        for (const e of this.state.enemies) {
+          if (e.hp <= 0 || e.isBoss || e.isHeavyMass) continue;
+          const d = Math.hypot(e.x - px, e.y - py);
+          if (d > 175 || d < 1) continue;
+          const push = Math.atan2(e.y - py, e.x - px);
+          e.x += Math.cos(push) * 58;
+          e.y += Math.sin(push) * 58;
+          this.damageEnemy(e, 15 * (1 + this.state.stats.psiPower / 100), false);
+        }
+        this.state.particles.push({
+          x: px, y: py, vx: 0, vy: 0,
+          life: 0.4, maxLife: 0.4, size: 175, color: '#f472b6', alpha: 0.6, type: 'psychic_ring',
+        });
+      }
+    }
+
+    if (this.hasMutation('bando_shoulder_missiles')) {
+      this.shoulderMissileTimer -= dt;
+      if (this.shoulderMissileTimer <= 0) {
+        this.shoulderMissileTimer = 8;
+        // Aimed at the men holding the far line, which is precisely who a rifle cannot
+        // reach and who the standoff doctrine keeps out there.
+        const far = this.state.enemies
+          .filter((e) => e.hp > 0 && e.shootCooldown !== undefined)
+          .sort(
+            (a, b) =>
+              Math.hypot(b.x - this.state.player.x, b.y - this.state.player.y) -
+              Math.hypot(a.x - this.state.player.x, a.y - this.state.player.y)
+          )
+          .slice(0, 2);
+        for (const target of far) {
+          const ang = Math.atan2(target.y - this.state.player.y, target.x - this.state.player.x);
+          this.state.projectiles.push({
+            id: ++this.projectileIdCounter,
+            x: this.state.player.x, y: this.state.player.y,
+            vx: Math.cos(ang) * 420, vy: Math.sin(ang) * 420,
+            radius: 5,
+            damage: 34 * (1 + this.state.stats.psiPower / 100),
+            isPlayer: true,
+            color: '#f59e0b',
+            life: 2.2, maxLife: 2.2,
+            penetration: 1,
+            isRocket: true,
+            explosionRadius: 48,
+          });
+        }
+      }
+    }
+
+    if (this.cocoonCooldown > 0) this.cocoonCooldown -= dt;
+
     // Delayed follow-up hits, on game time. See delayedEffects.
     if (this.delayedEffects.length > 0) {
       for (let i = this.delayedEffects.length - 1; i >= 0; i--) {
@@ -2522,7 +2587,7 @@ export class GameEngine {
       }
       if (this.state.characterResource.current >= 100 && !this.state.characterResource.isActive) {
         this.state.characterResource.isActive = true;
-        this.state.player.specialActiveTimer = 6.0;
+        this.state.player.specialActiveTimer = 6.0 * this.awakeningDuration;
       }
     }
 
@@ -2863,6 +2928,20 @@ export class GameEngine {
     }
 
     let speed = this.state.stats.moveSpeed;
+    // Bio-absorption leaves a short burst of pace behind a critical hit.
+    if ((this.state.player.siphonSurgeTimer || 0) > 0) {
+      this.state.player.siphonSurgeTimer = Math.max(0, (this.state.player.siphonSurgeTimer || 0) - dt);
+      speed += 8;
+    }
+    /*
+     * Bando's adrenaline injector: the stimulant opens when he is hurt, not on a timer.
+     *
+     * Its card promises 10% pace below a low health threshold, which is a retreat tool -
+     * the one thing a cyborg with no vectors genuinely needs.
+     */
+    if (this.hasMutation('bando_adrenaline_injector') && this.state.player.hp < this.state.player.maxHp * 0.35) {
+      speed *= 1.1;
+    }
     if (this.state.character.id === 'bando' && this.state.characterResource.current > 0) {
       speed *= 1 + (this.state.characterResource.current / 100) * 0.3;
     } else if (this.state.character.id === 'mariko' && this.state.characterResource.isActive) {
@@ -2978,6 +3057,16 @@ export class GameEngine {
    * Spent as strike climb rate rather than discarded. See recalculateStats.
    */
   vibrationOverflow = 0;
+
+  /**
+   * Multiplier on how long Nyu holds her awakened state.
+   *
+   * Awakening instincts is the first node in her branch and it promises a quarter longer;
+   * read where the trance is set rather than applied per frame, so it cannot compound.
+   */
+  private get awakeningDuration(): number {
+    return this.hasMutation('nyu_latent_surge') ? 1.25 : 1;
+  }
 
   /** Seconds until the moving and covering halves of the SAT line swap roles. */
   private boundingTimer = 2.5;
@@ -3328,6 +3417,25 @@ export class GameEngine {
                   const closest = nearbyEnemies[0];
                   bestTargetAngle = Math.atan2(closest.y - proj.y, closest.x - proj.x);
                 }
+                /*
+                 * Directed ricochet: the round goes back to a rifleman rather than to
+                 * whoever happens to be nearest.
+                 *
+                 * That is the difference between a deflection that tidies the screen and
+                 * one that thins the firing line, and it searches the whole arena rather
+                 * than only the arms' own reach - the men worth returning fire to are the
+                 * ones standing outside it.
+                 */
+                if (this.hasMutation('nana_homing_ricochet')) {
+                  let shooter: Enemy | null = null;
+                  let bestD = Infinity;
+                  for (const other of this.state.enemies) {
+                    if (other.hp <= 0 || other.shootCooldown === undefined) continue;
+                    const d = Math.hypot(other.x - proj.x, other.y - proj.y);
+                    if (d < bestD) { bestD = d; shooter = other; }
+                  }
+                  if (shooter) bestTargetAngle = Math.atan2(shooter.y - proj.y, shooter.x - proj.x);
+                }
 
                 const baseProjSpeed = Math.hypot(proj.vx, proj.vy);
                 const deflectedSpeed = Math.max(550, baseProjSpeed * 1.8);
@@ -3422,6 +3530,9 @@ export class GameEngine {
           // Vector convergence: the apex promises four arms on one target in concert.
           if (this.hasMutation('lucy_omni_slaughter') && !enemy.isBoss) maxLoadPerEnemy = Math.max(maxLoadPerEnemy, 4);
           if (this.hasMutation('mariko_swarm_distrib') && !enemy.isBoss) maxLoadPerEnemy = Math.max(1, Math.floor(totalArmCount / Math.max(1, nearbyEnemies.length)));
+          // Multi-capture synchronisation: the swarm spreads across six separate targets
+          // rather than piling onto whichever one is nearest.
+          if (this.hasMutation('mariko_omni_matrix') && !enemy.isBoss) maxLoadPerEnemy = Math.max(maxLoadPerEnemy, Math.ceil(totalArmCount / 6));
 
           // Prevent dogpiling on normal grunts, but allow all vectors against bosses
           if (targetLoad >= maxLoadPerEnemy) {
@@ -3556,7 +3667,10 @@ export class GameEngine {
           const controlEdge = baseReach * 0.6;
           if (strikeDist > controlEdge) {
             const past = Math.min(1, (strikeDist - controlEdge) / Math.max(1, baseReach - controlEdge));
-            finalDmg *= 1 - past * 0.4;
+            // Zone expansion: its card promises more damage at distance, which is exactly
+            // the counterweight to this falloff. With it, the fingertips lose a tenth
+            // instead of two fifths - so stacking reach becomes a plan rather than a trap.
+            finalDmg *= 1 - past * (this.hasMutation('lucy_dimensional_reach') ? 0.1 : 0.4);
           }
 
           // Special Mutation: Lucy Queen Execution
@@ -3820,6 +3934,56 @@ export class GameEngine {
             this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
 
             /*
+             * Impulse whip: the strike knocks the rank back off its step.
+             *
+             * Small on any one hit and cumulative across a crowd, which is what turns a
+             * cordon closing on you into a cordon that keeps losing its footing.
+             */
+            if (this.hasMutation('lucy_kinetic_whip')) {
+              for (const other of this.state.enemies) {
+                if (other.hp <= 0 || other.isBoss || other.isHeavyMass) continue;
+                const d = Math.hypot(other.x - bestTarget.x, other.y - bestTarget.y);
+                if (d > 90) continue;
+                const push = Math.atan2(other.y - pY, other.x - pX);
+                other.x += Math.cos(push) * 26;
+                other.y += Math.sin(push) * 26;
+              }
+            }
+
+            /*
+             * Needle piercing: the point goes through the man and into the one behind, and
+             * opens the plate on both. Deliberately a shorter line than the focus lance -
+             * this is a tier 1 node, not an apex.
+             */
+            if (this.hasMutation('lucy_needle_pierce')) {
+              let pierced = 0;
+              for (const other of this.state.enemies) {
+                if (pierced >= 1) break;
+                if (other === bestTarget || other.hp <= 0) continue;
+                const along = (other.x - pX) * Math.cos(strikeAngle) + (other.y - pY) * Math.sin(strikeAngle);
+                if (along <= 0 || along > baseReach * 1.5) continue;
+                const offLine = Math.abs(
+                  -(other.x - pX) * Math.sin(strikeAngle) + (other.y - pY) * Math.cos(strikeAngle)
+                );
+                if (offLine > 24) continue;
+                // Armour-piercing by definition: a needle does not have to cut the plate.
+                this.damageEnemy(other, finalDmg * 0.6, false, undefined, true);
+                this.spawnVectorImpact(other.x, other.y, strikeAngle, false, 'pierce');
+                pierced++;
+              }
+            }
+
+            /*
+             * Stasis touch: what the arm leaves behind is a man who cannot get away.
+             *
+             * Nana's whole business is holding ground, and a quarter off the target's pace
+             * for a second and a half is what lets her actually do it.
+             */
+            if (this.hasMutation('nana_stasis_tap') && !bestTarget.isBoss) {
+              bestTarget.stasisSlowTimer = 1.5;
+            }
+
+            /*
              * Kinetic focus lance: the thrust does not stop at the first body. Everything
              * standing on the line behind the target takes it at reduced force, which is
              * what makes it the answer to a rank of heavy infantry, as its card says.
@@ -3842,6 +4006,28 @@ export class GameEngine {
              * Cascading micro-needle volley: a needle goes out to a shooter holding the
              * far line, which is the only thing that reaches the men the arms cannot.
              */
+            /*
+             * Cluster shards: the needle comes apart on the body and the pieces go on into
+             * whoever is standing beside it. The card's own words - coverage against a
+             * dense rank.
+             */
+            if (this.hasMutation('mariko_cluster_shards')) {
+              for (let sh = 0; sh < 2; sh++) {
+                const shAng = strikeAngle + (sh === 0 ? 0.7 : -0.7);
+                this.state.projectiles.push({
+                  id: ++this.projectileIdCounter,
+                  x: bestTarget.x, y: bestTarget.y,
+                  vx: Math.cos(shAng) * 520, vy: Math.sin(shAng) * 520,
+                  radius: 3.5,
+                  damage: finalDmg * 0.45,
+                  isPlayer: true,
+                  color: '#facc15',
+                  life: 0.4, maxLife: 0.4,
+                  penetration: 1,
+                });
+              }
+            }
+
             if (this.hasMutation('mariko_storm_of_gods') && Math.random() < 0.3) {
               let far: Enemy | null = null;
               let farDist = 0;
@@ -4229,6 +4415,22 @@ export class GameEngine {
             if (np && np.isPlayer) np.antiVector = true;
           }
         }
+        /*
+         * Depleted uranium: through one more body, and through the plate.
+         *
+         * A dense penetrator does not have to cut its way past armour, so these rounds are
+         * flagged as phasing for the armour rule - which is the mechanical form of the
+         * "reduces the target's armour resistance" its card has always claimed.
+         */
+        if (fired && this.hasMutation('bando_uranium_rounds')) {
+          for (let pi = projMark; pi < this.state.projectiles.length; pi++) {
+            const np = this.state.projectiles[pi];
+            if (np && np.isPlayer) {
+              np.penetration = (np.penetration || 1) + 1;
+              np.armourPiercing = true;
+            }
+          }
+        }
         if (fired) {
           const effectiveCooldown = Math.max(0.1, (weapon.cooldown / atkSpeedMod));
           this.weaponCooldowns.set(weapon.id, effectiveCooldown);
@@ -4259,7 +4461,28 @@ export class GameEngine {
 
     // Mariko Overheat Heat Generator & Penalty
     if (this.state.character.id === 'mariko') {
-      this.state.characterResource.current = Math.min(100, this.state.characterResource.current + 3.5);
+      /*
+       * Cryogenic coolant slows the climb; thermal discharge empties it at the top.
+       *
+       * Together these turn overheat from a timer she loses to into something she manages,
+       * which is what the branch has always described and never done.
+       */
+      const heatRate = this.hasMutation('mariko_cell_coolant') ? 2.625 : 3.5;
+      this.state.characterResource.current = Math.min(100, this.state.characterResource.current + heatRate);
+      if (this.hasMutation('mariko_overheat_nova') && this.state.characterResource.current >= 100) {
+        this.state.characterResource.current = 0;
+        this.state.characterResource.isActive = false;
+        this.triggerScreenShake(9, 0.3);
+        for (const e of this.state.enemies) {
+          if (e.hp <= 0) continue;
+          if (Math.hypot(e.x - this.state.player.x, e.y - this.state.player.y) > 200) continue;
+          this.damageEnemy(e, 40 * (1 + this.state.stats.psiPower / 100), false);
+        }
+        this.state.particles.push({
+          x: this.state.player.x, y: this.state.player.y, vx: 0, vy: 0,
+          life: 0.45, maxLife: 0.45, size: 200, color: '#facc15', alpha: 0.8, type: 'psychic_ring',
+        });
+      }
       if (this.state.characterResource.isActive) {
         psiMultiplier *= this.hasMutation('mariko_god_core') ? 1.25 : 0.65;
       }
@@ -8198,6 +8421,12 @@ export class GameEngine {
 
       // Movement speed calculation (incorporating Berserker affix enrage)
       let moveSpeed = e.speed;
+      // Nana's stasis touch. A quarter off the pace is the difference between a rush that
+      // reaches her and one that dies on the way.
+      if ((e.stasisSlowTimer || 0) > 0) {
+        e.stasisSlowTimer = Math.max(0, (e.stasisSlowTimer || 0) - dt);
+        moveSpeed *= 0.75;
+      }
       if (e.eliteAffix === 'berserker' && e.hp < e.maxHp * 0.55) {
         moveSpeed *= 1.4;
         if (Math.random() < 0.25) {
@@ -9210,7 +9439,36 @@ export class GameEngine {
           }
 
           if (dist < enemy.radius + p.radius) {
-            this.damageEnemy(enemy, p.damage, p.isDeflected);
+            this.damageEnemy(enemy, p.damage, p.isDeflected, undefined, !!p.armourPiercing);
+
+            /*
+             * Ballistic ricochet: a round that has spent itself on one man goes looking for
+             * another. Deliberately a short, slow fragment - it is a tier 3 node, and its
+             * value is coverage against a packed rank rather than raw damage.
+             */
+            if (this.hasMutation('bando_ricochet_chambers') && Math.random() < 0.35) {
+              let bounceTo: Enemy | null = null;
+              let bestD = Infinity;
+              for (const other of this.state.enemies) {
+                if (other === enemy || other.hp <= 0) continue;
+                const d = Math.hypot(other.x - p.x, other.y - p.y);
+                if (d < bestD && d < 220) { bestD = d; bounceTo = other; }
+              }
+              if (bounceTo) {
+                const bAng = Math.atan2(bounceTo.y - p.y, bounceTo.x - p.x);
+                this.state.projectiles.push({
+                  id: ++this.projectileIdCounter,
+                  x: p.x, y: p.y,
+                  vx: Math.cos(bAng) * 480, vy: Math.sin(bAng) * 480,
+                  radius: Math.max(2, p.radius - 1),
+                  damage: p.damage * 0.5,
+                  isPlayer: true,
+                  color: '#fbbf24',
+                  life: 0.5, maxLife: 0.5,
+                  penetration: 1,
+                });
+              }
+            }
 
             /*
              * Anti-vector rounds work on the arms, not only the body.
@@ -9252,6 +9510,25 @@ export class GameEngine {
         }
       } else {
         const dist = Math.hypot(pX - p.x, pY - p.y);
+        /*
+         * Kinetic debris field: a thin ring of spinning wreckage that eats small-arms fire.
+         *
+         * Bullets only - a rocket or a tank shell goes straight through a curtain of grit,
+         * and letting it stop those would make one tier 3 node a blanket immunity. It works
+         * at the edge of the ring rather than at the body, so the shot dies before it
+         * arrives, which is what makes it read on screen.
+         */
+        if (
+          p.isBullet &&
+          this.hasMutation('nyu_kinetic_tornado') &&
+          dist < 62 &&
+          dist > this.state.player.radius &&
+          Math.random() < 0.45
+        ) {
+          p.life = 0;
+          this.spawnVectorClash(p.x, p.y, Math.atan2(p.vy, p.vx), '#f472b6');
+          continue;
+        }
         if (dist < this.state.player.radius + p.radius) {
           // Bio-regenerative dome: a standing field that blunts incoming fire specifically,
           // which is what its card promises and what melee is deliberately not covered by.
@@ -9362,6 +9639,17 @@ export class GameEngine {
         this.spawnVectorImpact(enemy.x, enemy.y, Math.random() * Math.PI * 2, true, 'slash');
       }
 
+      /*
+       * Cellular bio-absorption: a critical hit takes something back out of the body.
+       *
+       * Two health and a short burst of pace, which reads as the thing her card describes -
+       * killing well is what keeps her standing, rather than any separate defensive stat.
+       */
+      if (this.hasMutation('lucy_blood_siphon')) {
+        this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 2);
+        this.state.player.siphonSurgeTimer = 2.0;
+      }
+
       // Silpelit guardian aura: an empathic surge breaks the firing party's coordination.
       // Implemented as what a blinded soldier actually does - stops shooting for a moment.
       /*
@@ -9412,6 +9700,12 @@ export class GameEngine {
   }
   /** Crits since the last mortar round, for Bando's fire support apex. */
   private critStreakForStrike = 0;
+  /** Seconds until Nyu's protective wave goes out again. */
+  private repulseTimer = 8;
+  /** Seconds until Bando's shoulder block launches at the far shooters again. */
+  private shoulderMissileTimer = 8;
+  /** Seconds until Nyu's bio-cocoon can absorb another blow. */
+  private cocoonCooldown = 0;
 
   /** Kuruma's kinetic cocoon: absorbs a fixed pool, then recharges on a timer. */
   private aegisCharge = 25;
@@ -9918,6 +10212,42 @@ export class GameEngine {
       });
       return;
     }
+
+    /*
+     * Nyu's protective cocoon: a single heavy blow is refused, once every thirty seconds.
+     *
+     * Threshold rather than always-on, because the card calls it a reaction to a sudden
+     * hit - it is there for the volley that would have ended the run, not for chip damage.
+     */
+    if (
+      this.hasMutation('nyu_protect_cocoon') &&
+      this.cocoonCooldown <= 0 &&
+      amount >= this.state.player.maxHp * 0.18
+    ) {
+      this.cocoonCooldown = 30;
+      this.state.player.invincibleTimer = 0.7;
+      this.state.damageNumbers.push({
+        id: ++this.dmgNumIdCounter,
+        x: this.state.player.x,
+        y: this.state.player.y - 28,
+        text: loc('БИО-КОКОН', 'BIO-COCOON'),
+        color: '#f472b6',
+        opacity: 1,
+        isCrit: true,
+        vy: -48,
+      });
+      return;
+    }
+
+    /*
+     * Two screens that reduce what lands rather than what is aimed.
+     *
+     * Anti-vector shielding is Bando's answer to being a man in a fight between Diclonii;
+     * cellular reinforcement is Mariko surviving her own output, and it is the only one of
+     * the two that applies to damage she does to herself.
+     */
+    if (this.hasMutation('bando_anti_vector_mesh')) amount *= 0.9;
+    if (this.hasMutation('mariko_radiant_vessel') && this.state.characterResource.isActive) amount *= 0.85;
 
     // Nana braces behind her kinetic shield while stationary.
     const stanceArmor =
