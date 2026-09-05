@@ -28,6 +28,7 @@ import {
   PatrolBoat,
 } from '../types';
 import { sound } from './sound';
+import { getActiveDifficulty, recordDifficultyCleared, DifficultyLevel } from './difficulty';
 import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG, FINAL_CAMPAIGN_WAVE } from '../data/gameData';
 import { PSYCHIC_MUTATION_TREES, PsychicMutationNode } from '../data/psychicMutationsData';
 import { getLanguage } from './i18n';
@@ -1169,6 +1170,10 @@ export class GameEngine {
      * bands in one or two strikes rather than four. That keeps every frequency item live
      * and keeps the four bands reachable instead of collapsing the whole scale onto one.
      */
+    this.antiVectorRounds = this.state.passiveItems.some(
+      (p) => p.id === 'tungsten_rounds' || p.id === 'tungsten_slugs'
+    );
+
     const rawVibration = stats.vibrationBase || 250;
     stats.vibrationBase = Math.max(150, Math.min(880, rawVibration));
     this.vibrationOverflow = Math.max(0, Math.min(600, rawVibration - 880));
@@ -2165,7 +2170,7 @@ export class GameEngine {
           } else {
             // No boss for this wave: transition to wave victory
             this.state.isWaveEnding = true;
-            this.state.waveEndingTimer = 2.4;
+            this.state.waveEndingTimer = 4.2;
             sound.playWaveComplete();
             this.clearEnemyProjectiles();
           }
@@ -2174,7 +2179,7 @@ export class GameEngine {
           const hasBossAlive = this.state.enemies.some((e) => e.isBoss);
           if (!hasBossAlive && !this.state.isWaveEnding) {
             this.state.isWaveEnding = true;
-            this.state.waveEndingTimer = 2.8;
+            this.state.waveEndingTimer = 4.6;
             sound.playWaveComplete();
             this.clearEnemyProjectiles();
             this.state.dnaDrops.forEach((d) => (d.magnetized = true));
@@ -2740,6 +2745,22 @@ export class GameEngine {
    * Spent as strike climb rate rather than discarded. See recalculateStats.
    */
   vibrationOverflow = 0;
+
+  /**
+   * The clearance level this run is played at.
+   *
+   * Captured once when the run starts rather than read per frame, so changing the setting
+   * in the menu never alters a fight already in progress.
+   */
+  readonly difficulty: DifficultyLevel = getActiveDifficulty();
+
+  /**
+   * True while the player carries tungsten armour-piercing ammunition.
+   *
+   * Their whole printed premise is that a vector cannot swat a dense high-calibre core, so
+   * shots fired while they are equipped ignore enemy interception.
+   */
+  antiVectorRounds = false;
 
   private updateVectorArms(dt: number) {
     if (this.state.vectorArms.length === 0) return;
@@ -3862,7 +3883,21 @@ export class GameEngine {
       cd -= dt;
 
       if (cd <= 0) {
+        /*
+         * Mark anti-vector ordnance as it leaves the barrel.
+         *
+         * Done here rather than at each of the several dozen push sites: everything the
+         * weapon added during this call is its output, so the range between the two marks
+         * is exactly the shot.
+         */
+        const projMark = this.state.projectiles.length;
         const fired = this.executeWeapon(weapon);
+        if (fired && (weapon.type === 'sat_anti_vector_laser' || this.antiVectorRounds)) {
+          for (let pi = projMark; pi < this.state.projectiles.length; pi++) {
+            const np = this.state.projectiles[pi];
+            if (np && np.isPlayer) np.antiVector = true;
+          }
+        }
         if (fired) {
           const effectiveCooldown = Math.max(0.1, (weapon.cooldown / atkSpeedMod));
           this.weaponCooldowns.set(weapon.id, effectiveCooldown);
@@ -4885,9 +4920,20 @@ export class GameEngine {
           this.spawnVectorImpact(tgt.x, tgt.y, Math.atan2(tgt.y - pY, tgt.x - pX), true, 'pierce');
         });
 
-        // 8 sweeping radial plasma lasers covering entire arena
-        for (let k = 0; k < 8; k++) {
-          const beamAng = (Math.PI * 2 * k) / 8;
+        /*
+         * Sixteen beams, aimed.
+         *
+         * They used to leave on fixed compass bearings, so with the enemy on one side of
+         * the player most of the volley flew into empty ground and the evolution measured
+         * weaker than the tier 4 it replaces - which sends twelve needles at real targets.
+         * Each beam now takes a target from the list, with a slight spread so a dense rank
+         * is raked rather than drilled in one line.
+         */
+        const beamTargets = targets.length > 0 ? targets : enemiesInRange;
+        for (let k = 0; k < 16; k++) {
+          const tgt = beamTargets[k % Math.max(1, beamTargets.length)];
+          if (!tgt) break;
+          const beamAng = Math.atan2(tgt.y - pY, tgt.x - pX) + (Math.random() - 0.5) * 0.12;
           this.state.projectiles.push({
             id: ++this.projectileIdCounter,
             x: pX,
@@ -5002,11 +5048,13 @@ export class GameEngine {
     // The sweep used to run at 0.78, which measured as eleven of twenty waves costing the
     // player literally no health: the trickle died on the vector perimeter faster than it
     // arrived, so most of a wave was dead air.
-    const phaseRateMult = this.state.assaultPhaseActive ? 1.65 : 0.95;
+    const phaseRateMult = (this.state.assaultPhaseActive ? 1.65 : 0.95) * this.difficulty.densityMult;
     const interval = 1 / (waveConfig.enemySpawnRate * phaseRateMult);
-    const concurrentCap = this.state.assaultPhaseActive
-      ? waveConfig.maxConcurrentEnemies
-      : Math.round(waveConfig.maxConcurrentEnemies * 0.72);
+    const concurrentCap = Math.round(
+      (this.state.assaultPhaseActive
+        ? waveConfig.maxConcurrentEnemies
+        : waveConfig.maxConcurrentEnemies * 0.72) * this.difficulty.densityMult
+    );
 
     if (this.lastEnemySpawn >= interval && this.state.enemies.length < concurrentCap) {
       this.lastEnemySpawn = 0;
@@ -5235,6 +5283,22 @@ export class GameEngine {
           });
         }
         if (b.sinkTimer > 2.6) this.state.patrolBoats.splice(i, 1);
+        continue;
+      }
+
+      /*
+       * A landing craft with nothing left to land withdraws to regroup.
+       *
+       * It keeps its guns quiet on the way out - it is leaving, not covering - and once it
+       * is off the seaward edge it is gone.
+       */
+      if (this.state.isWaveEnding) {
+        b.phase = 'withdrawing';
+        b.x -= 190 * dt;
+        b.heading = approachAngle(b.heading, Math.PI, dt * 1.5);
+        if (b.x < -b.radius * 3) {
+          this.state.patrolBoats.splice(i, 1);
+        }
         continue;
       }
 
@@ -5762,8 +5826,10 @@ export class GameEngine {
 
     // Accelerating durability curve for late-game tension, paired with a much flatter
     // offence curve so late waves stay lethal-but-readable instead of one-shotting.
-    const waveScaling = getEnemyHpScaling(this.state.wave);
-    const dmgScaling = getEnemyDamageScaling(this.state.wave);
+    // Clearance shifts the whole curve rather than any single unit, so the shape of the
+    // campaign is preserved and only the pressure changes.
+    const waveScaling = getEnemyHpScaling(this.state.wave) * this.difficulty.hpMult;
+    const dmgScaling = getEnemyDamageScaling(this.state.wave) * this.difficulty.damageMult;
 
     const lateSpeedBonus = Math.min(18, Math.max(0, (this.state.wave - 4) * 2.0));
     const eliteChance = Math.min(0.38, 0.12 + Math.max(0, this.state.wave - 4) * 0.035);
@@ -6570,8 +6636,9 @@ export class GameEngine {
     };
 
     const spec = BOSS_SPECS[type] || BOSS_SPECS['boss_silpelit_14'];
-    const maxHp = Math.round(spec.baseHp * waveScaling);
-    const maxShield = Math.round(spec.baseShield * waveScaling);
+    // Clearance applies to the boss on the same terms as everything else it fights beside.
+    const maxHp = Math.round(spec.baseHp * waveScaling * this.difficulty.hpMult);
+    const maxShield = Math.round(spec.baseShield * waveScaling * this.difficulty.hpMult);
 
     // Boss damage is NOT multiplied by the durability curve.
     // The roster already encodes its own progression (22 -> 140 base damage across the
@@ -6582,7 +6649,7 @@ export class GameEngine {
     const endlessBossRamp = this.state.wave > FINAL_CAMPAIGN_WAVE
       ? 1 + (this.state.wave - FINAL_CAMPAIGN_WAVE) * 0.06
       : 1;
-    const damage = Math.round(spec.baseDamage * endlessBossRamp);
+    const damage = Math.round(spec.baseDamage * endlessBossRamp * this.difficulty.damageMult);
     const maxVectorGuard = spec.vectorCount && spec.vectorCount > 0
       ? Math.round(350 + waveScaling * 80)
       : 0;
@@ -6671,6 +6738,28 @@ export class GameEngine {
     for (let i = this.state.enemies.length - 1; i >= 0; i--) {
       const e = this.state.enemies[i];
 
+      /*
+       * The wave is over: break contact.
+       *
+       * Reported from play - the last survivors of a cleared wave kept walking into the
+       * vectors, which is the one thing nothing in their situation asks of them. The
+       * objective is gone, no reinforcements are coming, and the standing order was to
+       * contain a specimen, not to feed it. They run, they stop shooting, and once they are
+       * clear of the field they are gone. The player is left to collect drops rather than
+       * to mop up units that have already lost.
+       */
+      if (this.state.isWaveEnding && !e.isBoss) {
+        const away = Math.atan2(e.y - pY, e.x - pX);
+        const fleeSpeed = (e.baseSpeed || e.speed) * 1.45;
+        e.x += Math.cos(away) * fleeSpeed * dt;
+        e.y += Math.sin(away) * fleeSpeed * dt;
+        e.isRouted = true;
+        if (Math.hypot(e.x - pX, e.y - pY) > 1100) {
+          this.state.enemies.splice(i, 1);
+        }
+        continue;
+      }
+
       // Rate limiter for the boss projectile parry, so a boss swats individual shots
       // instead of erasing sustained fire.
       if (e.deflectionCooldown !== undefined && e.deflectionCooldown > 0) {
@@ -6700,6 +6789,8 @@ export class GameEngine {
         const parryReach = (e.vectorReach || 120) * 1.05;
         for (const proj of this.state.projectiles) {
           if (!proj || !proj.isPlayer || proj.isDeflected) continue;
+          // Anti-vector ordnance is not swatted. That is the entire product.
+          if (proj.antiVector) continue;
           const pd = Math.hypot(proj.x - e.x, proj.y - e.y);
           if (pd > parryReach) continue;
 
@@ -7849,7 +7940,23 @@ export class GameEngine {
     } else {
       const armRatio = armCount > 1 ? (index / (armCount - 1)) - 0.5 : 0;
       const spreadAngle = Math.min(Math.PI * 1.5, 0.6 + armCount * 0.1);
-      targetAngle = angleToPlayer + armRatio * spreadAngle + Math.sin(armTime + index * 1.5) * 0.22;
+      const distToPlayer = Math.hypot(this.state.player.x - e.x, this.state.player.y - e.y);
+      if (distToPlayer > vReach * 1.9) {
+        /*
+         * Out of range: the arms hang and drift.
+         *
+         * They used to track the player from anywhere on the map, which made every hostile
+         * Diclonius read as a marionette aimed at the camera. At this distance there is
+         * nothing to aim at, so they coil around the body on their own slow rhythm - and
+         * the moment they swing round to face you is a tell worth reading.
+         */
+        targetAngle =
+          (index / armCount) * Math.PI * 2 +
+          Math.sin(armTime * 0.6 + index * 1.9) * 0.5 +
+          Math.cos(armTime * 0.35 + index) * 0.3;
+      } else {
+        targetAngle = angleToPlayer + armRatio * spreadAngle + Math.sin(armTime + index * 1.5) * 0.22;
+      }
     }
 
     // b) Ease into it. A strike tracks harder than idle drift, but the angular speed is
@@ -8229,6 +8336,7 @@ export class GameEngine {
             enemy.isBoss &&
             enemy.vectorCount &&
             enemy.vectorCount > 0 &&
+            !p.antiVector &&
             !(p.parryCheckedBy && p.parryCheckedBy.includes(enemy.id))
           ) {
             const parryReach = (enemy.vectorReach || 160) * 0.72;
@@ -8263,6 +8371,33 @@ export class GameEngine {
 
           if (dist < enemy.radius + p.radius) {
             this.damageEnemy(enemy, p.damage, p.isDeflected);
+
+            /*
+             * Anti-vector rounds work on the arms, not only the body.
+             *
+             * Each hit takes a bite out of the posture pool the target parries with, and
+             * emptying it shuts the arms down outright for a few seconds. That is the
+             * difference the name promises: against a Diclonius this ammunition opens the
+             * target up, where ordinary fire is simply knocked out of the air.
+             */
+            if (p.antiVector && enemy.vectorCount && enemy.vectorCount > 0) {
+              enemy.vectorGuard = Math.max(0, (enemy.vectorGuard || 0) - p.damage * 0.9);
+              if (enemy.vectorGuard <= 0 && (enemy.vectorsDisabledTimer || 0) <= 0) {
+                enemy.vectorsDisabledTimer = 3.2;
+                enemy.vectorGuard = (enemy.maxVectorGuard || 100) * 0.35;
+                sound.playGuardBreak();
+                this.state.damageNumbers.push({
+                  id: ++this.dmgNumIdCounter,
+                  x: enemy.x,
+                  y: enemy.y - 30,
+                  text: getLanguage() === 'ru' ? 'ВЕКТОРЫ ПОДАВЛЕНЫ' : 'VECTORS DOWN',
+                  color: '#06b6d4',
+                  opacity: 1,
+                  isCrit: true,
+                  vy: -50,
+                });
+              }
+            }
 
             if (p.explosionRadius) {
               this.explodeAt(p.x, p.y, p.explosionRadius, p.damage);
@@ -8509,6 +8644,20 @@ export class GameEngine {
         partner.speed = Math.round(partner.speed * 1.3);
         partner.baseSpeed = partner.speed;
         partner.vectorAttackCooldown = Math.max(1.0, (partner.vectorAttackCooldown || 2.4) * 0.6);
+        /*
+         * It absorbs what is left of its sibling.
+         *
+         * Faster and angrier on 62 HP meant it died to the same volley that killed the
+         * first one, so the banner announced a threat that never arrived. The survivor now
+         * takes the pair's remaining substance: a full heal on a doubled pool, the sibling's
+         * posture, and a longer reach. Killing one twin is supposed to be the harder path.
+         */
+        partner.maxHp = Math.round(partner.maxHp * 2.0);
+        partner.hp = partner.maxHp;
+        partner.maxVectorGuard = Math.round((partner.maxVectorGuard || 98) * 1.6);
+        partner.vectorGuard = partner.maxVectorGuard;
+        partner.vectorReach = Math.round((partner.vectorReach || 104) * 1.25);
+        partner.hornsRemaining = Math.max(partner.hornsRemaining || 0, 2);
         partner.name = `${loc('[ЯРОСТЬ]', '[FURY]')} ${partner.name}`;
         this.state.damageNumbers.push({
           id: ++this.dmgNumIdCounter,
@@ -9223,7 +9372,17 @@ export class GameEngine {
   private bankRunProgress(won: boolean) {
     const unbanked = Math.max(0, this.state.totalDnaCollected - this.bankedDnaSnapshot);
     this.bankedDnaSnapshot = this.state.totalDnaCollected;
-    recordRunCompleted(won, this.state.wave, this.state.kills, unbanked, this.state.character.id, this.state.maxKillStreak);
+    recordRunCompleted(
+      won,
+      this.state.wave,
+      this.state.kills,
+      unbanked,
+      this.state.character.id,
+      this.state.maxKillStreak,
+      this.difficulty.rewardMult
+    );
+    // A win opens the next clearance level.
+    if (won) recordDifficultyCleared(this.difficulty.level);
   }
 
   private finishWave() {

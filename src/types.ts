@@ -295,7 +295,7 @@ export interface PatrolBoat {
   /** How far up the beach the bow is aiming; the boat stops short of it, in the shallows. */
   targetX: number;
   targetY: number;
-  phase: 'approaching' | 'unloading' | 'covering' | 'sinking';
+  phase: 'approaching' | 'unloading' | 'covering' | 'sinking' | 'withdrawing';
   timer: number;
   hp: number;
   maxHp: number;
@@ -359,6 +359,13 @@ export interface VectorTelegraph {
 }
 
 export interface Enemy {
+  /**
+   * Withdrawing from a wave that is already decided.
+   *
+   * Set once the wave ends. A routed unit runs, does not attack, and despawns when it is
+   * clear of the field.
+   */
+  isRouted?: boolean;
   id: number;
   type:
     | 'sat_grunt'
@@ -529,6 +536,14 @@ export interface Enemy {
 }
 
 export interface Projectile {
+  /**
+   * Passes through vector interception instead of being batted aside.
+   *
+   * Set for the SAT anti-vector laser and for tungsten armour-piercing rounds. A Diclonius
+   * deflects a pistol round without looking; a dense high-calibre core is the answer the
+   * institute developed for that, and the item text has always said so.
+   */
+  antiVector?: boolean;
   id: number;
   x: number;
   y: number;

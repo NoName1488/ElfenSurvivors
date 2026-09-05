@@ -3,6 +3,12 @@ import { Character } from '../types';
 import { CHARACTERS, WEAPONS_DATABASE } from '../data/gameData';
 import { sound } from '../utils/sound';
 import { getTotalWins, isCharacterUnlocked, CHARACTER_UNLOCK_REQUIREMENTS } from '../utils/progression';
+import {
+  DIFFICULTY_LEVELS,
+  getSelectedDifficulty,
+  setSelectedDifficulty,
+  getMaxUnlockedDifficulty,
+} from '../utils/difficulty';
 import { useLanguage } from '../utils/i18n';
 import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
@@ -35,6 +41,9 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
   const [selectedId, setSelectedId] = useState<string>(CHARACTERS[0].id);
   const [showAudioModal, setShowAudioModal] = useState<boolean>(false);
   const [showMetaModal, setShowMetaModal] = useState<boolean>(false);
+  const [difficulty, setDifficulty] = useState<number>(() => getSelectedDifficulty());
+  const maxDifficulty = getMaxUnlockedDifficulty();
+  const activeDifficulty = DIFFICULTY_LEVELS.find((d) => d.level === difficulty) || DIFFICULTY_LEVELS[1];
   const totalWins = getTotalWins();
 
   const selectedChar = CHARACTERS.find((c) => c.id === selectedId) || CHARACTERS[0];
@@ -140,10 +149,57 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
             <span>{t('winsCount')}: {totalWins}</span>
           </div>
 
-          {/* Hardcore Level */}
-          <div className="hidden lg:flex flex-col text-right">
-            <span className="text-2xs uppercase tracking-[0.2em] text-gray-500">{t('securityProtocol')}</span>
-            <span className="text-xs font-mono text-red-400">{t('hardcoreLvl')}</span>
+          {/*
+            * Containment clearance.
+            *
+            * This slot used to print "LEVEL 5 (HARDCORE)" as decoration, with no other
+            * levels behind it and no mechanical effect at all. It is a real ladder now:
+            * level 2 is the tuned baseline, level 1 sits below it for a first run, and each
+            * level above opens only by finishing a campaign on the one below.
+            */}
+          <div className="flex flex-col gap-1">
+            <span className="text-2xs uppercase tracking-[0.2em] text-gray-500">
+              {t('securityProtocol')}
+            </span>
+            <div className="flex items-center gap-1">
+              {DIFFICULTY_LEVELS.map((d) => {
+                const unlocked = d.level <= maxDifficulty;
+                const active = d.level === difficulty;
+                return (
+                  <button
+                    key={d.level}
+                    disabled={!unlocked}
+                    onClick={() => {
+                      sound.playUiClick();
+                      setSelectedDifficulty(d.level);
+                      setDifficulty(d.level);
+                    }}
+                    title={
+                      unlocked
+                        ? `${d.level}. ${isRu ? d.ru : d.en}\n${isRu ? d.descriptionRu : d.descriptionEn}\n` +
+                          `${isRu ? 'ОЗ врагов' : 'Enemy HP'} x${d.hpMult} · ${isRu ? 'Урон' : 'Damage'} x${d.damageMult} · ` +
+                          `${isRu ? 'Плотность' : 'Density'} x${d.densityMult} · ${isRu ? 'Награда НИИ' : 'Research DNA'} x${d.rewardMult}`
+                        : isRu
+                        ? `Закрыто. Пройдите кампанию на уровне ${d.level - 1}.`
+                        : `Locked. Finish a campaign on level ${d.level - 1}.`
+                    }
+                    className={`w-7 h-7 rounded font-mono text-xs font-black border transition-all ${
+                      active
+                        ? 'text-black shadow-md scale-105'
+                        : unlocked
+                        ? 'bg-black/40 border-white/15 text-gray-300 hover:border-white/40 cursor-pointer'
+                        : 'bg-black/60 border-white/5 text-gray-700 cursor-not-allowed'
+                    }`}
+                    style={active ? { backgroundColor: d.color, borderColor: d.color } : undefined}
+                  >
+                    {unlocked ? d.level : <Lock className="w-3 h-3 mx-auto" />}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="text-2xs font-mono font-bold" style={{ color: activeDifficulty.color }}>
+              {activeDifficulty.level}. {isRu ? activeDifficulty.ru : activeDifficulty.en}
+            </span>
           </div>
 
           {/* Lab Research & Meta-Progression Button */}

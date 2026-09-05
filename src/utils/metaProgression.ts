@@ -420,10 +420,18 @@ export function recordRunCompleted(
   kills: number,
   totalDnaCollected: number,
   characterId: string,
-  maxKillStreak: number
+  maxKillStreak: number,
+  /**
+   * Multiplier from the run's containment clearance.
+   *
+   * The whole reason to climb the ladder: a harder run banks proportionally more permanent
+   * research DNA, so choosing a higher clearance is the fast route through meta progression
+   * rather than a difficulty badge you pay for.
+   */
+  rewardMult: number = 1
 ): void {
   // Bank 15% of run DNA + victory bonus into permanent Institute Research DNA
-  const bankReward = Math.max(10, Math.round(totalDnaCollected * 0.15) + (won ? 50 : 0));
+  const bankReward = Math.max(10, Math.round((totalDnaCollected * 0.15 + (won ? 50 : 0)) * rewardMult));
   addMetaDna(bankReward);
 
   if (kills > 0) {
