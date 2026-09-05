@@ -72,6 +72,8 @@ export const LabShop: React.FC<LabShopProps> = ({
   const [purchaseCounts, setPurchaseCounts] = useState<Record<string, number>>({});
   const [statChoices, setStatChoices] = useState<StatUpgradeOption[]>([]);
   const [currentDna, setCurrentDna] = useState<number>(engine.state.player.dna);
+  // Sales made since this shop opened. Drives the refund penalty; resets with the component.
+  const [soldThisVisit, setSoldThisVisit] = useState<number>(0);
   const [levelUpTab, setLevelUpTab] = useState<'stats' | 'mutation_tree'>('stats');
   const [showShopMutationModal, setShowShopMutationModal] = useState<boolean>(false);
   const [showAudioModal, setShowAudioModal] = useState<boolean>(false);
@@ -392,13 +394,52 @@ export const LabShop: React.FC<LabShopProps> = ({
     setShopItems((prev) => prev.filter((i) => i.id !== item.id));
   };
 
+  /*
+   * Selling, and what it costs.
+   *
+   * Being able to sell is what makes a build recoverable: a bad early pick should not decide
+   * the run. Being able to sell *cheaply* is what makes builds meaningless, because the
+   * optimal play becomes tearing the whole inventory down every wave and rebuying into
+   * whatever the shop happens to offer.
+   *
+   * So the rate decays within a visit. The first sale is a correction and is priced like
+   * one; the fifth is a teardown and is priced like one. It resets each time the shop opens,
+   * so the pressure is against wholesale rebuilding, not against ever changing your mind.
+   */
+  const REFUND_BASE = 0.6;
+  const REFUND_STEP = 0.1;
+  const REFUND_FLOOR = 0.25;
+
+  const refundRate = (soldSoFar: number) =>
+    Math.max(REFUND_FLOOR, REFUND_BASE - soldSoFar * REFUND_STEP);
+
+  /** What a weapon is worth, before the penalty. Tier is most of an item's value. */
+  const weaponValue = (w: { cost: number; tier: number }) =>
+    w.cost * (1 + (w.tier - 1) * 0.5);
+
+  const passiveValue = (pi: { cost: number; tier?: number }) =>
+    pi.cost * (1 + ((pi.tier || 1) - 1) * 0.5);
+
   const recycleWeapon = (weaponId: string) => {
     const w = engine.state.weapons.find((w) => w.id === weaponId);
     if (!w) return;
-    const refund = Math.round(w.cost * (1 + (w.tier - 1) * 0.5) * 0.7);
+    const refund = Math.round(weaponValue(w) * refundRate(soldThisVisit));
     engine.state.player.dna += refund;
     setCurrentDna(engine.state.player.dna);
+    setSoldThisVisit((n) => n + 1);
     engine.state.weapons = engine.state.weapons.filter((w) => w.id !== weaponId);
+    sound.playUiClick();
+    engine.recalculateStats();
+  };
+
+  const sellPassive = (index: number) => {
+    const pi = engine.state.passiveItems[index];
+    if (!pi) return;
+    const refund = Math.round(passiveValue(pi) * refundRate(soldThisVisit));
+    engine.state.player.dna += refund;
+    setCurrentDna(engine.state.player.dna);
+    setSoldThisVisit((n) => n + 1);
+    engine.state.passiveItems = engine.state.passiveItems.filter((_, i) => i !== index);
     sound.playUiClick();
     engine.recalculateStats();
   };
@@ -922,10 +963,13 @@ export const LabShop: React.FC<LabShopProps> = ({
 
                       <button
                         onClick={() => recycleWeapon(w.id)}
-                        className="p-1.5 rounded glass-panel hover:bg-red-950/50 hover:text-red-400 text-gray-400 transition-colors cursor-pointer"
-                        title={t('recycleForDna', { amount: Math.round(w.cost * (1 + (w.tier - 1) * 0.5) * 0.7) })}
+                        className="px-2 py-1.5 rounded glass-panel hover:bg-red-950/50 hover:text-red-400 text-gray-400 transition-colors cursor-pointer flex items-center gap-1 text-2xs font-mono font-bold"
+                        title={isRu
+                          ? `Продать за ${Math.round(weaponValue(w) * refundRate(soldThisVisit))} ДНК (возврат ${Math.round(refundRate(soldThisVisit) * 100)}%). Каждая следующая продажа за визит дешевле.`
+                          : `Sell for ${Math.round(weaponValue(w) * refundRate(soldThisVisit))} DNA (${Math.round(refundRate(soldThisVisit) * 100)}% back). Every further sale this visit returns less.`}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
+                        <span>{Math.round(weaponValue(w) * refundRate(soldThisVisit))}</span>
                       </button>
                     </div>
 
@@ -984,8 +1028,23 @@ export const LabShop: React.FC<LabShopProps> = ({
                     />
                     <span className="truncate max-w-[110px]">{isRu ? p.russianName : p.name}</span>
                     <span className="text-amber-400 font-bold">T{p.tier || 1}</span>
+                    <button
+                      onClick={() => sellPassive(idx)}
+                      className="ml-0.5 p-0.5 rounded text-gray-500 hover:text-red-400 hover:bg-red-950/40 transition-colors cursor-pointer"
+                      title={isRu
+                        ? `Продать за ${Math.round(passiveValue(p) * refundRate(soldThisVisit))} ДНК (возврат ${Math.round(refundRate(soldThisVisit) * 100)}%)`
+                        : `Sell for ${Math.round(passiveValue(p) * refundRate(soldThisVisit))} DNA (${Math.round(refundRate(soldThisVisit) * 100)}% back)`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
                   </div>
                 ))}
+              </div>
+              {/* The rate is the whole mechanic, so it is stated rather than discovered. */}
+              <div className="text-2xs font-mono text-gray-500 leading-snug">
+                {isRu
+                  ? `Возврат при продаже: ${Math.round(refundRate(soldThisVisit) * 100)}%. Каждая продажа за визит снижает его на 10%, минимум 25%. Сбрасывается на следующей волне.`
+                  : `Sell-back rate: ${Math.round(refundRate(soldThisVisit) * 100)}%. Each sale this visit lowers it by 10%, floor 25%. Resets next wave.`}
               </div>
             </div>
           )}

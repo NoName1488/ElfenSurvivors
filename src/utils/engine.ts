@@ -3186,7 +3186,20 @@ export class GameEngine {
           // Base independent vector unit damage (scaled cleanly by psi power with soft cap and character state)
           const psiEff = effectivePsi(this.state.stats.psiPower);
           const charBonus = psiMultiplier / Math.max(0.1, 1 + this.state.stats.psiPower / 100);
-          const baseDmg = (13 + psiEff * 0.22) * (1 + psiEff / 100) * charBonus;
+          /*
+           * Vectors are a scalpel, not a lawnmower.
+           *
+           * Measured: standing perfectly still at level 1, Lucy took her first damage at 41
+           * seconds and killed 79 enemies without an input; by wave 3 she finished a minute
+           * untouched with 156 kills. Bando, who has no vectors, was hit at 8 seconds and
+           * dead at 23. The vectors were playing the game on the player's behalf.
+           *
+           * In the source her power is precision and lethality against a person, and she has
+           * the SHORTEST reach of any Diclonius with the best control. So the arms keep their
+           * ability to kill what they touch and lose their ability to hold a perimeter alone;
+           * clearing a crowd is what the weapons you buy are for.
+           */
+          const baseDmg = (9 + psiEff * 0.15) * (1 + psiEff / 100) * charBonus;
           const isCrit = Math.random() < (this.state.stats.critChance / 100);
           let finalDmg = isCrit ? baseDmg * this.state.stats.critDamage : baseDmg;
 
@@ -3585,7 +3598,9 @@ export class GameEngine {
           if (this.hasMutation('nyu_dual_psyche') && this.state.player.hp < this.state.player.maxHp * 0.5) cadenceMultiplier *= 0.5;
 
           const isBossDuel = nearbyEnemies.some((e) => e.isBoss);
-          const baseCadence = (isBossDuel ? (totalArmCount > 10 ? 0.35 : 0.25) : (totalArmCount > 10 ? 0.75 : 0.42)) * cadenceMultiplier;
+          // Slower against rank and file, unchanged in a duel: the arms should still feel
+          // decisive against a single dangerous target, which is what they are for.
+          const baseCadence = (isBossDuel ? (totalArmCount > 10 ? 0.35 : 0.25) : (totalArmCount > 10 ? 1.05 : 0.62)) * cadenceMultiplier;
           arm.attackCooldown = (baseCadence / atkSpeedMod) * (0.8 + Math.random() * 0.4);
         } else if (this.state.patrolBoats && this.state.patrolBoats.some((b) => b.phase !== 'sinking' && Math.hypot(b.x - pX, b.y - pY) <= maxEngageDistance * 1.3)) {
           /*
