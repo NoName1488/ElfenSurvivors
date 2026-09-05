@@ -1079,6 +1079,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
   );
 };
 
+/**
+ * The ground a tank shell is about to land on.
+ *
+ * Drawn as a filling circle rather than a line, because what the player needs to know is
+ * which ground to not be standing on, and for how long.
+ */
+function drawCannonMark(ctx: CanvasRenderingContext2D, x: number, y: number, progress: number) {
+  ctx.save();
+  ctx.globalAlpha = 0.25 + progress * 0.5;
+  ctx.strokeStyle = '#f97316';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(x, y, 80, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(249, 115, 22, 0.12)';
+  ctx.beginPath();
+  ctx.arc(x, y, 80 * progress, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 // Draw distinct atmospheric arena backgrounds
 function drawArenaFloor(ctx: CanvasRenderingContext2D, width: number, height: number, arena?: ArenaType) {
   if (arena === 'enoshima_coast') {
@@ -1958,6 +1979,17 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     }
   }
 
+  /*
+   * 6.4. Tank main gun: the ground the shell is coming down on.
+   *
+   * Drawn in world space with the other hazards so it scrolls with the arena, and drawn
+   * before them so a mortar warning on the same ground still reads on top.
+   */
+  for (const e of s.enemies) {
+    if (e.type !== 'sat_tank' || !e.aimLaser) continue;
+    drawCannonMark(ctx, e.aimLaser.x, e.aimLaser.y, e.aimLaser.progress || 0);
+  }
+
   // 6.5. Draw Tactical Artillery Hazard Zones (Warning crosshairs, expanding countdown rings)
   if (s.artilleryHazards && s.artilleryHazards.length > 0) {
     for (const h of s.artilleryHazards) {
@@ -2126,6 +2158,85 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     if (drawSprite(ctx, `enemy_${enemy.type}`, enemy.x, enemy.y, enemy.radius, facingLeft)) {
       // Sprite drawn; skip the primitive body but keep every overlay below it (health bars,
       // status plates, vector arms), which are drawn elsewhere and are not cosmetic.
+    } else if (enemy.type === 'sat_apc' || enemy.type === 'sat_tank') {
+      /*
+       * Armoured vehicles.
+       *
+       * Drawn as a hull that points where it is going with a turret that points at the
+       * player, because that separation is the readable part: the turret tracking you while
+       * the hull is still turning is the tell that the gun is about to go off.
+       */
+      const isTank = enemy.type === 'sat_tank';
+      const hullAngle = Math.atan2(enemy.trackVy || 0, enemy.trackVx || 1);
+      const L = enemy.radius * (isTank ? 1.75 : 1.6);
+      const W = enemy.radius * (isTank ? 1.05 : 1.0);
+
+      ctx.save();
+      ctx.translate(enemy.x, enemy.y);
+      ctx.rotate(hullAngle);
+
+      // Tracks
+      ctx.fillStyle = '#15181a';
+      ctx.fillRect(-L / 2, -W - 3, L, 6);
+      ctx.fillRect(-L / 2, W - 3, L, 6);
+      ctx.strokeStyle = '#2b3033';
+      ctx.lineWidth = 1;
+      for (let t = -L / 2; t < L / 2; t += 7) {
+        ctx.beginPath();
+        ctx.moveTo(t, -W - 3);
+        ctx.lineTo(t, -W + 3);
+        ctx.moveTo(t, W - 3);
+        ctx.lineTo(t, W + 3);
+        ctx.stroke();
+      }
+
+      // Hull
+      ctx.fillStyle = enemy.color || '#3f4a3a';
+      ctx.fillRect(-L / 2, -W, L, W * 2);
+      ctx.strokeStyle = '#1c2320';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-L / 2, -W, L, W * 2);
+      // Sloped glacis, so the front reads as the front.
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.beginPath();
+      ctx.moveTo(L / 2, -W);
+      ctx.lineTo(L / 2 - 9, -W);
+      ctx.lineTo(L / 2 - 9, W);
+      ctx.lineTo(L / 2, W);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // Turret, tracking the player independently of the hull.
+      ctx.save();
+      ctx.translate(enemy.x, enemy.y);
+      ctx.rotate(facingAngle);
+      ctx.fillStyle = isTank ? '#2f3728' : '#333c30';
+      ctx.beginPath();
+      ctx.arc(0, 0, enemy.radius * 0.52, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#161b14';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // Barrel
+      ctx.fillStyle = '#20261c';
+      const barrelLen = isTank ? enemy.radius * 1.5 : enemy.radius * 0.95;
+      const barrelW = isTank ? 6 : 3.5;
+      ctx.fillRect(0, -barrelW / 2, barrelLen, barrelW);
+      ctx.restore();
+
+      // The gun charging is the single most important thing on screen while it happens.
+      if (isTank && (enemy.cannonTelegraph || 0) > 0) {
+        const charge = 1 - (enemy.cannonTelegraph || 0) / 1.5;
+        ctx.save();
+        ctx.globalAlpha = 0.35 + charge * 0.45;
+        ctx.strokeStyle = '#f97316';
+        ctx.lineWidth = 2 + charge * 2;
+        ctx.beginPath();
+        ctx.arc(enemy.x, enemy.y, enemy.radius + 8 + charge * 6, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
     } else if (enemy.type === 'riot_shield') {
       // Riot Shield: Heavy armored core + Frontal Shield Plate with viewport & hazard stripes
       ctx.fillStyle = '#1e293b';

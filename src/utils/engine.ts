@@ -273,6 +273,8 @@ const UNIT_NAMES_EN: Record<string, string> = {
   assault_drone: 'Liquidator Drone',
   sat_sniper: 'SAT Marksman',
   emp_disruptor: 'Saseba Vector Canceller',
+  sat_apc: 'SAT Armoured Transport',
+  sat_tank: 'SAT Assault Gun',
   silpelit_clone: 'Silpelit Clone',
   silpelit_duelist: 'Silpelit Duelist No.27',
   silpelit_lancer: 'Silpelit Lancer No.30',
@@ -295,10 +297,10 @@ const UNIT_NAMES_EN: Record<string, string> = {
   boss_lucy_clone_alpha: 'Lucy Clone: Alpha',
   boss_mariko_berserk: 'Mariko No.35 (Absolute Berserk)',
   boss_kakuzawa: 'Director Kakuzawa: Race Maker',
-  boss_goliath_mech: 'SAT Battle Mech "Goliath"',
+  boss_goliath_mech: 'SAT Assault Breaching Vehicle',
   boss_silpelit_archon: 'Silpelit No.42',
   boss_dual_silpelit_prime: 'Dual Silpelit Prime (DNA Resonance)',
-  boss_leviathan_gunship: 'Airborne Dreadnought "Leviathan"',
+  boss_leviathan_gunship: 'SAT Attack Helicopter',
   boss_primordial_singularity: 'Primordial Diclonius Singularity',
 };
 
@@ -5321,6 +5323,13 @@ export class GameEngine {
 
     const weights = roster.map((t) => {
       switch (t) {
+        // Vehicles are an event, not filler. One in roughly ten arrivals for a transport,
+        // one in twenty for an assault gun: enough that the wave has armour in it, few
+        // enough that the arena never turns into a car park.
+        case 'sat_apc':
+          return 0.5;
+        case 'sat_tank':
+          return 0.25;
         case 'silpelit_duelist':
         case 'silpelit_lancer':
         case 'silpelit_twin':
@@ -6132,6 +6141,61 @@ export class GameEngine {
         };
         break;
 
+      /*
+       * ARMOURED TRANSPORT - a section of infantry with a gun bolted to the roof.
+       *
+       * It drives to the cordon and unloads. That makes it the one unit where killing the
+       * carrier is worth more than killing what it carries: put it down on the approach and
+       * the men inside never reach the ground.
+       */
+      case 'sat_apc':
+        enemyData = {
+          ...enemyData,
+          hp: 320 * waveScaling,
+          maxHp: 320 * waveScaling,
+          speed: 58 + lateSpeedBonus * 0.2,
+          damage: 18 * dmgScaling,
+          radius: 30,
+          color: '#3f4a3a',
+          name: 'БТР SAT «Тип 82»',
+          scoreValue: 22,
+          dnaDrop: 14,
+          isHeavyMass: true,
+          isArmoured: true,
+          troopsAboard: 3,
+          shootCooldown: 1.5,
+          lastShoot: 0,
+        };
+        break;
+
+      /*
+       * ASSAULT GUN - the answer to a player who has stopped needing to move.
+       *
+       * The main gun telegraphs for a second and a half and then puts a shell into the
+       * ground where you were standing. The hull takes a third from anything that has to
+       * cut through it, so the counters are to leave the marked ground, to work round the
+       * flank, or to drop the vectors into the phase band and go straight through the plate.
+       */
+      case 'sat_tank':
+        enemyData = {
+          ...enemyData,
+          hp: 900 * waveScaling,
+          maxHp: 900 * waveScaling,
+          speed: 34 + lateSpeedBonus * 0.15,
+          damage: 46 * dmgScaling,
+          radius: 38,
+          color: '#37402f',
+          name: 'Штурмовое орудие SAT',
+          scoreValue: 40,
+          dnaDrop: 26,
+          isHeavyMass: true,
+          isArmoured: true,
+          shootCooldown: 2.6,
+          lastShoot: 0,
+          cannonTelegraph: 0,
+        };
+        break;
+
       case 'riot_shield':
         enemyData = {
           ...enemyData,
@@ -6680,9 +6744,9 @@ export class GameEngine {
       boss_bando: {
         name: 'Киборг Бандо (Командир SAT)',
         color: '#0284c7',
-        baseHp: 6800,
-        baseShield: 2600,
-        baseDamage: 36,
+        baseHp: 9200,
+        baseShield: 3400,
+        baseDamage: 44,
         speed: 95,
         radius: 32,
         vectorCount: 0,
@@ -7847,6 +7911,105 @@ export class GameEngine {
                 this.damagePlayer(Math.round(e.damage * 0.4));
                 sound.playVectorSlash();
               }
+            } else if (e.type === 'boss_bando') {
+              /*
+               * Bando's arsenal.
+               *
+               * He was firing the same two rockets as a helicopter gunship, which made the
+               * one human boss in the game the least interesting fight in it. He is a man
+               * rebuilt specifically to take a Diclonius alive, and he should read that way:
+               * a rotating loadout with a restraint half and a killing half.
+               *
+               * Which half he uses is the doctrine again. While the institute still wants
+               * the specimen recovered he leads with nets and gas - things that hold. Once
+               * the recovery order is rescinded he stops trying to catch her.
+               */
+              const lethal = this.state.threatLevel >= 0.62 || e.isEnraged;
+              e.bandoSalvo = ((e.bandoSalvo || 0) + 1) % 4;
+              const shot = e.bandoSalvo;
+
+              if (shot === 0 || (shot === 2 && lethal)) {
+                // Micro-missile salvo from the shoulder block. Five, fanned.
+                sound.playHelicopterMinigun();
+                this.triggerScreenShake(10, 0.35);
+                for (let r = -2; r <= 2; r++) {
+                  const rAngle = angle + r * 0.16;
+                  this.state.projectiles.push({
+                    id: ++this.projectileIdCounter,
+                    x: e.x, y: e.y,
+                    vx: Math.cos(rAngle) * 300,
+                    vy: Math.sin(rAngle) * 300,
+                    radius: 6,
+                    damage: Math.round(e.damage * (lethal ? 0.55 : 0.35)),
+                    isPlayer: false,
+                    color: '#f97316',
+                    life: 2.4, maxLife: 2.4,
+                    penetration: 1,
+                    isRocket: true,
+                    explosionRadius: 52,
+                  });
+                }
+              } else if (shot === 1) {
+                // Taser net. The restraint tool: it binds an arm rather than doing damage,
+                // which is the whole point of the man.
+                sound.playLaser();
+                this.state.projectiles.push({
+                  id: ++this.projectileIdCounter,
+                  x: e.x, y: e.y,
+                  vx: Math.cos(angle) * 420,
+                  vy: Math.sin(angle) * 420,
+                  radius: 11,
+                  damage: Math.round(e.damage * 0.2),
+                  isPlayer: false,
+                  color: '#22d3ee',
+                  life: 2.0, maxLife: 2.0,
+                  penetration: 1,
+                  isNetTrap: true,
+                });
+              } else if (shot === 2) {
+                // Shotgun rush: he closes the distance and empties a barrel into the gap.
+                sound.playShotgun();
+                this.triggerScreenShake(9, 0.3);
+                const rush = Math.min(210, dist * 0.65);
+                e.x += Math.cos(angle) * rush;
+                e.y += Math.sin(angle) * rush;
+                for (let pel = 0; pel < 9; pel++) {
+                  const pa = angle + (Math.random() - 0.5) * 0.55;
+                  this.state.projectiles.push({
+                    id: ++this.projectileIdCounter,
+                    x: e.x, y: e.y,
+                    vx: Math.cos(pa) * 520,
+                    vy: Math.sin(pa) * 520,
+                    radius: 4,
+                    damage: Math.round(e.damage * 0.22),
+                    isPlayer: false,
+                    color: '#fbbf24',
+                    life: 0.55, maxLife: 0.55,
+                    penetration: 1,
+                    isBullet: true,
+                  });
+                }
+              } else {
+                // Ultrasonic emitter. Straight out of the counter-Diclonius kit: it does not
+                // hurt, it takes the vectors away, and it is the scariest thing he owns.
+                sound.playLaser();
+                this.triggerScreenShake(6, 0.25);
+                this.state.particles.push({
+                  x: e.x, y: e.y, vx: 0, vy: 0,
+                  life: 0.55, maxLife: 0.55, size: 300,
+                  color: '#06b6d4', alpha: 0.85, type: 'psychic_ring',
+                });
+                if (dist <= 300) {
+                  this.state.player.vectorSuppressedTimer = lethal ? 3.4 : 2.2;
+                  this.state.player.vectorSuppressedMax = this.state.player.vectorSuppressedTimer;
+                  this.state.damageNumbers.push({
+                    id: ++this.dmgNumIdCounter,
+                    x: pX, y: pY - 30,
+                    text: loc('УЛЬТРАЗВУК: ВЕКТОРЫ СБИТЫ', 'ULTRASOUND: VECTORS DISRUPTED'),
+                    color: '#06b6d4', opacity: 1, isCrit: true, vy: -46,
+                  });
+                }
+              }
             } else if (e.specialAbility === 'heavy_arsenal') {
               sound.playHelicopterMinigun();
               this.triggerScreenShake(8, 0.3);
@@ -7994,6 +8157,9 @@ export class GameEngine {
         !e.isBoss &&
         !e.isRouted &&
         !isDiclonius(e.type) &&
+        // Bounding is something a man does. A vehicle has its own reason to stop or move.
+        e.type !== 'sat_apc' &&
+        e.type !== 'sat_tank' &&
         e.shootCooldown !== undefined;
       e.isBounding = canBound && e.boundGroup === this.state.boundingPhase;
       const isCovering = canBound && !e.isBounding;
@@ -8008,6 +8174,10 @@ export class GameEngine {
         // way available to him - he is standing in front of the man who is shooting. Putting
         // him on the cordon ring instead would take him away from the gun he exists to cover.
         e.type !== 'riot_shield' &&
+        // Vehicles hold their own ground on their own terms. A transport unloads and a gun
+        // shells; neither joins a cordon of riflemen.
+        e.type !== 'sat_apc' &&
+        e.type !== 'sat_tank' &&
         !(e.squadId && !e.squadBroken) &&
         this.state.threatLevel < 0.62;
 
@@ -8231,6 +8401,69 @@ export class GameEngine {
           const strafeAng = angle + Math.PI * 0.5 * (e.id % 2 === 0 ? 1 : -1);
           e.x += Math.cos(strafeAng) * moveSpeed * 0.5 * dt;
           e.y += Math.sin(strafeAng) * moveSpeed * 0.5 * dt;
+        }
+      } else if (e.type === 'sat_apc') {
+        /*
+         * Drives to the line, drops its section, stays as a firing point.
+         *
+         * It halts a little outside the cordon rather than driving into the vectors, which
+         * is both what a transport does and what keeps it alive long enough to matter.
+         */
+        const apcHold = this.satEngagementRange() + 120;
+        if (dist > apcHold) {
+          e.x += Math.cos(angle) * moveSpeed * dt;
+          e.y += Math.sin(angle) * moveSpeed * dt;
+        } else if ((e.troopsAboard || 0) > 0) {
+          e.troopsAboard = (e.troopsAboard || 0) - 1;
+          const dropAngle = angle + Math.PI + (Math.random() - 0.5) * 1.2;
+          this.spawnEnemy(
+            Math.random() < 0.4 ? 'sat_shotgunner' : 'sat_grunt',
+            e.x + Math.cos(dropAngle) * (e.radius + 14),
+            e.y + Math.sin(dropAngle) * (e.radius + 14)
+          );
+          sound.playMetalClank();
+        } else {
+          const orbit = angle + Math.PI * 0.5 * (e.id % 2 === 0 ? 1 : -1);
+          e.x += Math.cos(orbit) * moveSpeed * 0.4 * dt;
+          e.y += Math.sin(orbit) * moveSpeed * 0.4 * dt;
+        }
+      } else if (e.type === 'sat_tank') {
+        /*
+         * Holds its own ground and shells yours.
+         *
+         * It closes only to the edge of its own gun's useful range and then stops, so the
+         * fight is about the marked circle rather than about outrunning it - it could never
+         * outrun anybody anyway.
+         */
+        const tankHold = this.satEngagementRange() + 220;
+        if (dist > tankHold) {
+          e.x += Math.cos(angle) * moveSpeed * dt;
+          e.y += Math.sin(angle) * moveSpeed * dt;
+        } else if (dist < tankHold * 0.55) {
+          e.x -= Math.cos(angle) * moveSpeed * 0.7 * dt;
+          e.y -= Math.sin(angle) * moveSpeed * 0.7 * dt;
+        }
+
+        // The gun. A telegraph the player can leave, then a shell into the marked ground.
+        e.cannonTelegraph = (e.cannonTelegraph || 0) - dt;
+        if ((e.cannonTelegraph || 0) <= -3.4) {
+          e.cannonTelegraph = 1.5;
+          e.aimLaser = { x: pX, y: pY, progress: 0 };
+          sound.playRadioAlert();
+        } else if ((e.cannonTelegraph || 0) > 0) {
+          e.aimLaser = {
+            x: e.aimLaser?.x ?? pX,
+            y: e.aimLaser?.y ?? pY,
+            progress: 1 - (e.cannonTelegraph || 0) / 1.5,
+          };
+          if ((e.cannonTelegraph || 0) - dt <= 0 && e.aimLaser) {
+            const shellX = e.aimLaser.x;
+            const shellY = e.aimLaser.y;
+            e.aimLaser = undefined;
+            this.explodeAt(shellX, shellY, 80, e.damage * 1.15);
+            this.triggerScreenShake(15, 0.5);
+            sound.playExplosion();
+          }
         }
       } else if (e.type === 'riot_shield') {
         /*
@@ -9066,6 +9299,18 @@ export class GameEngine {
     // shield bearers and kinetic-shield elites, and it is wasted on an unarmoured swarm.
     if (enemy.eliteAffix === 'armored' && !phasing) {
       finalDamage = Math.max(1, Math.round(finalDamage * 0.7)); // 30% ballistic armor mitigation
+    }
+
+    /*
+     * Plate.
+     *
+     * Anything that has to cut, crush or burn its way through armour lands for a third. A
+     * phase-frequency vector does not interact with the plate at all, so it is unaffected -
+     * which is exactly what the phase band is for and, until there was armour in the game,
+     * nothing rewarded.
+     */
+    if (enemy.isArmoured && !phasing) {
+      finalDamage = Math.max(1, Math.round(finalDamage * 0.42));
     }
 
     if (enemy.shield && enemy.shield > 0 && !phasing) {

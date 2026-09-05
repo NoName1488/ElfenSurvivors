@@ -382,6 +382,24 @@ export interface Enemy {
    */
   isContained?: boolean;
 
+  /**
+   * Steel, and what gets through it.
+   *
+   * An armoured hull takes a fraction of any strike that has to cut or crush its way in.
+   * A vector at phase frequency passes through the plate without interacting with it, which
+   * is the canon behaviour of a low-frequency vector and the first thing in the game that
+   * makes building the frequency scale downward worth doing.
+   */
+  isArmoured?: boolean;
+
+  /** Seconds until the main gun fires. While positive the barrel is visibly tracking. */
+  cannonTelegraph?: number;
+  /** Troops still aboard a transport. */
+  troopsAboard?: number;
+
+  /** Which weapon Bando reaches for next. Cycles so the fight has a readable rhythm. */
+  bandoSalvo?: number;
+
   /** For a riot shield: the id of the shooter it is currently covering. */
   escortTargetId?: number;
 
@@ -406,6 +424,8 @@ export interface Enemy {
     | 'sat_sniper'
     | 'sat_anti_vector_infiltrator'
     | 'sat_heavy_commando'
+    | 'sat_apc'
+    | 'sat_tank'
     | 'silpelit_clone'
     // Diclonius line. These carry vector arms and fight the player's vectors directly
     // through the duel system (parry arcs, posture, guard break) rather than just walking in.
