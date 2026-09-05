@@ -188,7 +188,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                         ? 'text-black shadow-md scale-105'
                         : unlocked
                         ? 'bg-black/40 border-white/15 text-gray-300 hover:border-white/40 cursor-pointer'
-                        : 'bg-black/60 border-white/5 text-gray-700 cursor-not-allowed'
+                        : 'bg-black/60 border-white/15 text-gray-500 cursor-not-allowed'
                     }`}
                     style={active ? { backgroundColor: d.color, borderColor: d.color } : undefined}
                   >

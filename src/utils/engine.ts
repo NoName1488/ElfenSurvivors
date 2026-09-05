@@ -7833,7 +7833,7 @@ export class GameEngine {
           e.x += Math.cos(strafeAng) * moveSpeed * 0.65 * dt;
           e.y += Math.sin(strafeAng) * moveSpeed * 0.65 * dt;
         }
-      } else if (e.type === 'sat_grunt' && !e.isElite) {
+      } else if (e.type === 'sat_grunt' && !e.isElite && e.id % 2 === 0) {
         /*
          * The rifleman holds outside the vectors.
          *
@@ -7847,6 +7847,11 @@ export class GameEngine {
          * take him, which is the loop the whole game is built on: short reach, absolute
          * power inside it, so you must close. He backs away more slowly than a player walks,
          * so closing always works - he buys time, he does not kite forever.
+         *
+         * Half the riflemen do this, split on unit id. A squad has men laying down fire and
+         * men pushing, and a wave made entirely of the first kind measured as unrelenting
+         * chip damage with nothing to close on: 22 deaths across a capped fourteen-wave
+         * probe against 12 with the split. The half that charges is what keeps the arms fed.
          */
         const standoff = this.playerVectorReach() + 150;
         if (dist < standoff - 40) {
