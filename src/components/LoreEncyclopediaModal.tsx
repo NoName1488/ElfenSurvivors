@@ -61,9 +61,9 @@ export const LoreEncyclopediaModal: React.FC<LoreEncyclopediaModalProps> = ({ on
             </h3>
             <p className="text-gray-300 mt-1">
               {isRu ? (
-                <>Бандо — элитный спецназовец SAT и обычный человек. У него <strong className="text-white">нет векторов</strong>. После ранений он получил титановые кибер-протезы и бионический глаз. Он компенсирует отсутствие пси-сил тяжелым арсеналом (SPAS-12, M60 Vulcan, микро-ракеты, мины, анти-векторный лазер) и боевым адреналином.</>
+                <>Бандо — элитный спецназовец SAT и обычный человек. У него <strong className="text-white">нет векторов</strong>. После ранений он получил титановые кибер-протезы и бионический глаз. Он компенсирует отсутствие пси-сил тяжелым арсеналом (SPAS-12, M60, микро-ракеты, мины, анти-векторный лазер) и боевым адреналином.</>
               ) : (
-                <>Bando is an elite SAT operative and an ordinary human. He has <strong className="text-white">no vectors</strong>. After his injuries he was fitted with titanium cyber-prosthetics and a bionic eye. He offsets the absence of psychic power with a heavy arsenal (SPAS-12, M60 Vulcan, micro-rockets, mines, anti-vector laser) and combat adrenaline.</>
+                <>Bando is an elite SAT operative and an ordinary human. He has <strong className="text-white">no vectors</strong>. After his injuries he was fitted with titanium cyber-prosthetics and a bionic eye. He offsets the absence of psychic power with a heavy arsenal (SPAS-12, M60, micro-rockets, mines, anti-vector laser) and combat adrenaline.</>
               )}
             </p>
           </div>

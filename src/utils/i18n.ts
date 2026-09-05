@@ -92,6 +92,8 @@ export const TRANSLATIONS = {
     
     // Kinds
     kindDiclonius: 'ДИКЛОНИУС (КОРОЛЕВА)',
+    kindHuman: 'ЧЕЛОВЕК (БЕЗ ВЕКТОРОВ)',
+    kindTransformed: 'ИЗМЕНЁННЫЙ ЧЕЛОВЕК',
     kindSilpelit: 'СИЛПЕЛИТ (МУТАЦИЯ)',
     kindCyborg: 'ЧЕЛОВЕК / КИБОРГ SAT',
 
@@ -268,6 +270,8 @@ export const TRANSLATIONS = {
 
     // Kinds
     kindDiclonius: 'DICLONIUS (QUEEN)',
+    kindHuman: 'HUMAN (NO VECTORS)',
+    kindTransformed: 'ALTERED HUMAN',
     kindSilpelit: 'SILPELIT (MUTATION)',
     kindCyborg: 'HUMAN / SAT CYBORG',
 

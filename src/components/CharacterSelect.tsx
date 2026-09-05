@@ -50,6 +50,15 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
 
   const isRu = lang === 'ru';
 
+  /** Short kind tag for the list rows, taken from the record rather than inferred. */
+  const kindShort = (char: Character): string => {
+    if (char.kind === 'human_cyborg') return isRu ? 'КИБОРГ SAT' : 'SAT CYBORG';
+    if (char.kind === 'human') return isRu ? 'ЧЕЛОВЕК' : 'HUMAN';
+    if (char.kind === 'diclonius') return isRu ? 'ДИКЛОНИУС' : 'DICLONIUS';
+    if (char.kind === 'neo_diclonius') return isRu ? 'ОБЪЕКТ' : 'SUBJECT';
+    return isRu ? 'СИЛПЕЛИТ' : 'SILPELIT';
+  };
+
   // "1 ПОБЕДА / 2 ПОБЕДЫ / 5 ПОБЕД" - Russian needs three forms, and the lock badges show
   // counts from 1 to 4, which crosses two of them.
   const winsWord = (count: number) => {
@@ -61,23 +70,27 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
     return 'ПОБЕД';
   };
 
+  /*
+   * Kind is read from the subject's own record rather than guessed from its id.
+   *
+   * The old rule was "cyborg, else Lucy, else Silpelit", which labelled Kurama - an ordinary
+   * human with no vectors, as his own description says - a Silpelit, and did the same to Nyu,
+   * who is Lucy and therefore the Queen. Both were visible on the character card.
+   */
   const getKindBadge = (char: Character) => {
     if (char.kind === 'human_cyborg') {
-      return {
-        label: t('kindCyborg'),
-        color: 'text-sky-400 border-sky-500/40 bg-sky-950/30',
-      };
+      return { label: t('kindCyborg'), color: 'text-sky-400 border-sky-500/40 bg-sky-950/30' };
     }
-    if (char.id === 'lucy') {
-      return {
-        label: t('kindDiclonius'),
-        color: 'text-red-400 border-red-500/40 bg-red-950/30',
-      };
+    if (char.kind === 'human') {
+      return { label: t('kindHuman'), color: 'text-slate-300 border-slate-400/40 bg-slate-900/40' };
     }
-    return {
-      label: t('kindSilpelit'),
-      color: 'text-rose-400 border-rose-500/40 bg-rose-950/30',
-    };
+    if (char.kind === 'diclonius') {
+      return { label: t('kindDiclonius'), color: 'text-red-400 border-red-500/40 bg-red-950/30' };
+    }
+    if (char.kind === 'neo_diclonius') {
+      return { label: t('kindTransformed'), color: 'text-violet-300 border-violet-400/40 bg-violet-950/30' };
+    }
+    return { label: t('kindSilpelit'), color: 'text-rose-400 border-rose-500/40 bg-rose-950/30' };
   };
 
   const badge = getKindBadge(selectedChar);
@@ -238,10 +251,8 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                           <Lock className="w-3 h-3" />
                           <span>[{lockLabel}]</span>
                         </>
-                      ) : isCyborg ? (
-                        `[${isRu ? 'КИБОРГ SAT' : 'SAT CYBORG'}]`
                       ) : (
-                        `[${isRu ? 'ДИКЛОНИУС' : 'DICLONIUS'}]`
+                        `[${kindShort(char)}]`
                       )}
                     </span>
                   </div>

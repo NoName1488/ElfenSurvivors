@@ -242,7 +242,7 @@ const UNIT_NAMES_EN: Record<string, string> = {
   hazmat_flamer: 'Hazmat Flamer',
   assault_drone: 'Liquidator Drone',
   sat_sniper: 'SAT Marksman',
-  emp_disruptor: 'EMP Vector Suppressor',
+  emp_disruptor: 'Saseba Vector Canceller',
   silpelit_clone: 'Silpelit Clone',
   silpelit_duelist: 'Silpelit Duelist No.27',
   silpelit_lancer: 'Silpelit Lancer No.30',
@@ -256,7 +256,7 @@ const UNIT_NAMES_EN: Record<string, string> = {
   boss_silpelit_27: 'Silpelit No.27 (Phantom)',
   boss_bando: 'Cyborg Bando (SAT Commander)',
   boss_silpelit_31: 'Silpelit No.31 (Needle Caster)',
-  boss_arakhaki: 'Arakaki (Heavy Mutant)',
+  boss_arakhaki: 'Vivarium Heavy Mutant',
   boss_silpelit_33: 'Silpelit No.33 (Reaper)',
   boss_nana_duty: 'Nana (Protection Protocol)',
   boss_silpelit_34: 'Silpelit No.34 (Goldilocks)',
@@ -266,7 +266,7 @@ const UNIT_NAMES_EN: Record<string, string> = {
   boss_mariko_berserk: 'Mariko No.35 (Absolute Berserk)',
   boss_kakuzawa: 'Director Kakuzawa: Race Maker',
   boss_goliath_mech: 'SAT Battle Mech "Goliath"',
-  boss_silpelit_archon: 'Silpelit Archon No.42',
+  boss_silpelit_archon: 'Silpelit No.42',
   boss_dual_silpelit_prime: 'Dual Silpelit Prime (DNA Resonance)',
   boss_leviathan_gunship: 'Airborne Dreadnought "Leviathan"',
   boss_primordial_singularity: 'Primordial Diclonius Singularity',
@@ -4735,7 +4735,7 @@ export class GameEngine {
         return true;
       }
 
-      // 6. TITAN GATLING MINIGUN (M60 Vulcan Evolution)
+      // 6. TITAN GATLING MINIGUN (M60 Evolution)
       case 'evo_titan_gatling': {
         if (!target) return false;
         sound.playMinigun();
@@ -5837,7 +5837,7 @@ export class GameEngine {
           damage: 10 * dmgScaling,
           radius: 12,
           color: '#06b6d4',
-          name: 'ЭМИ-Подавитель векторов',
+          name: 'Гаситель векторов «Сасебо»',
           weaponType: 'drone_laser',
           maxAmmo: 4,
           currentAmmo: 4,
@@ -6310,7 +6310,7 @@ export class GameEngine {
         specialAbility: 'needle_barrage',
       },
       boss_arakhaki: {
-        name: 'Аракаки (Тяжелый Мутант)',
+        name: 'Тяжёлый мутант вивария',
         color: '#9a3412',
         baseHp: 9800,
         baseShield: 4000,
@@ -6401,7 +6401,7 @@ export class GameEngine {
         baseDamage: 80,
         speed: 145,
         radius: 30,
-        vectorCount: 28,
+        vectorCount: 26,
         vectorReach: 370,
         specialAbility: 'needle_barrage',
       },
@@ -6430,7 +6430,7 @@ export class GameEngine {
         specialAbility: 'heavy_arsenal',
       },
       boss_silpelit_archon: {
-        name: 'Силпелит-Архонт №42',
+        name: 'Силпелит №42',
         color: '#a855f7',
         baseHp: 52000,
         baseShield: 22000,

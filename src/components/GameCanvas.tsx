@@ -465,7 +465,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
             <div className="text-xs md:text-sm font-cinzel font-bold text-white tracking-wider flex items-center gap-1.5">
               <span>{engine.state.character.name}</span>
               <span className="text-2xs font-mono text-red-500 font-bold">
-                [{engine.state.character.kind === 'human_cyborg' ? (isRu ? 'КИБОРГ SAT' : 'SAT CYBORG') : (isRu ? 'ДИКЛОНИУС' : 'DICLONIUS')}]
+                [{
+                  engine.state.character.kind === 'human_cyborg' ? (isRu ? 'КИБОРГ SAT' : 'SAT CYBORG')
+                  : engine.state.character.kind === 'human' ? (isRu ? 'ЧЕЛОВЕК' : 'HUMAN')
+                  : engine.state.character.kind === 'silpelit' ? (isRu ? 'СИЛПЕЛИТ' : 'SILPELIT')
+                  : (isRu ? 'ДИКЛОНИУС' : 'DICLONIUS')
+                }]
               </span>
             </div>
           </div>
