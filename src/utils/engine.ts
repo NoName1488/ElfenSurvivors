@@ -1328,6 +1328,7 @@ export class GameEngine {
     this.state.maxWaveTimer = duration;
     this.state.isWaveActive = true;
     this.state.isWaveEnding = false;
+    this.undyingUsedThisWave = false;
     this.state.waveEndingTimer = 0;
     this.state.enemies = [];
     this.state.activeBoss = null;
@@ -2400,6 +2401,14 @@ export class GameEngine {
         Math.max(0, this.state.wave - 4) * 0.035
     );
 
+    /*
+     * Apex upkeep: the cocoon recharges, and the emergency protocol resets with the wave.
+     */
+    if (this.aegisCooldown > 0) {
+      this.aegisCooldown -= dt;
+      if (this.aegisCooldown <= 0) this.aegisCharge = 25;
+    }
+
     this.updatePlayerMovement(dt);
     this.updateVectorArms(dt);
     this.updateWeapons(dt);
@@ -2919,7 +2928,14 @@ export class GameEngine {
     } else if (this.state.character.id === 'lucy' && this.state.characterResource.isActive) {
       psiMultiplier *= (1 + (this.state.characterResource.current / 100) * 0.7);
     } else if (this.state.character.id === 'mariko' && this.state.characterResource.isActive) {
-      psiMultiplier *= 0.55; // Overheat cellular degradation penalty
+      /*
+       * Synaptic core stabilisation inverts Mariko's central cost.
+       *
+       * Overheat normally degrades her cells and costs her nearly half her output. The apex
+       * turns the heat into the weapon instead, which is the whole build: run hot on
+       * purpose. Without it the penalty stands.
+       */
+      psiMultiplier *= this.hasMutation('mariko_god_core') ? 1.3 : 0.55;
     }
 
     const pX = this.state.player.x;
@@ -3180,6 +3196,9 @@ export class GameEngine {
                  */
                 const canReturnFire =
                   isDeflectorRole ||
+                  // Dense kinetic vortex: the whole swarm forms one wall, so every arm in it
+                  // turns rounds rather than only the ones assigned to intercept.
+                  this.hasMutation('mariko_26_supernova') ||
                   this.hasMutation('nana_auto_deflect') ||
                   (this.state.character.id === 'nana' && this.state.characterResource.isActive);
 
@@ -3301,6 +3320,8 @@ export class GameEngine {
                 ? Math.max(3, Math.min(8, Math.ceil(totalArmCount / Math.max(1, nearbyEnemies.length))))
                 : (enemy.isElite ? 2 : 1));
           if (this.hasMutation('lucy_dual_target') && !enemy.isBoss) maxLoadPerEnemy = Math.min(maxLoadPerEnemy, 2);
+          // Vector convergence: the apex promises four arms on one target in concert.
+          if (this.hasMutation('lucy_omni_slaughter') && !enemy.isBoss) maxLoadPerEnemy = Math.max(maxLoadPerEnemy, 4);
           if (this.hasMutation('mariko_swarm_distrib') && !enemy.isBoss) maxLoadPerEnemy = Math.max(1, Math.floor(totalArmCount / Math.max(1, nearbyEnemies.length)));
 
           // Prevent dogpiling on normal grunts, but allow all vectors against bosses
@@ -3700,6 +3721,55 @@ export class GameEngine {
             this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
 
             /*
+             * Kinetic focus lance: the thrust does not stop at the first body. Everything
+             * standing on the line behind the target takes it at reduced force, which is
+             * what makes it the answer to a rank of heavy infantry, as its card says.
+             */
+            if (this.hasMutation('nana_orbital_lance')) {
+              for (const other of this.state.enemies) {
+                if (other === bestTarget || other.hp <= 0) continue;
+                const along = (other.x - pX) * Math.cos(strikeAngle) + (other.y - pY) * Math.sin(strikeAngle);
+                if (along <= 0 || along > baseReach * 2.1) continue;
+                const offLine = Math.abs(
+                  -(other.x - pX) * Math.sin(strikeAngle) + (other.y - pY) * Math.cos(strikeAngle)
+                );
+                if (offLine > 26) continue;
+                this.damageEnemy(other, finalDmg * 0.55, false);
+                this.spawnVectorImpact(other.x, other.y, strikeAngle, false, 'pierce');
+              }
+            }
+
+            /*
+             * Cascading micro-needle volley: a needle goes out to a shooter holding the
+             * far line, which is the only thing that reaches the men the arms cannot.
+             */
+            if (this.hasMutation('mariko_storm_of_gods') && Math.random() < 0.3) {
+              let far: Enemy | null = null;
+              let farDist = 0;
+              for (const other of this.state.enemies) {
+                if (other.hp <= 0 || other.shootCooldown === undefined) continue;
+                const d = Math.hypot(other.x - pX, other.y - pY);
+                if (d > farDist && d < 900) { farDist = d; far = other; }
+              }
+              if (far) {
+                const needleAng = Math.atan2(far.y - pY, far.x - pX);
+                this.state.projectiles.push({
+                  id: ++this.projectileIdCounter,
+                  x: pX, y: pY,
+                  vx: Math.cos(needleAng) * 880,
+                  vy: Math.sin(needleAng) * 880,
+                  radius: 4,
+                  damage: finalDmg * 0.8,
+                  isPlayer: true,
+                  color: '#facc15',
+                  life: 1.2,
+                  maxLife: 1.2,
+                  penetration: 2,
+                });
+              }
+            }
+
+            /*
              * Vibration band effects.
              *
              * Striking drives the frequency up from the build's resting value, so a build
@@ -4024,6 +4094,22 @@ export class GameEngine {
       atkSpeedMod *= 1.4;
     }
 
+    /*
+     * Heavy-calibre suppression module: damage builds while the fire is continuous.
+     *
+     * The timer runs up while anything is in range to shoot at and resets the moment there
+     * is not, so it rewards holding a firing position rather than kiting - which is the
+     * opposite of how every other build here wants to be played, and the point of taking it.
+     */
+    if (this.hasMutation('bando_gatling_overclock')) {
+      const anyTarget = this.state.enemies.some(
+        (e) => e.hp > 0 && Math.hypot(e.x - this.state.player.x, e.y - this.state.player.y) < 460
+      );
+      this.sustainedFireTimer = anyTarget ? Math.min(6, this.sustainedFireTimer + dt) : 0;
+    } else {
+      this.sustainedFireTimer = 0;
+    }
+
     for (const weapon of this.state.weapons) {
       let cd = this.weaponCooldowns.get(weapon.id) || 0;
       cd -= dt;
@@ -4076,11 +4162,13 @@ export class GameEngine {
     if (this.state.character.id === 'mariko') {
       this.state.characterResource.current = Math.min(100, this.state.characterResource.current + 3.5);
       if (this.state.characterResource.isActive) {
-        psiMultiplier *= 0.65; // Suffer damage reduction during severe vector overheat
+        psiMultiplier *= this.hasMutation('mariko_god_core') ? 1.25 : 0.65;
       }
     }
 
-    const baseDamage = weapon.damage * psiMultiplier * (1 + (weapon.tier - 1) * 0.35);
+    let baseDamage = weapon.damage * psiMultiplier * (1 + (weapon.tier - 1) * 0.35);
+    // Up to +30% after six unbroken seconds of fire. See sustainedFireTimer.
+    if (this.sustainedFireTimer > 0) baseDamage *= 1 + (this.sustainedFireTimer / 6) * 0.3;
 
     // Catalytic Weapon Evolution: Qualitative Transformative Attack Geometry (2.В.2)
     if (weapon.isEvolved) {
@@ -8771,7 +8859,10 @@ export class GameEngine {
       } else {
         const dist = Math.hypot(pX - p.x, pY - p.y);
         if (dist < this.state.player.radius + p.radius) {
-          this.damagePlayer(p.damage);
+          // Bio-regenerative dome: a standing field that blunts incoming fire specifically,
+          // which is what its card promises and what melee is deliberately not covered by.
+          const domed = this.hasMutation('nyu_eternal_light');
+          this.damagePlayer(domed ? p.damage * 0.9 : p.damage);
 
           if (p.isEmp) {
             this.state.player.vectorSuppressedTimer = 2.4;
@@ -8855,6 +8946,68 @@ export class GameEngine {
     }
   }
 
+  /**
+   * Effects that fire on a critical hit and belong to a mutation apex.
+   *
+   * Kept in one place because both of them need the same guard: they must not run from
+   * inside their own splash, or a rupture chains into a second rupture and the frame turns
+   * into an infinite regress.
+   */
+  private applyCritApexEffects(enemy: Enemy) {
+    if (this.critApexDepth > 0) return;
+    this.critApexDepth++;
+    try {
+      // Cascading vascular rupture: the card promises 45 in a 70px radius off a crit.
+      if (this.hasMutation('lucy_crimson_singularity')) {
+        const burst = 45 * (1 + this.state.stats.psiPower / 200);
+        for (const other of this.state.enemies) {
+          if (other === enemy || other.hp <= 0) continue;
+          if (Math.hypot(other.x - enemy.x, other.y - enemy.y) > 70) continue;
+          this.damageEnemy(other, burst, false);
+        }
+        this.spawnVectorImpact(enemy.x, enemy.y, Math.random() * Math.PI * 2, true, 'slash');
+      }
+
+      // Silpelit guardian aura: an empathic surge breaks the firing party's coordination.
+      // Implemented as what a blinded soldier actually does - stops shooting for a moment.
+      /*
+       * Tactical fire support: a run of accurate hits walks a mortar round onto the
+       * position. Counted in crits rather than in time, so it answers marksmanship.
+       */
+      if (this.hasMutation('bando_sat_gunship_apex')) {
+        this.critStreakForStrike++;
+        if (this.critStreakForStrike >= 8) {
+          this.critStreakForStrike = 0;
+          this.explodeAt(enemy.x, enemy.y, 120, 70 * (1 + this.state.stats.psiPower / 100));
+          this.triggerScreenShake(10, 0.35);
+          sound.playExplosion();
+        }
+      }
+
+      if (this.hasMutation('nana_guardian_angel')) {
+        for (const other of this.state.enemies) {
+          if (other.shootCooldown === undefined || other.isBoss) continue;
+          if (Math.hypot(other.x - enemy.x, other.y - enemy.y) > 190) continue;
+          other.lastShoot = Math.min(other.lastShoot || 0, -0.9);
+        }
+      }
+    } finally {
+      this.critApexDepth--;
+    }
+  }
+
+  private critApexDepth = 0;
+  /** Crits since the last mortar round, for Bando's fire support apex. */
+  private critStreakForStrike = 0;
+
+  /** Kuruma's kinetic cocoon: absorbs a fixed pool, then recharges on a timer. */
+  private aegisCharge = 25;
+  private aegisCooldown = 0;
+  /** Bando's emergency protocol fires once per wave. */
+  private undyingUsedThisWave = false;
+  /** Bando's suppression module: damage ramps while fire is continuous. */
+  private sustainedFireTimer = 0;
+
   private damageEnemy(enemy: Enemy, rawDamage: number, forceCrit: boolean = false, weapon?: Weapon, phasing: boolean = false) {
     let critChance = (this.state.stats.critChance + (weapon?.critChance || 0) * 100);
     if (this.state.character.id === 'lucy' && this.state.characterResource.isActive) {
@@ -8880,7 +9033,11 @@ export class GameEngine {
       if (this.state.characterResource.isActive) {
         finalDamage = Math.round(finalDamage * 1.6);
       } else {
-        finalDamage = Math.max(1, Math.round(finalDamage * 0.7));
+        // Primordial matrix awakening: the innocent half stops being a liability, because
+        // the Queen no longer fully goes away. It does not reach the frenzy - a stabilised
+        // awakening is the point, not a permanent one.
+        const floor = this.hasMutation('nyu_goddess_unbound') ? 1.05 : 0.7;
+        finalDamage = Math.max(1, Math.round(finalDamage * floor));
       }
     } else if (this.state.character.id === 'nana') {
       // Anchored stance, as printed on her character card.
@@ -8944,6 +9101,8 @@ export class GameEngine {
     }
 
     this.state.damageDealt += finalDamage;
+
+    if (isCrit) this.applyCritApexEffects(enemy);
 
     // Tactical micro-hitstop for tangible combat weight
     // Hitstop sells the weight of a hit, but it must not stack. Refreshing it on every
@@ -9030,6 +9189,29 @@ export class GameEngine {
         this.triggerScreenShake(8, 0.25);
         sound.playGuardBreak();
       }
+    }
+
+    /*
+     * Vector convergence, second half: a run of kills collapses the formation inward.
+     *
+     * The card promises that kill streaks pull enemies together and break up the SAT firing
+     * line, which is worth real value now that the firing line is a deliberate formation
+     * rather than a crowd.
+     */
+    if (this.hasMutation('lucy_omni_slaughter') && this.state.killStreak > 0 && this.state.killStreak % 5 === 0) {
+      for (const other of this.state.enemies) {
+        if (other === enemy || other.hp <= 0 || other.isBoss || other.isHeavyMass) continue;
+        const d = Math.hypot(other.x - enemy.x, other.y - enemy.y);
+        if (d > 240 || d < 1) continue;
+        const pull = Math.min(70, 240 - d);
+        const toward = Math.atan2(enemy.y - other.y, enemy.x - other.x);
+        other.x += Math.cos(toward) * pull;
+        other.y += Math.sin(toward) * pull;
+      }
+      this.state.particles.push({
+        x: enemy.x, y: enemy.y, vx: 0, vy: 0,
+        life: 0.4, maxLife: 0.4, size: 200, color: '#ef4444', alpha: 0.5, type: 'psychic_ring',
+      });
     }
 
     this.state.kills++;
@@ -9272,6 +9454,29 @@ export class GameEngine {
   private damagePlayer(amount: number) {
     if (this.state.player.invincibleTimer > 0) return;
 
+    /*
+     * Kuruma's protective dome, as printed: a cocoon that eats 25 damage and recharges
+     * every 25 seconds. It sits ahead of dodge and armour because it is a barrier, not a
+     * property of the body.
+     */
+    if (this.hasMutation('nana_absolute_domain') && this.aegisCharge > 0) {
+      const eaten = Math.min(this.aegisCharge, amount);
+      this.aegisCharge -= eaten;
+      amount -= eaten;
+      this.state.damageNumbers.push({
+        id: ++this.dmgNumIdCounter,
+        x: this.state.player.x,
+        y: this.state.player.y - 26,
+        text: loc('КОКОН', 'AEGIS'),
+        color: '#a78bfa',
+        opacity: 1,
+        isCrit: false,
+        vy: -45,
+      });
+      if (this.aegisCharge <= 0) this.aegisCooldown = 25;
+      if (amount <= 0) return;
+    }
+
     // Taking damage penalizes the kill streak combo timer
     this.state.killStreakTimer = Math.max(0, this.state.killStreakTimer - 0.9);
 
@@ -9296,6 +9501,34 @@ export class GameEngine {
     const finalDamage = Math.max(1, Math.round(amount * armorReduction));
 
     this.state.player.hp -= finalDamage;
+
+    /*
+     * Bando's emergency survival protocol: one adrenaline shot per wave, on the hit that
+     * would have ended the run. Deliberately once - it is a second chance, not a rhythm.
+     */
+    if (
+      this.state.player.hp <= 0 &&
+      !this.undyingUsedThisWave &&
+      this.hasMutation('bando_juggernaut_apex')
+    ) {
+      this.undyingUsedThisWave = true;
+      this.state.player.hp = 1;
+      this.state.player.invincibleTimer = 1.5;
+      this.triggerScreenShake(14, 0.5);
+      sound.playSpecialAbility();
+      this.state.damageNumbers.push({
+        id: ++this.dmgNumIdCounter,
+        x: this.state.player.x,
+        y: this.state.player.y - 34,
+        text: loc('АВАРИЙНЫЙ ПРОТОКОЛ', 'EMERGENCY PROTOCOL'),
+        color: '#f59e0b',
+        opacity: 1,
+        isCrit: true,
+        vy: -60,
+      });
+      return;
+    }
+
     this.state.player.invincibleTimer = 0.22; // Brief grace period prevents instant deletion from overlapping attacks
 
     // Bando converts pain into tempo.
@@ -9499,6 +9732,26 @@ export class GameEngine {
         if (dist < this.state.player.radius + drop.size) {
           this.state.player.dna += drop.value;
           this.state.totalDnaCollected += drop.value;
+
+          /*
+           * Harmonic DNA resonance: collecting a sample releases a stabilising flash.
+           *
+           * It heals a little and shoves the ring back, which is a genuinely different way
+           * to play - the pickups become a resource you time rather than litter you walk
+           * over.
+           */
+          if (this.hasMutation('nyu_cataclysm_innocence')) {
+            this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 1);
+            for (const other of this.state.enemies) {
+              if (other.hp <= 0 || other.isBoss || other.isHeavyMass) continue;
+              const d = Math.hypot(other.x - this.state.player.x, other.y - this.state.player.y);
+              if (d > 150 || d < 1) continue;
+              const push = Math.atan2(other.y - this.state.player.y, other.x - this.state.player.x);
+              other.x += Math.cos(push) * 34;
+              other.y += Math.sin(push) * 34;
+              this.damageEnemy(other, 8 * (1 + this.state.stats.psiPower / 100), false);
+            }
+          }
 
           // NYU UNIQUE PASSIVE: Innocent mode heals +1 HP (+2 HP for large clusters) per DNA pickup!
           if (this.state.character.id === 'nyu' && !this.state.characterResource.isActive) {
