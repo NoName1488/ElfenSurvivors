@@ -106,7 +106,8 @@ export interface PassiveItem {
   icon: string;
   stats: Partial<PlayerStats>;
   lore?: string;
-  tags?: ('blood' | 'tech' | 'vector' | 'stasis' | 'kinetic' | 'dna' | 'firearm' | 'risk')[];
+  // 'relic' marks the keepsakes - items that are a memory rather than a piece of hardware.
+  tags?: ('blood' | 'tech' | 'vector' | 'stasis' | 'kinetic' | 'dna' | 'firearm' | 'risk' | 'relic' | 'defense')[];
   restrictedToKind?: CharacterKind; // Some items only for Diclonius or Cyborg
   isExperimental?: boolean; // High Risk / High Reward Prototype
   positiveEffect?: string;
@@ -160,6 +161,15 @@ export interface PlayerStats {
   pickupRange: number; // magnet radius in px
   bloodLifesteal: number; // % chance to heal on hit
   luck: number; // % chance for higher rarity shop & drops
+  /**
+   * Resting vibration frequency of the vectors, in Hz.
+   *
+   * Canon: a vector's molecules vibrate, and the frequency decides what it does - low passes
+   * through matter, mid lifts and ruptures vessels, high cuts, extreme becomes visible and
+   * detonates. This is the band the arms idle at; striking drives it up from here.
+   * See VECTOR_BANDS in engine.ts.
+   */
+  vibrationBase: number;
 }
 
 export interface CharacterMechanic {

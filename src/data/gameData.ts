@@ -27,6 +27,8 @@ export const CHARACTERS: Character[] = [
       pickupRange: 100,
       bloodLifesteal: 2,
       luck: 5,
+      // Люси: короткий охват, но лучший контроль - вектора идут на грани резки
+      vibrationBase: 620,
     },
     startingWeaponId: 'vector_slasher',
     unlocked: true,
@@ -70,6 +72,8 @@ export const CHARACTERS: Character[] = [
       pickupRange: 160,
       bloodLifesteal: 1,
       luck: 12,
+      // Ню: сила спит, вектора едва вибрируют - зато проходят сквозь преграды
+      vibrationBase: 300,
     },
     startingWeaponId: 'shockwave_pulse',
     unlocked: false,
@@ -113,6 +117,8 @@ export const CHARACTERS: Character[] = [
       pickupRange: 110,
       bloodLifesteal: 1,
       luck: 8,
+      // Нана: держит средний диапазон, вектора работают как захват и щит
+      vibrationBase: 480,
     },
     startingWeaponId: 'deflection_barrier',
     unlocked: false,
@@ -156,6 +162,8 @@ export const CHARACTERS: Character[] = [
       pickupRange: 100,
       bloodLifesteal: 1,
       luck: 5,
+      // Марико №35: 26 векторов на предельной частоте, почти видимых
+      vibrationBase: 880,
     },
     startingWeaponId: 'mariko_26_storm',
     unlocked: false,
@@ -198,6 +206,8 @@ export const CHARACTERS: Character[] = [
       pickupRange: 80,
       bloodLifesteal: 0,
       luck: 5,
+      // Бандо: векторов нет, поле оставлено по умолчанию
+      vibrationBase: 250,
     },
     startingWeaponId: 'sat_spas12_shotgun',
     unlocked: false,
@@ -247,6 +257,8 @@ export const CHARACTERS: Character[] = [
       pickupRange: 90,
       bloodLifesteal: 0,
       luck: 0,
+      // Люси в ограничителе: частота задрана подавителем на грань срыва
+      vibrationBase: 700,
     },
     startingWeaponId: 'restrained_shockwave',
     unlocked: false,
@@ -296,6 +308,8 @@ export const CHARACTERS: Character[] = [
       pickupRange: 130,
       bloodLifesteal: 0,
       luck: 15,
+      // Курама: человек, векторов нет
+      vibrationBase: 250,
     },
     startingWeaponId: 'kurama_revolver',
     unlocked: false,
@@ -346,6 +360,8 @@ export const CHARACTERS: Character[] = [
       pickupRange: 400,
       bloodLifesteal: 2,
       luck: 10,
+      // Анна: гравитационное ядро держит вектора в видимом диапазоне
+      vibrationBase: 940,
     },
     startingWeaponId: 'gravity_singularity',
     unlocked: false,
@@ -849,6 +865,167 @@ export const WEAPON_SET_BONUSES_CONFIG: Record<WeaponTag, {
 };
 
 export const PASSIVE_ITEMS: PassiveItem[] = [
+  /*
+   * Frequency shifters.
+   *
+   * These are the items the vibration band system exists for. Pushing the resting frequency
+   * up or down is not a straight upgrade in either direction - it moves the vectors into a
+   * different band with different rules - so these are the first items in the shop where the
+   * right answer depends on what the player already owns and what is killing them.
+   */
+  {
+    id: 'restraint_helmet',
+    name: 'Steel Restraint Helmet',
+    russianName: 'Стальной ограничивающий шлем',
+    rarity: 'epic',
+    description: 'Частота векторов -260 Гц, -12% Силы ПСИ. +3 Брони. Глушит вектора до фазового диапазона: удары проходят сквозь броню и щиты.',
+    cost: 55,
+    icon: 'HardHat',
+    stats: { vibrationBase: -260, psiPower: -12, armor: 3 },
+    lore: 'Глухой шлем из высокопрочной стали. Надевался на объекты при перевозке. На испытаниях принял на себя пулю .50 калибра — и тем спас объекту жизнь.',
+    tags: ['tech', 'defense'],
+  },
+  {
+    id: 'ajna_inhibitor',
+    name: 'Ajna Inhibitor',
+    russianName: 'Лобный ингибитор «Аджина»',
+    rarity: 'rare',
+    description: 'Частота векторов -140 Гц, -8% Дальности векторов. +2 Брони.',
+    cost: 42,
+    icon: 'CircleDot',
+    stats: { vibrationBase: -140, vectorReach: -8, armor: 2 },
+    lore: 'Прибор, вживляемый в лобную кость для полного подчинения объекта. Побочный эффект: колебания векторов срываются в нижний диапазон.',
+    tags: ['tech', 'dna'],
+  },
+  {
+    id: 'pineal_overgrowth',
+    name: 'Pineal Overgrowth',
+    russianName: 'Разрастание шишковидной железы',
+    rarity: 'epic',
+    description: 'Частота векторов +180 Гц, +8% Силы ПСИ. -12 Макс ОЗ.',
+    cost: 52,
+    icon: 'Brain',
+    stats: { vibrationBase: 180, psiPower: 8, maxHp: -12 },
+    lore: 'У человека железа размером с горошину. У диклониуса — с яйцо, прижата к лобной доле. Чем больше, тем выше несущая частота.',
+    tags: ['vector', 'dna'],
+  },
+  {
+    id: 'harmonic_amplifier',
+    name: 'Harmonic Amplifier',
+    russianName: 'Гармонический усилитель',
+    rarity: 'rare',
+    description: 'Частота векторов +110 Гц, +6% Скорости атаки. -2 Брони.',
+    cost: 44,
+    icon: 'AudioWaveform',
+    stats: { vibrationBase: 110, attackSpeed: 6, armor: -2 },
+    lore: 'Стенд, на котором в лаборатории замеряли порог пробития. Объект научился использовать его как камертон.',
+    tags: ['vector', 'tech'],
+  },
+
+  /*
+   * Keepsakes. Small, cheap, and built around a single memory from the source material -
+   * the counterweight to a shop otherwise full of surgical hardware.
+   */
+  {
+    id: 'kota_knit_cap',
+    name: "Kota's Knit Cap",
+    russianName: 'Вязаная шапка Коты',
+    rarity: 'common',
+    description: '+10 Макс ОЗ, +4% Скорости бега.',
+    cost: 28,
+    icon: 'Shirt',
+    stats: { maxHp: 10, moveSpeed: 4 },
+    lore: 'Первый подарок в её жизни. Пока шапка на голове, рожек не видно — и можно побыть обычной девочкой.',
+    tags: ['relic'],
+  },
+  {
+    id: 'kanae_seashell',
+    name: "Kanae's Seashell",
+    russianName: 'Ракушка Канаэ',
+    rarity: 'rare',
+    description: '+1 Брони, +1% Вампиризма.',
+    cost: 36,
+    icon: 'Shell',
+    stats: { armor: 1, bloodLifesteal: 1 },
+    lore: 'Из коллекции девочки, разрубленной пополам в вагоне Эноден. Вид этой ракушки в собственной руке однажды остановил занесённый вектор.',
+    tags: ['relic'],
+  },
+  {
+    id: 'kurama_necktie',
+    name: "Kurama's Necktie",
+    russianName: 'Галстук Курамы',
+    rarity: 'common',
+    description: '+2 Брони, +5 Макс ОЗ.',
+    cost: 26,
+    icon: 'Ribbon',
+    stats: { armor: 2, maxHp: 5 },
+    lore: 'Завязан неправильно и носится на голове вместо ленты. Первая вещь, подаренная просто так, а не выданная по протоколу.',
+    tags: ['relic', 'defense'],
+  },
+  {
+    id: 'jade_stone',
+    name: 'River Jade',
+    russianName: 'Речной нефрит',
+    rarity: 'rare',
+    description: '+8% Удачи, +12% Сбора ДНК.',
+    cost: 38,
+    icon: 'Gem',
+    stats: { luck: 8, dnaHarvest: 12 },
+    lore: 'Найден мальчиком в горном ручье и подарён без повода. В записке, пролежавшей десять лет, сказано, что его хотели носить как обручальное кольцо.',
+    tags: ['relic', 'dna'],
+  },
+  {
+    id: 'lilium_music_box',
+    name: 'Lilium Music Box',
+    russianName: 'Музыкальная шкатулка «Lilium»',
+    rarity: 'epic',
+    description: '+1 Реген ОЗ/5с, +10 Макс ОЗ, +6% Удачи.',
+    cost: 50,
+    icon: 'Music',
+    stats: { hpRegen: 1, maxHp: 10, luck: 6 },
+    lore: 'Куплена в сувенирной лавке Камакуры. Все говорили, что мелодия слишком грустная. Двоим она нравилась.',
+    tags: ['relic'],
+  },
+
+  /*
+   * Counter-Diclonius hardware, from the ordnance the source material names by calibre.
+   */
+  {
+    id: 'tungsten_rounds',
+    name: 'Tungsten .50 AE Rounds',
+    russianName: 'Вольфрамовые патроны .50 AE',
+    rarity: 'epic',
+    description: '+7% Силы ПСИ / Огневой мощи, +5% Шанса крита.',
+    cost: 54,
+    icon: 'Crosshair',
+    stats: { psiPower: 7, critChance: 5 },
+    lore: 'Обычные девять миллиметров вектор отбивает не глядя. Вольфрамовый сердечник в полсотни калибра — уже нет.',
+    tags: ['firearm', 'tech'],
+  },
+  {
+    id: 'barbed_bolts',
+    name: 'Barbed Neurotoxin Bolts',
+    russianName: 'Шипастые шары с нейротоксином',
+    rarity: 'rare',
+    description: '+4% Силы ПСИ, +4% Шанса крита, +10% Крит. урона.',
+    cost: 46,
+    icon: 'Crosshair',
+    stats: { psiPower: 4, critChance: 4, critDamage: 0.1 },
+    lore: 'Самая примитивная и самая надёжная контрмера во всей программе: слишком тяжёлые, чтобы отбить вблизи, и с зазубринами, чтобы нельзя было вынуть.',
+    tags: ['firearm'],
+  },
+  {
+    id: 'rocket_fist',
+    name: 'Rocket Fist Prosthetic',
+    russianName: 'Протез «ракетный кулак»',
+    rarity: 'epic',
+    description: '+10% Дальности векторов, +5% Скорости атаки.',
+    cost: 50,
+    icon: 'Hand',
+    stats: { vectorReach: 10, attackSpeed: 5 },
+    lore: 'Протезы управляются векторами и постоянно отваливаются. Кто-то догадался, что отваливаться они могут и в сторону противника.',
+    tags: ['tech', 'vector'],
+  },
   {
     id: 'pineal_enhancer',
     name: 'Pineal Gland Mutation',
@@ -1154,6 +1331,55 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
 ];
 
 export const ITEM_SYNERGIES: ItemSynergy[] = [
+  /*
+   * Band synergies. Each rewards committing to one end of the frequency scale, so the two
+   * frequency-shifting item families have a payoff beyond the band effect itself and the
+   * player has a reason to stop hedging.
+   */
+  {
+    id: 'syn_phase_lattice',
+    name: 'Phase Lattice',
+    russianName: 'Фазовая решётка',
+    description: 'Нижний диапазон: +2 Брони, +8 Макс ОЗ, +4% Скорости бега.',
+    icon: 'CircleDot',
+    color: '#38bdf8',
+    requiredItems: ['restraint_helmet', 'ajna_inhibitor'],
+    bonusStats: { armor: 2, maxHp: 8, moveSpeed: 4 },
+    specialEffectText: 'Заглушенные вектора не взаимодействуют с материей на пути: броня и кинетические барьеры просто не мешают.',
+  },
+  {
+    id: 'syn_critical_resonance',
+    name: 'Critical Resonance',
+    russianName: 'Критический резонанс',
+    description: 'Верхний диапазон: +6% Силы ПСИ, +5% Скорости атаки, +10% Крит. урона.',
+    icon: 'AudioWaveform',
+    color: '#f472b6',
+    requiredItems: ['pineal_overgrowth', 'harmonic_amplifier'],
+    bonusStats: { psiPower: 6, attackSpeed: 5, critDamage: 0.1 },
+    specialEffectText: 'На предельной частоте вектор становится видимым и детонирует в точке касания.',
+  },
+  {
+    id: 'syn_keepsakes',
+    name: 'What Was Given Freely',
+    russianName: 'То, что дарили просто так',
+    description: 'Три реликвии: +1 Реген ОЗ/5с, +12 Макс ОЗ, +6% Удачи.',
+    icon: 'Shell',
+    color: '#fbbf24',
+    requiredItems: ['kota_knit_cap', 'kanae_seashell', 'kurama_necktie'],
+    bonusStats: { hpRegen: 1, maxHp: 12, luck: 6 },
+    specialEffectText: 'Шапка, ракушка и криво завязанный галстук. Ничто из этого не выдавали по протоколу.',
+  },
+  {
+    id: 'syn_counter_diclonius',
+    name: 'Counter-Diclonius Ordnance',
+    russianName: 'Противодиклониусный боекомплект',
+    description: 'Бронебойный комплект: +5% Силы ПСИ, +4% Шанса крита, +12% Крит. урона.',
+    icon: 'Crosshair',
+    color: '#f59e0b',
+    requiredItems: ['tungsten_rounds', 'barbed_bolts'],
+    bonusStats: { psiPower: 5, critChance: 4, critDamage: 0.12 },
+    specialEffectText: 'Вольфрам и зазубрины: то, что нельзя отбить и нельзя вынуть.',
+  },
   {
     id: 'syn_blood_berserk',
     name: 'Hemodynamic Surge (Lucy DNA)',

@@ -406,6 +406,43 @@ export function effectiveVectorReach(raw: number): number {
   return Math.min(VECTOR_REACH_HARD_CAP, VECTOR_REACH_SOFT_CAP + (raw - VECTOR_REACH_SOFT_CAP) * 0.5);
 }
 
+/**
+ * Vector vibration bands.
+ *
+ * Straight from the source material: a vector's molecules vibrate, and the frequency decides
+ * what the arm actually is. Low frequency slips through matter without interacting with it,
+ * mid frequency lifts and throws and bursts blood vessels, high frequency cuts, and at the
+ * extreme end the arm becomes visible and detonates on contact.
+ *
+ * This is deliberately a band and not a ladder. Low is not "weak": phase strikes ignore
+ * armour and shields entirely, which is the only clean answer to a shield bearer or a
+ * kinetic-shield elite, while extreme frequency is wasted on them and shines against a
+ * crowd. So the frequency stat is a question the player answers per build, and items that
+ * push the frequency down are worth as much as items that push it up.
+ */
+export type VectorBand = 'phase' | 'kinetic' | 'shear' | 'critical';
+
+export const VECTOR_BANDS: Array<{ band: VectorBand; min: number; ru: string; en: string }> = [
+  { band: 'phase', min: 0, ru: 'ФАЗА', en: 'PHASE' },
+  { band: 'kinetic', min: 400, ru: 'КИНЕТИКА', en: 'KINETIC' },
+  { band: 'shear', min: 700, ru: 'РЕЗКА', en: 'SHEAR' },
+  { band: 'critical', min: 900, ru: 'КРИТИЧЕСКАЯ', en: 'CRITICAL' },
+];
+
+export function vectorBand(hz: number): VectorBand {
+  let result: VectorBand = 'phase';
+  for (const b of VECTOR_BANDS) {
+    if (hz >= b.min) result = b.band;
+  }
+  return result;
+}
+
+export function vectorBandLabel(hz: number): string {
+  const band = vectorBand(hz);
+  const entry = VECTOR_BANDS.find((b) => b.band === band)!;
+  return getLanguage() === 'ru' ? entry.ru : entry.en;
+}
+
 export const GUARD_DAMAGE_BASE = 10;
 export const GUARD_DAMAGE_PSI_SCALE = 0.12;
 
@@ -1118,6 +1155,11 @@ export class GameEngine {
       stats.vectorCount = 0;
     }
     stats.vectorReach = effectiveVectorReach(stats.vectorReach);
+
+    // Resting frequency is a position on a scale, not a resource to max out, so it is held
+    // inside the scale. The floor sits below the phase threshold and the ceiling below the
+    // top of the critical band, which leaves room for the per-strike buildup to still matter.
+    stats.vibrationBase = Math.max(150, Math.min(960, stats.vibrationBase || 250));
 
     // Minimum constraints
     stats.maxHp = Math.max(20, stats.maxHp);
@@ -2693,9 +2735,10 @@ export class GameEngine {
       }
 
       // Vibration frequency dynamics
-      if (arm.vibrationHz === undefined) arm.vibrationHz = 250;
+      const restingHz = this.state.stats.vibrationBase || 250;
+      if (arm.vibrationHz === undefined) arm.vibrationHz = restingHz;
       if (!arm.striking) {
-        arm.vibrationHz = Math.max(250, arm.vibrationHz - dt * 160);
+        arm.vibrationHz = Math.max(restingHz, arm.vibrationHz - dt * 160);
       }
 
       if (arm.clashing && arm.clashTimer !== undefined) {
@@ -3321,16 +3364,52 @@ export class GameEngine {
             if (bestTarget.isBoss && bestTarget.isStunned) {
               bonusDmg = Math.round(finalDmg * 2.0); // 2x damage while boss posture is broken!
             }
-            this.damageEnemy(bestTarget, bonusDmg, isCrit || (bestTarget.isBoss && bestTarget.isStunned));
+            // The band is read before the strike drives the frequency up, so a phase build
+            // does not lose its bypass on the very hit that pushes it out of the band.
+            const strikeBand = vectorBand(arm.vibrationHz || restingHz);
+            this.damageEnemy(
+              bestTarget,
+              bonusDmg,
+              isCrit || (bestTarget.isBoss && bestTarget.isStunned),
+              undefined,
+              strikeBand === 'phase'
+            );
             sound.playVectorSlash();
             this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
 
-            // Vibration resonance increase & armor shred
-            arm.vibrationHz = Math.min(1000, (arm.vibrationHz || 250) + 75);
-            if (arm.vibrationHz >= 750) {
-              const resonanceBonus = Math.round(finalDmg * 0.45);
-              this.damageEnemy(bestTarget, resonanceBonus, true);
+            /*
+             * Vibration band effects.
+             *
+             * Striking drives the frequency up from the build's resting value, so a build
+             * that idles low still climbs during a sustained fight - the band is where the
+             * arm sits right now, not a fixed loadout choice.
+             */
+            arm.vibrationHz = Math.min(1000, (arm.vibrationHz || restingHz) + 75);
+            const band = vectorBand(arm.vibrationHz);
+
+            if (band === 'shear') {
+              // High frequency cuts: the original resonance bonus.
+              this.damageEnemy(bestTarget, Math.round(finalDmg * 0.45), true);
+            } else if (band === 'critical') {
+              // Extreme frequency becomes visible and detonates on contact. Splash is
+              // deliberately modest per target - its value is hitting a packed rank at all.
+              this.damageEnemy(bestTarget, Math.round(finalDmg * 0.3), true);
+              const blastR = 74;
+              for (const other of this.state.enemies) {
+                if (other === bestTarget || other.hp <= 0) continue;
+                if (Math.hypot(other.x - bestTarget.x, other.y - bestTarget.y) > blastR) continue;
+                this.damageEnemy(other, Math.round(finalDmg * 0.34), false);
+              }
+              this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, true, 'slash');
+            } else if (band === 'kinetic') {
+              // Mid frequency lifts and bursts vessels: the internal rupture the engine
+              // already models, applied on a fraction of strikes.
+              if (!bestTarget.isBoss && Math.random() < 0.22 && (bestTarget.internalRuptureTimer || 0) <= 0) {
+                bestTarget.internalRuptureTimer = 1.6;
+              }
             }
+            // 'phase' has no bonus here; its whole point is handled before mitigation,
+            // in damageEnemy, where it ignores armour and shields outright.
 
             // Telekinetic Fling: Hurling slain enemy corpse or kinetic blast through enemy ranks
             const canFling = arm.role === 'flinger' || (bestTarget.hp <= 0 && Math.random() < 0.4);
@@ -7727,7 +7806,7 @@ export class GameEngine {
     }
   }
 
-  private damageEnemy(enemy: Enemy, rawDamage: number, forceCrit: boolean = false, weapon?: Weapon) {
+  private damageEnemy(enemy: Enemy, rawDamage: number, forceCrit: boolean = false, weapon?: Weapon, phasing: boolean = false) {
     let critChance = (this.state.stats.critChance + (weapon?.critChance || 0) * 100);
     if (this.state.character.id === 'lucy' && this.state.characterResource.isActive) {
       critChance = 100;
@@ -7775,11 +7854,15 @@ export class GameEngine {
       finalDamage = Math.max(1, Math.round(finalDamage * (1 - guilt * 0.35)));
     }
 
-    if (enemy.eliteAffix === 'armored') {
+    // A vector at low frequency does not interact with matter on its way through it, so
+    // plate and kinetic barriers are simply not in the way. This is what makes the bottom of
+    // the frequency scale a build choice rather than a penalty: it is the clean answer to
+    // shield bearers and kinetic-shield elites, and it is wasted on an unarmoured swarm.
+    if (enemy.eliteAffix === 'armored' && !phasing) {
       finalDamage = Math.max(1, Math.round(finalDamage * 0.7)); // 30% ballistic armor mitigation
     }
 
-    if (enemy.shield && enemy.shield > 0) {
+    if (enemy.shield && enemy.shield > 0 && !phasing) {
       enemy.lastDamageTaken = 0;
       const absorbed = Math.round(finalDamage * 0.65);
       const bleedThrough = finalDamage - absorbed;

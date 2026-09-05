@@ -4,6 +4,7 @@ import { Shield, Zap, Sparkles, Heart, Clock, Dna, Swords, Pause, Play, Crosshai
 import { sound } from '../utils/sound';
 import { ItemSynergy, ArenaType, WeaponEvolution, PassiveItem } from '../types';
 import { FINAL_CAMPAIGN_WAVE } from '../data/gameData';
+import { vectorBand, vectorBandLabel } from '../utils/engine';
 import { useLanguage, getLanguage } from '../utils/i18n';
 
 // Canvas overlay strings are drawn outside React, so they read the active language directly.
@@ -16,6 +17,14 @@ const cloc = (ru: string, en: string) => (getLanguage() === 'ru' ? ru : en);
  * uses and unreadable while the arena is moving. These are the only sizes the renderer may
  * use; anything drawn above an enemy belongs in CANVAS_FONT.badge.
  */
+/** One colour per vibration band, shared by the HUD readout. */
+const BAND_COLORS: Record<string, string> = {
+  phase: '#38bdf8',
+  kinetic: '#a3e635',
+  shear: '#fbbf24',
+  critical: '#f472b6',
+};
+
 const CANVAS_FONT = {
   badge: 'bold 11px monospace',      // status tags above a unit
   label: 'bold 12px monospace',      // countdowns, unit health readouts
@@ -859,15 +868,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
                 {isRu ? 'ВЕКТОРЫ' : 'VECTORS'}: {hudState.vectorCount}
               </span>
               <span className="text-gray-600">•</span>
+              {/*
+                The band, not just the number. Which band the vectors sit in changes what
+                they do to armour, so it is the readout the player actually acts on.
+              */}
               <span
-                className={
-                  hudState.avgVibrationHz >= 750
-                    ? 'text-cyan-300 font-bold animate-pulse'
-                    : 'text-gray-300'
-                }
+                className="font-bold"
+                style={{ color: BAND_COLORS[vectorBand(hudState.avgVibrationHz)] }}
               >
-                {hudState.avgVibrationHz} {isRu ? 'Гц' : 'Hz'}
-                {hudState.avgVibrationHz >= 750 ? (isRu ? ' [⚡РЕЗОНАНС]' : ' [⚡RESONANCE]') : ''}
+                {hudState.avgVibrationHz} {isRu ? 'Гц' : 'Hz'} · {vectorBandLabel(hudState.avgVibrationHz)}
               </span>
               {hudState.deflectorsCount > 0 && (
                 <span className="text-purple-300 text-xs bg-purple-950/50 px-1.5 py-0.5 rounded border border-purple-500/30">
