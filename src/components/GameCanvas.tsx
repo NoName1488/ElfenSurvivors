@@ -588,6 +588,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               {hudState.currentArena === 'enoshima_coast' && (isRu ? '🌊 ЭНОСИМА' : '🌊 ENOSHIMA')}
               {hudState.currentArena === 'military_highway' && (isRu ? '🚧 ШОССЕ SAT' : '🚧 SAT HIGHWAY')}
               {hudState.currentArena === 'kakuzawa_citadel' && (isRu ? '🏛️ ЦИТАДЕЛЬ' : '🏛️ CITADEL')}
+              {hudState.currentArena === 'singularity_epicenter' && (isRu ? '\u{1F30A} ГРОТ LEBENSBORN' : '\u{1F30A} LEBENSBORN GROTTO')}
             </span>
           </div>
           {hudState.isWaveEnding ? (
@@ -1214,6 +1215,77 @@ function drawArenaFloor(ctx: CanvasRenderingContext2D, width: number, height: nu
     ctx.strokeStyle = 'rgba(220, 38, 38, 0.4)';
     ctx.lineWidth = 4;
     ctx.strokeRect(2, 2, width - 4, height - 4);
+  } else if (arena === 'singularity_epicenter') {
+    /*
+     * The Lebensborn grotto, waves 16+.
+     *
+     * From the source material: a flooded cavern two kilometres under the island, unnaturally
+     * bright, radioactive enough to give an ordinary person a nosebleed. Around the water
+     * stand rows of small stone markers - the graves of the malformed children the Kakuzawa
+     * line produced over centuries trying to breed the trait back.
+     *
+     * This arena existed as a type since the campaign was extended past wave 15 but was never
+     * drawn: it fell through to the lab floor and the HUD had no name for it, so the whole
+     * late game silently reused the first arena's art.
+     */
+    const t = Date.now() * 0.001;
+
+    ctx.fillStyle = '#04060a';
+    ctx.fillRect(0, 0, width, height);
+
+    // The lake: a pale cold glow from below rather than a lit room.
+    const lake = ctx.createRadialGradient(width / 2, height / 2, 40, width / 2, height / 2, Math.max(width, height) * 0.62);
+    lake.addColorStop(0, 'rgba(148, 210, 235, 0.20)');
+    lake.addColorStop(0.45, 'rgba(37, 78, 106, 0.13)');
+    lake.addColorStop(1, 'rgba(2, 6, 12, 0)');
+    ctx.fillStyle = lake;
+    ctx.fillRect(0, 0, width, height);
+
+    // Slow caustics across the water.
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.10)';
+    ctx.lineWidth = 1.5;
+    for (let ring = 1; ring <= 7; ring++) {
+      const r = ring * 130 + Math.sin(t * 0.5 + ring) * 14;
+      ctx.beginPath();
+      ctx.arc(width / 2, height / 2, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Grave markers: rows of small stones around the shore. Deterministic placement, so the
+    // arena reads as a built place rather than as noise that re-rolls every frame.
+    for (let i = 0; i < 90; i++) {
+      const gx = ((i * 271) % Math.max(1, Math.floor(width - 160))) + 80;
+      const gy = ((i * 487) % Math.max(1, Math.floor(height - 160))) + 80;
+      const dCentre = Math.hypot(gx - width / 2, gy - height / 2);
+      // Leave the middle of the lake clear.
+      if (dCentre < Math.min(width, height) * 0.26) continue;
+      const h = 9 + ((i * 37) % 9);
+      ctx.fillStyle = '#0d141d';
+      ctx.fillRect(gx - 3, gy - h, 6, h);
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
+      ctx.fillRect(gx - 3, gy - h, 6, 2);
+    }
+
+    // Radiation haze drifting through the cavern.
+    ctx.fillStyle = 'rgba(190, 242, 100, 0.028)';
+    for (let i = 0; i < 26; i++) {
+      const hx = (i * 331 + Math.sin(t * 0.24 + i) * 60) % width;
+      const hy = (i * 577 + Math.cos(t * 0.19 + i) * 45) % height;
+      ctx.beginPath();
+      ctx.arc(hx, hy, 60 + (i % 5) * 22, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Cavern walls closing in at the edges.
+    const walls = ctx.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.34, width / 2, height / 2, Math.max(width, height) * 0.72);
+    walls.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    walls.addColorStop(1, 'rgba(0, 0, 0, 0.82)');
+    ctx.fillStyle = walls;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.16)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(2, 2, width - 4, height - 4);
   } else {
     // Lab Containment Facility: Cold steel plating, hazard stripes, biohazard stencil, red beacon
     ctx.fillStyle = '#05070a';
@@ -1495,6 +1567,119 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     }
 
     ctx.restore();
+  }
+
+  // 6.4 Draw SAT landing craft (Enoshima only)
+  for (const b of s.patrolBoats) {
+    ctx.save();
+    const bob = Math.sin(b.bobPhase) * 3;
+    ctx.translate(b.x, b.y + bob);
+    if (b.phase === 'sinking') {
+      ctx.rotate(b.sinkRoll || 0);
+      ctx.globalAlpha = Math.max(0, 1 - (b.sinkTimer || 0) / 2.6);
+    }
+
+    // Wake, only while under way.
+    if (b.phase === 'approaching') {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(226, 232, 240, 0.35)';
+      ctx.lineWidth = 2;
+      for (let w = 1; w <= 3; w++) {
+        ctx.beginPath();
+        ctx.arc(-b.radius - w * 16, 0, 8 + w * 5, -Math.PI * 0.42, Math.PI * 0.42);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // Hull: a blunt landing craft, bow to the right, toward the beach.
+    ctx.fillStyle = '#1f2937';
+    ctx.beginPath();
+    ctx.moveTo(b.radius, 0);
+    ctx.lineTo(b.radius * 0.45, -b.radius * 0.5);
+    ctx.lineTo(-b.radius, -b.radius * 0.46);
+    ctx.lineTo(-b.radius, b.radius * 0.46);
+    ctx.lineTo(b.radius * 0.45, b.radius * 0.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Bow ramp, down while troops are wading out.
+    if (b.phase === 'unloading') {
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(b.radius * 0.9, -b.radius * 0.34, 18, b.radius * 0.68);
+    }
+
+    // Deckhouse.
+    ctx.fillStyle = '#374151';
+    ctx.fillRect(-b.radius * 0.62, -b.radius * 0.3, b.radius * 0.6, b.radius * 0.6);
+
+    // Rocket crew: the tube glows as it is about to fire, which is the on-boat half of the
+    // telegraph. The ground marker is the other half.
+    const arming = (b.rocketWarnTimer || 0) > 0;
+    ctx.fillStyle = arming ? '#f97316' : '#64748b';
+    if (arming) {
+      ctx.shadowColor = '#f97316';
+      ctx.shadowBlur = 14;
+    }
+    ctx.fillRect(-b.radius * 0.2, -b.radius * 0.62, 22, 7);
+    ctx.shadowBlur = 0;
+
+    // Machine gun mount.
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath();
+    ctx.arc(b.radius * 0.05, b.radius * 0.36, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(b.radius * 0.05, b.radius * 0.36);
+    const gunAim = Math.atan2(p.y - b.y, p.x - b.x);
+    ctx.lineTo(b.radius * 0.05 + Math.cos(gunAim) * 15, b.radius * 0.36 + Math.sin(gunAim) * 15);
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Health bar and label, upright in world space.
+    if (b.phase !== 'sinking') {
+      ctx.save();
+      const barW = 60;
+      const frac = Math.max(0, b.hp / b.maxHp);
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(b.x - barW / 2, b.y - b.radius - 20, barW, 5);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(b.x - barW / 2, b.y - b.radius - 20, barW * frac, 5);
+      ctx.strokeStyle = 'rgba(148,163,184,0.7)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(b.x - barW / 2, b.y - b.radius - 20, barW, 5);
+
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = CANVAS_FONT.badge;
+      ctx.textAlign = 'center';
+      ctx.fillText(cloc('КАТЕР SAT', 'SAT LANDING CRAFT'), b.x, b.y - b.radius - 26);
+      ctx.restore();
+    }
+
+    // Troops wading from the ramp to the sand.
+    for (const m of b.squad) {
+      if (m.landed || m.progress <= 0) continue;
+      const wx = b.x + b.radius + m.progress * 70;
+      const wy = b.y + m.side * 14 * m.progress;
+      ctx.save();
+      ctx.fillStyle = '#475569';
+      ctx.beginPath();
+      ctx.arc(wx, wy, 8, 0, Math.PI * 2);
+      ctx.fill();
+      // Spray around the legs.
+      ctx.strokeStyle = 'rgba(226, 232, 240, 0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(wx, wy + 6, 11, 4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   // 6.5 Draw Helicopter Dropships

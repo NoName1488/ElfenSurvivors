@@ -1110,18 +1110,6 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     tags: ['tech'],
   },
   {
-    id: 'lilium_music_box',
-    name: 'Lilium Music Box',
-    russianName: 'Музыкальная шкатулка Lilium',
-    rarity: 'legendary',
-    description: '+1 Регенерация ОЗ/5сек, +10% Удачи, +5% Уклонения.',
-    cost: 70,
-    icon: 'Music',
-    stats: { hpRegen: 1, luck: 10, dodge: 5 },
-    lore: 'Мелодия пробуждает забытые человеческие воспоминания.',
-    tags: ['dna', 'stasis'],
-  },
-  {
     id: 'dna_harvester_core',
     name: 'DNA Bio-Synthesizer',
     russianName: 'Био-синтезатор ДНК',

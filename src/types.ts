@@ -278,6 +278,48 @@ export interface HelicopterDropship {
   crashTargetY?: number;
 }
 
+/**
+ * SAT patrol boat, Enoshima only.
+ *
+ * The coast arena has a strip of open water down its left edge, which until now was scenery.
+ * These come in across it: a landing craft noses up to the shoreline, puts a squad into the
+ * shallows, then stands off and covers them. It cannot leave the water, so unlike a
+ * helicopter it is a threat with a fixed bearing - the player always knows which side the
+ * pressure is coming from, and can choose to swim out and deal with it or to fight the
+ * landed squad and let the boat keep shelling.
+ */
+export interface PatrolBoat {
+  id: number;
+  x: number;
+  y: number;
+  /** How far up the beach the bow is aiming; the boat stops short of it, in the shallows. */
+  targetX: number;
+  targetY: number;
+  phase: 'approaching' | 'unloading' | 'covering' | 'sinking';
+  timer: number;
+  hp: number;
+  maxHp: number;
+  radius: number;
+  heading: number;
+  /** Bobbing on the swell, purely cosmetic. */
+  bobPhase: number;
+  squad: {
+    type: Enemy['type'];
+    progress: number; // 0 aboard, 1 ashore
+    landed: boolean;
+    side: -1 | 1;
+  }[];
+  rocketTimer: number;
+  /** Where the next rocket is walking in, telegraphed before it lands. */
+  rocketTargetX?: number;
+  rocketTargetY?: number;
+  rocketWarnTimer?: number;
+  gunTimer: number;
+  gunBurst: number;
+  sinkTimer?: number;
+  sinkRoll?: number;
+}
+
 export interface BossVectorArm {
   id?: number;
   baseAngle: number;

@@ -25,6 +25,7 @@ import {
   PointOfInterest,
   WeaponSetBonus,
   WeaponTag,
+  PatrolBoat,
 } from '../types';
 import { sound } from './sound';
 import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG, FINAL_CAMPAIGN_WAVE } from '../data/gameData';
@@ -89,6 +90,7 @@ export interface GameEngineState {
   bossWarningText: string | null;
   bossSpawnedInWave: boolean;
   dropships: HelicopterDropship[];
+  patrolBoats: PatrolBoat[];
   dropshipWarningTimer: number;
   dropshipWarningText: string | null;
   dropshipSpawnedInWave: boolean;
@@ -461,6 +463,7 @@ export class GameEngine {
   private lastEnemySpawn: number = 0;
   private enemyIdCounter: number = 0;
   private squadIdCounter: number = 0;
+  private boatTimer: number = 0;
   private spawningTwinPartner: boolean = false;
   private captureSquadTimer: number = 0;
   private captureSquadsThisWave: number = 0;
@@ -544,6 +547,7 @@ export class GameEngine {
       bossWarningText: null,
       bossSpawnedInWave: false,
       dropships: [],
+      patrolBoats: [],
       dropshipWarningTimer: 0,
       dropshipWarningText: null,
       dropshipSpawnedInWave: false,
@@ -1286,6 +1290,8 @@ export class GameEngine {
     this.state.bossWarningText = null;
     this.state.bossSpawnedInWave = false;
     this.state.dropships = [];
+    this.state.patrolBoats = [];
+    this.boatTimer = 12 + Math.random() * 6;
     this.state.dropshipSpawnedInWave = false;
     this.state.dropshipWarningTimer = 0;
     this.state.dropshipWarningText = null;
@@ -2279,6 +2285,26 @@ export class GameEngine {
     this.updateWeapons(dt);
     this.updateEnemySpawning(dt);
     this.updateDropships(dt);
+
+    /*
+     * Landings, Enoshima only.
+     *
+     * The coast arena has open water down its left edge and until now it was scenery. Boats
+     * make that edge mean something: a fixed bearing the pressure arrives from, on the beach
+     * where the source material staged its two Bando fights.
+     */
+    if (
+      this.state.currentArena === 'enoshima_coast' &&
+      this.state.isWaveActive &&
+      !this.state.isWaveEnding
+    ) {
+      this.boatTimer -= dt;
+      if (this.boatTimer <= 0 && this.state.patrolBoats.length < 2) {
+        this.boatTimer = 26 - Math.min(10, this.state.wave * 0.8) + Math.random() * 8;
+        this.spawnPatrolBoat();
+      }
+    }
+    this.updatePatrolBoats(dt);
     this.updateArtilleryHazards(dt);
     this.updatePointsOfInterest(dt);
     this.updateEnemies(dt);
@@ -3561,6 +3587,46 @@ export class GameEngine {
           const isBossDuel = nearbyEnemies.some((e) => e.isBoss);
           const baseCadence = (isBossDuel ? (totalArmCount > 10 ? 0.35 : 0.25) : (totalArmCount > 10 ? 0.75 : 0.42)) * cadenceMultiplier;
           arm.attackCooldown = (baseCadence / atkSpeedMod) * (0.8 + Math.random() * 0.4);
+        } else if (this.state.patrolBoats && this.state.patrolBoats.some((b) => b.phase !== 'sinking' && Math.hypot(b.x - pX, b.y - pY) <= maxEngageDistance * 1.3)) {
+          /*
+           * Vectors reach out over the water.
+           *
+           * A boat sitting offshore shelling the beach has to be answerable, or the only
+           * play against it is to walk out of the arena's whole left third. The reach is the
+           * same one that tears helicopters down.
+           */
+          const boat = this.state.patrolBoats.find(
+            (b) => b.phase !== 'sinking' && Math.hypot(b.x - pX, b.y - pY) <= maxEngageDistance * 1.3
+          )!;
+          const bAngle = Math.atan2(boat.y - pY, boat.x - pX);
+          let bAngleDiff = Math.abs(arm.baseAngle - bAngle);
+          if (bAngleDiff > Math.PI) bAngleDiff = Math.PI * 2 - bAngleDiff;
+
+          if (bAngleDiff < Math.PI * 0.65) {
+            arm.striking = true;
+            arm.strikeProgress = 0;
+            arm.targetX = boat.x + (Math.random() - 0.5) * 40;
+            arm.targetY = boat.y + (Math.random() - 0.5) * 20;
+            arm.strikeType = Math.random() < 0.5 ? 'slash' : 'pierce';
+
+            const baseDmg = (34 + this.state.stats.psiPower * 0.6) * psiMultiplier;
+            const isCrit = Math.random() < (this.state.stats.critChance / 100);
+            const finalDmg = Math.round(isCrit ? baseDmg * this.state.stats.critDamage : baseDmg);
+            boat.hp -= finalDmg;
+            sound.playMetalClank();
+            this.triggerScreenShake(4, 0.14);
+            this.state.damageNumbers.push({
+              id: ++this.dmgNumIdCounter,
+              x: arm.targetX,
+              y: arm.targetY - 15,
+              text: `${finalDmg}`,
+              color: isCrit ? '#f59e0b' : '#38bdf8',
+              opacity: 1,
+              isCrit,
+              vy: -40,
+            });
+            arm.attackCooldown = (0.5 / atkSpeedMod) * (0.8 + Math.random() * 0.4);
+          }
         } else if (this.state.dropships && this.state.dropships.length > 0) {
           // Autonomous Vector Anti-Air: Tear into Dropship Gunships!
           const livingDropships = this.state.dropships.filter(
@@ -4986,6 +5052,222 @@ export class GameEngine {
     this.state.dropshipWarningText = loc('ВНИМАНИЕ: БОЕВОЙ ВЕРТОЛЕТ SAT ЗАХОДИТ НА ВЫСАДКУ ШТУРМОВОГО ОТРЯДА!', 'WARNING: SAT GUNSHIP INBOUND - ASSAULT SQUAD DEPLOYING!');
     sound.playDropshipAlarm();
     this.triggerScreenShake(8, 0.4);
+  }
+
+  /** Width of the water strip down the left edge of the Enoshima arena, in world units. */
+  private oceanWidth(): number {
+    return Math.max(90, this.state.arenaWidth * 0.16);
+  }
+
+  /**
+   * Sends a landing craft in across the water.
+   *
+   * Enoshima only, because it is the only arena with a coastline - the source material's
+   * beach, where Bando fought Lucy twice. The boat noses into the shallows, puts a squad
+   * ashore, then stands off and covers them until something kills it. It cannot leave the
+   * water, so unlike a helicopter it is pressure from a known bearing: the player can go and
+   * sink it, or accept being shelled while dealing with the squad it landed.
+   */
+  private spawnPatrolBoat() {
+    const ocean = this.oceanWidth();
+    const pY = this.state.player.y;
+
+    // Come in level with the player, so a landing is a real event rather than scenery at the
+    // far end of a 2200px arena. Kept clear of the arena's top and bottom edges.
+    const targetY = Math.max(220, Math.min(this.state.arenaHeight - 220, pY + (Math.random() - 0.5) * 320));
+
+    const squadTypes: Enemy['type'][] = this.state.wave >= 6
+      ? ['riot_shield', 'sat_shotgunner', 'sat_grunt', 'hazmat_flamer']
+      : ['sat_grunt', 'sat_shotgunner', 'riot_shield'];
+
+    const hpScaling = 1 + Math.max(0, this.state.wave - 4) * 0.25;
+    const baseHp = Math.round(900 * hpScaling);
+
+    this.state.patrolBoats.push({
+      id: ++this.enemyIdCounter,
+      x: -140,
+      y: targetY,
+      targetX: ocean - 46,
+      targetY,
+      phase: 'approaching',
+      timer: 0,
+      hp: baseHp,
+      maxHp: baseHp,
+      radius: 40,
+      heading: 0,
+      bobPhase: Math.random() * Math.PI * 2,
+      squad: squadTypes.map((type, idx) => ({
+        type,
+        progress: 0,
+        landed: false,
+        side: (idx % 2 === 0 ? -1 : 1) as -1 | 1,
+      })),
+      rocketTimer: 3.5,
+      gunTimer: 1.2,
+      gunBurst: 0,
+    });
+
+    this.state.dropshipWarningTimer = 3.6;
+    this.state.dropshipWarningText = loc(
+      'С МОРЯ: КАТЕР SAT ИДЁТ НА ВЫСАДКУ. РАКЕТНЫЙ РАСЧЁТ НА БОРТУ',
+      'FROM THE SEA: SAT LANDING CRAFT INBOUND, ROCKET CREW ABOARD'
+    );
+    sound.playDropshipAlarm();
+    this.triggerScreenShake(7, 0.35);
+  }
+
+  private updatePatrolBoats(dt: number) {
+    const ocean = this.oceanWidth();
+    const pX = this.state.player.x;
+    const pY = this.state.player.y;
+
+    for (let i = this.state.patrolBoats.length - 1; i >= 0; i--) {
+      const b = this.state.patrolBoats[i];
+      b.bobPhase += dt * 2.1;
+      b.timer += dt;
+
+      if (b.phase === 'sinking') {
+        b.sinkTimer = (b.sinkTimer || 0) + dt;
+        b.sinkRoll = (b.sinkRoll || 0) + dt * 0.9;
+        b.y += dt * 6;
+        if (Math.random() < 0.4) {
+          this.state.particles.push({
+            x: b.x + (Math.random() - 0.5) * b.radius * 2,
+            y: b.y + (Math.random() - 0.5) * b.radius,
+            vx: (Math.random() - 0.5) * 30,
+            vy: -50 - Math.random() * 40,
+            life: 0.9,
+            maxLife: 0.9,
+            size: 5 + Math.random() * 5,
+            color: '#1e293b',
+            alpha: 0.75,
+            type: 'spark',
+          });
+        }
+        if (b.sinkTimer > 2.6) this.state.patrolBoats.splice(i, 1);
+        continue;
+      }
+
+      if (b.hp <= 0) {
+        b.phase = 'sinking';
+        b.sinkTimer = 0;
+        sound.playBossShockwave();
+        this.triggerScreenShake(12, 0.45);
+        // Anyone still aboard goes down with it: sinking a boat early is the reward for
+        // dealing with it instead of with the squad it came to land.
+        b.squad = b.squad.filter((m) => m.landed);
+        continue;
+      }
+
+      b.heading = approachAngle(b.heading, 0, dt * 2);
+
+      if (b.phase === 'approaching') {
+        b.x += (b.targetX - b.x) * Math.min(1, dt * 0.9);
+        if (Math.abs(b.targetX - b.x) < 8) {
+          b.phase = 'unloading';
+          b.timer = 0;
+        }
+      } else if (b.phase === 'unloading') {
+        // Troops wade ashore one after another rather than all at once.
+        const slot = Math.floor(b.timer / 0.75);
+        for (let k = 0; k < b.squad.length; k++) {
+          const m = b.squad[k];
+          if (m.landed || k > slot) continue;
+          m.progress = Math.min(1, m.progress + dt * 0.85);
+          if (m.progress >= 1) {
+            m.landed = true;
+            const landX = ocean + 30 + Math.random() * 60;
+            const landY = b.y + m.side * (18 + Math.random() * 26);
+            this.spawnEnemy(m.type, landX, landY, false);
+          }
+        }
+        if (b.squad.every((m) => m.landed)) {
+          b.phase = 'covering';
+          b.timer = 0;
+        }
+      } else if (b.phase === 'covering') {
+        b.x += Math.sin(b.bobPhase * 0.3) * 6 * dt;
+      }
+
+      const dist = Math.hypot(pX - b.x, pY - b.y);
+
+      /*
+       * Rocket crew. Telegraphed with a ground marker before it flies, because an
+       * unavoidable explosion from off-screen would be pure punishment - the point is to
+       * make standing on open sand opposite a boat a bad idea, not to tax inattention.
+       */
+      b.rocketTimer -= dt;
+      if (b.rocketWarnTimer !== undefined && b.rocketWarnTimer > 0) {
+        b.rocketWarnTimer -= dt;
+        if (b.rocketWarnTimer <= 0) {
+          const tx = b.rocketTargetX === undefined ? pX : b.rocketTargetX;
+          const ty = b.rocketTargetY === undefined ? pY : b.rocketTargetY;
+          const ang = Math.atan2(ty - b.y, tx - b.x);
+          this.state.projectiles.push({
+            id: ++this.projectileIdCounter,
+            x: b.x,
+            y: b.y,
+            vx: Math.cos(ang) * 300,
+            vy: Math.sin(ang) * 300,
+            radius: 9,
+            damage: Math.round(26 * getEnemyDamageScaling(this.state.wave)),
+            isPlayer: false,
+            color: '#f97316',
+            life: 3.2,
+            maxLife: 3.2,
+            penetration: 1,
+            isRocket: true,
+            explosionRadius: 78,
+          });
+          sound.playHelicopterMinigun();
+          b.rocketWarnTimer = undefined;
+        }
+      } else if (b.rocketTimer <= 0 && dist < 640 && b.phase !== 'approaching') {
+        // Same range as the machine gun, deliberately. The arena is 2600 wide and the water
+        // is only its left sixth, so a longer reach meant a boat shelling the player from
+        // off-screen with nothing visible to blame - the readability problem the camera fix
+        // existed to kill. Inland, a boat is a troop spawner; it only shells what it can see.
+        b.rocketTimer = 5.5 + Math.random() * 2.5;
+        b.rocketTargetX = pX;
+        b.rocketTargetY = pY;
+        b.rocketWarnTimer = 1.15;
+        this.state.artilleryHazards.push({
+          id: ++this.enemyIdCounter,
+          x: pX,
+          y: pY,
+          radius: 78,
+          timer: 1.15,
+          maxTimer: 1.15,
+          // Zero damage: this marker only shows where the rocket is going. The explosion
+          // itself is carried by the projectile, so the hazard must not double-dip.
+          damage: 0,
+          color: '#f97316',
+        });
+      }
+
+      // Machine gun: three rounds close together, then a pause.
+      b.gunTimer -= dt;
+      if (b.gunTimer <= 0 && dist < 620 && b.phase !== 'approaching') {
+        b.gunBurst = (b.gunBurst || 0) + 1;
+        const ang = Math.atan2(pY - b.y, pX - b.x) + (Math.random() - 0.5) * 0.14;
+        this.state.projectiles.push({
+          id: ++this.projectileIdCounter,
+          x: b.x + Math.cos(ang) * b.radius,
+          y: b.y + Math.sin(ang) * b.radius,
+          vx: Math.cos(ang) * 470,
+          vy: Math.sin(ang) * 470,
+          radius: 4,
+          damage: Math.round(7 * getEnemyDamageScaling(this.state.wave)),
+          isPlayer: false,
+          color: '#fbbf24',
+          life: 1.8,
+          maxLife: 1.8,
+          penetration: 1,
+          isBullet: true,
+        });
+        b.gunTimer = b.gunBurst % 3 === 0 ? 2.4 + Math.random() * 1.2 : 0.14;
+      }
+    }
   }
 
   private updateDropships(dt: number) {
@@ -7754,6 +8036,29 @@ export class GameEngine {
       }
 
       if (p.isPlayer) {
+        // Boat hull: a landing craft has to be shootable, not only reachable by vectors.
+        if (this.state.patrolBoats && this.state.patrolBoats.length > 0) {
+          for (const b of this.state.patrolBoats) {
+            if (b.phase === 'sinking') continue;
+            if (Math.hypot(b.x - p.x, b.y - p.y) >= b.radius + 6) continue;
+            b.hp -= p.damage;
+            sound.playMetalClank();
+            this.state.damageNumbers.push({
+              id: ++this.dmgNumIdCounter,
+              x: p.x,
+              y: p.y - 12,
+              text: `${Math.round(p.damage)}`,
+              color: '#38bdf8',
+              opacity: 1,
+              isCrit: false,
+              vy: -35,
+            });
+            p.life = 0;
+            break;
+          }
+          if (p.life <= 0) continue;
+        }
+
         // Helicopter collision checks
         if (this.state.dropships && this.state.dropships.length > 0) {
           let hitHelicopter = false;
