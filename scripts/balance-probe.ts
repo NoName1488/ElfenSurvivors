@@ -86,7 +86,24 @@ if (process.env.TACTICS !== undefined) {
   for (const level of DIFFICULTY_LEVELS) level.tactics = forced;
 }
 
+import { sound } from '../src/utils/sound';
 import { GameEngine } from '../src/utils/engine';
+
+/*
+ * Silence the audio layer completely.
+ *
+ * Not for quiet - there are no speakers here - but for determinism. Several sound routines
+ * consume Math.random for oscillator detune, and several of those sit behind
+ * performance.now() throttles, so whether a given call draws from the random stream depends
+ * on wall-clock timing. That made the same seed on the same build produce 3, 7 and 4 deaths.
+ * The simulation must not be able to hear itself.
+ */
+for (const key of Object.getOwnPropertyNames(Object.getPrototypeOf(sound))) {
+  if (key === 'constructor') continue;
+  const value = (sound as any)[key];
+  if (typeof value === 'function') (sound as any)[key] = () => undefined;
+}
+
 import { CHARACTERS, WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS } from '../src/data/gameData';
 import { Weapon, WeaponType } from '../src/types';
 

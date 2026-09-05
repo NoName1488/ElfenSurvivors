@@ -2447,6 +2447,18 @@ export class GameEngine {
       if (this.aegisCooldown <= 0) this.aegisCharge = 25;
     }
 
+    // Delayed follow-up hits, on game time. See delayedEffects.
+    if (this.delayedEffects.length > 0) {
+      for (let i = this.delayedEffects.length - 1; i >= 0; i--) {
+        const eff = this.delayedEffects[i];
+        eff.remaining -= dt;
+        if (eff.remaining <= 0) {
+          this.delayedEffects.splice(i, 1);
+          eff.run();
+        }
+      }
+    }
+
     this.updatePlayerMovement(dt);
     this.updateVectorArms(dt);
     this.updateWeapons(dt);
@@ -2902,6 +2914,45 @@ export class GameEngine {
    */
   satEngagementRange(): number {
     return this.playerVectorReach() + 170;
+  }
+
+  /**
+   * Whether one of ours is standing in the line of fire.
+   *
+   * At training level 2 a soldier will not put a round through the back of the man in front
+   * of him. That turns a bunched formation into its own dead ground: the player can pull
+   * the cordon into a clump and walk out through the side that has stopped shooting. It
+   * also gives the shield bearer's footwork a second meaning, since a slab planted in the
+   * wrong place blocks his own section's line as well as the player's.
+   *
+   * Only evaluated on the frame a shot is otherwise ready, so it costs one pass over the
+   * enemy list per shot rather than per frame.
+   */
+  private friendlyInLineOfFire(shooter: Enemy, tx: number, ty: number): boolean {
+    const dx = tx - shooter.x;
+    const dy = ty - shooter.y;
+    const range = Math.hypot(dx, dy);
+    if (range < 1) return false;
+    const ux = dx / range;
+    const uy = dy / range;
+    for (const other of this.state.enemies) {
+      if (other.id === shooter.id || other.hp <= 0 || other.isRouted) continue;
+      /*
+       * A shield does not block the man it is covering.
+       *
+       * The escort stands directly on his line by design - that is the entire job - so
+       * counting it would silence the rifleman the shield exists to protect and turn the
+       * pair into two men doing nothing. A bearer has a viewport and the man behind fires
+       * past the slab; every other body on the line still stops the shot.
+       */
+      if (other.type === 'riot_shield' && other.escortTargetId === shooter.id) continue;
+      const along = (other.x - shooter.x) * ux + (other.y - shooter.y) * uy;
+      // Behind the muzzle, or past the target: not in the way.
+      if (along <= other.radius || along >= range) continue;
+      const off = Math.abs(-(other.x - shooter.x) * uy + (other.y - shooter.y) * ux);
+      if (off < other.radius + 6) return true;
+    }
+    return false;
   }
 
   /** How far a soldier's weapon carries. Always enough to fire from the cordon. */
@@ -3883,12 +3934,12 @@ export class GameEngine {
 
           // Special Mutation: Lucy Relativistic Double-Rend
           if (this.hasMutation('lucy_double_rend')) {
-            setTimeout(() => {
+            this.scheduleGameTime(0.06, () => {
               if (bestTarget && bestTarget.hp > 0) {
                 this.damageEnemy(bestTarget, finalDmg * 0.6, isCrit);
                 this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle + 0.3, false, 'slash');
               }
-            }, 60);
+            });
           }
 
           // Special Mutation: Mariko Micro-Needles
@@ -4648,14 +4699,14 @@ export class GameEngine {
         }
 
         const ruptureDmg = baseDamage * 2.2;
-        setTimeout(() => {
+        this.scheduleGameTime(0.32, () => {
           if (target && target.hp > 0) {
             sound.playGoreHit();
             this.triggerScreenShake(7, 0.22);
             this.damageEnemy(target, ruptureDmg, true, weapon);
             this.createBloodExplosion(target.x, target.y, 20);
           }
-        }, 320);
+        });
 
         return true;
       }
@@ -8106,8 +8157,28 @@ export class GameEngine {
         const bounding = !!e.isBounding;
         const covering = this.difficulty.tactics >= 1 && !bounding && e.shootCooldown !== undefined && !e.isBoss;
         const cadence = e.shootCooldown * (covering ? 0.75 : 1);
+        const disciplined =
+          this.difficulty.tactics >= 2 && !e.isBoss && !isDiclonius(e.type)
+            ? this.friendlyInLineOfFire(e, pX, pY)
+            : false;
+        if (disciplined) {
+          /*
+           * Blocked, so he moves to clear his lane.
+           *
+           * Measured: fire discipline on its own made training level 2 easier than level 1 -
+           * 22 deaths against 29 across six seeds - because "will not shoot through his own
+           * men" reduces to "shoots less". That is not what a trained soldier does when his
+           * lane is blocked; he sidesteps until he has an angle. The dead ground the player
+           * can exploit is still there, it is just measured in the second it takes him to
+           * clear it rather than lasting as long as the clump does.
+           */
+          const clear = Math.atan2(pY - e.y, pX - e.x) + Math.PI * 0.5 * (e.id % 2 === 0 ? 1 : -1);
+          e.x += Math.cos(clear) * (e.baseSpeed || e.speed) * 0.9 * dt;
+          e.y += Math.sin(clear) * (e.baseSpeed || e.speed) * 0.9 * dt;
+        }
         if (
           !bounding &&
+          !disciplined &&
           e.lastShoot >= cadence &&
           dist < this.satWeaponRange(e.type === 'sat_grunt' ? 640 : 520)
         ) {
@@ -8254,7 +8325,51 @@ export class GameEngine {
           containmentHandled = true;
         } else if (allies < 6) {
           e.isContained = true;
-          if (dist < ringRadius - 40) {
+
+          /*
+           * Fire and movement: a third of the cordon stops holding the front.
+           *
+           * At training level 2 these men leave the ring the player is facing and walk a
+           * wide arc, coming in from a bearing behind them while the rest of the line fixes
+           * them in place. It reads as the cordon growing a horn on one side, which is
+           * exactly the thing to react to - and turning to face it is what opens the front.
+           */
+          if (this.difficulty.tactics >= 2 && e.id % 3 === 0) {
+            /*
+             * The bearing is fixed the first time he steps out of the line.
+             *
+             * Computing it from his current bearing each frame makes the destination travel
+             * with him - it stays 117 degrees away forever and he orbits the player without
+             * ever arriving. Locking it once means he actually gets behind them.
+             */
+            if (e.flankBearing === undefined) {
+              const flankSide = e.id % 6 === 0 ? 1 : -1;
+              e.flankBearing = angle + Math.PI + flankSide * 2.05;
+            }
+            const targetBearing = e.flankBearing;
+            const postX = pX + Math.cos(targetBearing) * ringRadius;
+            const postY = pY + Math.sin(targetBearing) * ringRadius;
+            const toPost = Math.hypot(postX - e.x, postY - e.y);
+            if (toPost > 30) {
+              const postAngle = Math.atan2(postY - e.y, postX - e.x);
+              e.x += Math.cos(postAngle) * moveSpeed * 1.1 * dt;
+              e.y += Math.sin(postAngle) * moveSpeed * 1.1 * dt;
+            } else {
+              /*
+               * In position. The manoeuvre element is not part of the cordon any more.
+               *
+               * It used to arrive on the far bearing and then park there at ring distance,
+               * which made the flank a subtraction from the firing line rather than a
+               * threat - a third of the section removed from the fight. These men are the
+               * ones actually going in, so they close and they are not holding back:
+               * isContained stays false, and their fire is worth full value.
+               */
+              e.isContained = false;
+              e.x += Math.cos(angle) * moveSpeed * 1.05 * dt;
+              e.y += Math.sin(angle) * moveSpeed * 1.05 * dt;
+            }
+            containmentHandled = true;
+          } else if (dist < ringRadius - 40) {
             e.x -= Math.cos(angle) * moveSpeed * 0.7 * dt;
             e.y -= Math.sin(angle) * moveSpeed * 0.7 * dt;
           } else if (dist > ringRadius + 80) {
@@ -9276,6 +9391,25 @@ export class GameEngine {
   }
 
   private critApexDepth = 0;
+
+  /**
+   * Effects that land a moment after the blow that caused them.
+   *
+   * Two of these used to be plain setTimeout calls, which schedules damage against the wall
+   * clock rather than against game time. That is wrong three ways: it keeps ticking while
+   * the game is paused, it ignores the fixed timestep the rest of the simulation runs on,
+   * and in a headless run - where thousands of simulated frames pass per real second - the
+   * follow-up lands at an arbitrary point, or after the wave has already ended.
+   *
+   * That last one was measured: the same seed on the same build produced 3, 7 and 4 deaths,
+   * which quietly invalidated every before-and-after comparison made with the probe.
+   */
+  private delayedEffects: Array<{ remaining: number; run: () => void }> = [];
+
+  /** Schedules a callback for `delay` seconds of game time from now. */
+  private scheduleGameTime(delay: number, run: () => void) {
+    this.delayedEffects.push({ remaining: delay, run });
+  }
   /** Crits since the last mortar round, for Bando's fire support apex. */
   private critStreakForStrike = 0;
 

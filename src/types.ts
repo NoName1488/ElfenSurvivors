@@ -417,6 +417,14 @@ export interface Enemy {
   /** Which weapon Bando reaches for next. Cycles so the fight has a readable rhythm. */
   bandoSalvo?: number;
 
+  /**
+   * Fixed bearing this unit is flanking toward, in radians around the player.
+   *
+   * Assigned once, when he leaves the firing line. Recomputing it per frame would make the
+   * destination travel with him and he would orbit forever.
+   */
+  flankBearing?: number;
+
   /** For a riot shield: the id of the shooter it is currently covering. */
   escortTargetId?: number;
 
