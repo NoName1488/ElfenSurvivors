@@ -579,7 +579,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
 
       {/* Grand Boss Health & Shield Bar (Souls-like) */}
       {hudState.activeBoss && (
-        <div className="relative z-20 w-full px-4 md:px-12 py-2 bg-black/90 border-b border-red-500/40 backdrop-blur-md flex flex-col items-center shadow-[0_4px_25px_rgba(0,0,0,0.8)]">
+        <div className="relative z-20 w-full px-4 md:px-12 py-2.5 bg-black/90 border-b-2 border-red-500/60 backdrop-blur-md flex flex-col items-center shadow-[0_4px_25px_rgba(0,0,0,0.8)] animate-in slide-in-from-top duration-500">
           <div className="w-full max-w-2xl flex items-center justify-between text-xs font-cinzel font-bold tracking-wider mb-1">
             <div className="flex items-center gap-2">
               <Skull className="w-4 h-4 text-red-500 animate-pulse" />
@@ -593,13 +593,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
                 </span>
               )}
             </div>
-            <div className="font-mono text-xs text-gray-300">
-              {hudState.activeBoss.hp} / {hudState.activeBoss.maxHp} HP
-              {hudState.activeBoss.maxShield && hudState.activeBoss.shield !== undefined && (
-                <span className="text-cyan-400 ml-2 font-bold">
-                  ({hudState.activeBoss.shield} {isRu ? 'ЩИТ' : 'SHIELD'})
+            <div className="flex items-center gap-2 font-mono text-xs">
+              {hudState.activeBoss.maxShield && hudState.activeBoss.shield !== undefined && hudState.activeBoss.shield > 0 && (
+                <span className="px-2 py-0.5 rounded bg-cyan-950/70 border border-cyan-400/60 text-cyan-300 font-bold">
+                  {isRu ? 'ЩИТ' : 'SHIELD'} {hudState.activeBoss.shield} / {hudState.activeBoss.maxShield}
                 </span>
               )}
+              <span className="text-gray-200 font-bold">
+                {hudState.activeBoss.hp} / {hudState.activeBoss.maxHp} HP
+              </span>
             </div>
           </div>
           {/* Dual Shield + HP Bar */}
@@ -646,21 +648,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         </div>
       )}
 
-      {/* Boss Encounter Warning Banner */}
+      {/*
+        Boss reward notice.
+
+        This slot used to also carry an arrival alarm - a flashing red bar telling the player
+        a boss had spawned, printed directly on top of the boss health bar that had just
+        appeared and said the same thing better. The alarm is gone; what is left is the one
+        message the fight does not otherwise convey: the kill paid out a mutation point.
+      */}
       {hudState.bossWarningText && (
-        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center animate-bounce">
-          <div className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-red-950/95 via-black/95 to-red-950/95 border-2 border-red-500 shadow-[0_0_35px_rgba(239,68,68,0.9)] backdrop-blur-md flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-500 animate-pulse flex-shrink-0" />
-            <span className="text-xs md:text-sm font-mono font-black uppercase tracking-wider text-red-200">
+        <div className="absolute top-28 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center animate-in zoom-in duration-300">
+          <div className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-950/95 via-black/95 to-amber-950/95 border-2 border-amber-400 shadow-[0_0_30px_rgba(245,158,11,0.7)] backdrop-blur-md flex items-center gap-3">
+            <Sparkles className="w-5 h-5 text-amber-300 flex-shrink-0" />
+            <span className="text-xs md:text-sm font-mono font-black uppercase tracking-wider text-amber-100">
               {hudState.bossWarningText}
             </span>
-            <AlertTriangle className="w-5 h-5 text-red-500 animate-pulse flex-shrink-0" />
           </div>
         </div>
       )}
 
       {/* Dropship Warning Banner */}
-      {hudState.dropshipWarningText && !hudState.bossWarningText && (
+      {hudState.dropshipWarningText && !hudState.activeBoss && (
         <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center animate-pulse">
           <div className="px-5 py-2 rounded-xl bg-amber-950/90 border-2 border-amber-500/80 shadow-[0_0_25px_rgba(245,158,11,0.7)] backdrop-blur-md flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 animate-spin" />
@@ -672,7 +680,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
       )}
 
       {/* Assault Phase Banner - the wave's second beat begins */}
-      {hudState.assaultWarningText && !hudState.bossWarningText && (
+      {hudState.assaultWarningText && !hudState.activeBoss && (
         <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center animate-in slide-in-from-top duration-300">
           <div className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-orange-950 via-zinc-950 to-orange-950 border-2 border-orange-500 shadow-[0_0_35px_rgba(249,115,22,0.85)] backdrop-blur-md flex items-center gap-3">
             <Skull className="w-5 h-5 text-orange-400 animate-pulse flex-shrink-0" />
@@ -685,7 +693,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
       )}
 
       {/* SAT Artillery Crisis Warning Banner */}
-      {hudState.crisisWarningText && !hudState.bossWarningText && (
+      {hudState.crisisWarningText && !hudState.activeBoss && (
         <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center animate-bounce">
           <div className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-red-950 via-zinc-950 to-red-950 border-2 border-red-500 shadow-[0_0_35px_rgba(239,68,68,0.9)] backdrop-blur-md flex items-center gap-3">
             <AlertTriangle className="w-5 h-5 text-red-500 animate-pulse flex-shrink-0" />

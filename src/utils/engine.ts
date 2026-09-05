@@ -2083,9 +2083,10 @@ export class GameEngine {
           }
 
           if (bossType) {
+            // No arrival banner. The boss health bar drops in on this same frame and says
+            // everything the banner did - who it is, how much of it there is - without
+            // covering the arena at the one moment the player needs to see it.
             this.spawnBoss(bossType);
-            this.state.bossWarningTimer = 5.0;
-            this.state.bossWarningText = loc(`ТРЕВОГА: ПОЯВИЛСЯ ВЫСШИЙ МУТАНТ ВОЛНЫ ${this.state.wave}!`, `ALERT: APEX MUTANT OF WAVE ${this.state.wave} HAS ARRIVED!`);
             sound.playDropshipAlarm();
             sound.startBossBattle();
             this.triggerScreenShake(16, 0.8);
@@ -3426,7 +3427,10 @@ export class GameEngine {
           if (this.hasMutation('lucy_hyper_freq')) cadenceMultiplier *= 0.7;
           if (this.hasMutation('mariko_storm_cadence')) cadenceMultiplier *= 0.55;
           if (this.hasMutation('nana_vector_swiftness')) cadenceMultiplier *= 0.7;
-          if (this.hasMutation('nyu_low_hp_frenzy') && this.state.player.hp < this.state.player.maxHp * 0.5) cadenceMultiplier *= 0.5;
+          // hasMutation matches node ids, and 'nyu_low_hp_frenzy' is a specialPerkId, not a
+          // node id - so Nyu's wounded-frenzy cadence never once triggered. The node that
+          // declares that perk is nyu_dual_psyche.
+          if (this.hasMutation('nyu_dual_psyche') && this.state.player.hp < this.state.player.maxHp * 0.5) cadenceMultiplier *= 0.5;
 
           const isBossDuel = nearbyEnemies.some((e) => e.isBoss);
           const baseCadence = (isBossDuel ? (totalArmCount > 10 ? 0.35 : 0.25) : (totalArmCount > 10 ? 0.75 : 0.42)) * cadenceMultiplier;
@@ -6401,8 +6405,9 @@ export class GameEngine {
           e.baseSpeed = e.speed;
           sound.playDropshipAlarm();
           this.triggerScreenShake(15, 0.7);
-          this.state.bossWarningText = loc(`ЯРОСТЬ: ${e.name.toUpperCase()} ВХОДИТ В ФАЗУ БЕРСЕРКА!`, `ENRAGED: ${e.name.toUpperCase()} ENTERS BERSERK PHASE!`);
-          this.state.bossWarningTimer = 4.0;
+          // The health bar grows its own berserk chip when isEnraged flips; a banner on top
+          // of it would be the same news twice.
+          
           this.state.particles.push({
             x: e.x,
             y: e.y,
