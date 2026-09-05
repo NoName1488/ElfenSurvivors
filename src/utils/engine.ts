@@ -6816,6 +6816,26 @@ export class GameEngine {
         e.x += Math.cos(away) * fleeSpeed * dt;
         e.y += Math.sin(away) * fleeSpeed * dt;
         e.isRouted = true;
+
+        /*
+         * The arms come with them.
+         *
+         * This branch skips the rest of the per-enemy update, which is where arm kinematics
+         * run - so a routed Diclonius sprinted away and left its vector lying in the arena
+         * at the last world position it held. Reported from play, on a lancer, whose single
+         * 232px arm makes it impossible to miss. The arms are stepped here instead, trailing
+         * behind the body along the line of retreat and not striking.
+         */
+        if (e.vectorArms && e.vectorArms.length > 0) {
+          for (let v = 0; v < e.vectorArms.length; v++) {
+            const arm = e.vectorArms[v];
+            arm.striking = false;
+            arm.targetX = undefined;
+            arm.targetY = undefined;
+            this.updateEnemyArmKinematics(e, arm, v, dt, e.vectorReach || 120, away + Math.PI, false);
+          }
+        }
+
         if (Math.hypot(e.x - pX, e.y - pY) > 1100) {
           this.state.enemies.splice(i, 1);
         }
