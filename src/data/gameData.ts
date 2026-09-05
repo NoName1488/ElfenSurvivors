@@ -29,6 +29,12 @@ export const CHARACTERS: Character[] = [
       luck: 5,
       // Люси: короткий охват, но лучший контроль - вектора идут на грани резки
       vibrationBase: 620,
+      // The two keys the player presses on purpose. Shop items move these; nothing
+      // starts with any of them.
+      ultimateCooldown: 0,
+      ultimatePower: 0,
+      dashCooldown: 0,
+      dashCharges: 0,
     },
     startingWeaponId: 'vector_slasher',
     unlocked: true,
@@ -74,6 +80,12 @@ export const CHARACTERS: Character[] = [
       luck: 12,
       // Ню: сила спит, вектора едва вибрируют - зато проходят сквозь преграды
       vibrationBase: 300,
+      // The two keys the player presses on purpose. Shop items move these; nothing
+      // starts with any of them.
+      ultimateCooldown: 0,
+      ultimatePower: 0,
+      dashCooldown: 0,
+      dashCharges: 0,
     },
     startingWeaponId: 'shockwave_pulse',
     unlocked: false,
@@ -119,6 +131,12 @@ export const CHARACTERS: Character[] = [
       luck: 8,
       // Нана: держит средний диапазон, вектора работают как захват и щит
       vibrationBase: 480,
+      // The two keys the player presses on purpose. Shop items move these; nothing
+      // starts with any of them.
+      ultimateCooldown: 0,
+      ultimatePower: 0,
+      dashCooldown: 0,
+      dashCharges: 0,
     },
     startingWeaponId: 'deflection_barrier',
     unlocked: false,
@@ -164,6 +182,12 @@ export const CHARACTERS: Character[] = [
       luck: 5,
       // Марико №35: 26 векторов на предельной частоте, почти видимых
       vibrationBase: 880,
+      // The two keys the player presses on purpose. Shop items move these; nothing
+      // starts with any of them.
+      ultimateCooldown: 0,
+      ultimatePower: 0,
+      dashCooldown: 0,
+      dashCharges: 0,
     },
     startingWeaponId: 'mariko_26_storm',
     unlocked: false,
@@ -208,6 +232,12 @@ export const CHARACTERS: Character[] = [
       luck: 5,
       // Бандо: векторов нет, поле оставлено по умолчанию
       vibrationBase: 250,
+      // The two keys the player presses on purpose. Shop items move these; nothing
+      // starts with any of them.
+      ultimateCooldown: 0,
+      ultimatePower: 0,
+      dashCooldown: 0,
+      dashCharges: 0,
     },
     startingWeaponId: 'sat_spas12_shotgun',
     unlocked: false,
@@ -259,6 +289,12 @@ export const CHARACTERS: Character[] = [
       luck: 0,
       // Люси в ограничителе: частота задрана подавителем на грань срыва
       vibrationBase: 700,
+      // The two keys the player presses on purpose. Shop items move these; nothing
+      // starts with any of them.
+      ultimateCooldown: 0,
+      ultimatePower: 0,
+      dashCooldown: 0,
+      dashCharges: 0,
     },
     startingWeaponId: 'restrained_shockwave',
     unlocked: false,
@@ -310,6 +346,12 @@ export const CHARACTERS: Character[] = [
       luck: 15,
       // Курама: человек, векторов нет
       vibrationBase: 250,
+      // The two keys the player presses on purpose. Shop items move these; nothing
+      // starts with any of them.
+      ultimateCooldown: 0,
+      ultimatePower: 0,
+      dashCooldown: 0,
+      dashCharges: 0,
     },
     startingWeaponId: 'kurama_revolver',
     unlocked: false,
@@ -362,6 +404,12 @@ export const CHARACTERS: Character[] = [
       luck: 10,
       // Анна: гравитационное ядро держит вектора в видимом диапазоне
       vibrationBase: 940,
+      // The two keys the player presses on purpose. Shop items move these; nothing
+      // starts with any of them.
+      ultimateCooldown: 0,
+      ultimatePower: 0,
+      dashCooldown: 0,
+      dashCharges: 0,
     },
     startingWeaponId: 'gravity_singularity',
     unlocked: false,
@@ -865,6 +913,91 @@ export const WEAPON_SET_BONUSES_CONFIG: Record<WeaponTag, {
 };
 
 export const PASSIVE_ITEMS: PassiveItem[] = [
+  /*
+   * The two keys the player presses on purpose.
+   *
+   * Everything else in this list improves the automatic half of a character - arms that
+   * swing themselves, guns that fire themselves. These are for the dash and the ultimate,
+   * which are the only two things in the game the player actually decides to do, and which
+   * until now were fixed constants printed on the character card with nothing to buy.
+   *
+   * Every one of them carries a real cost, because a shorter wait on the button you already
+   * wanted to press is the easiest kind of power to hand out and the easiest kind to break
+   * a run with.
+   */
+  {
+    id: 'reflex_conditioning',
+    name: 'Reflex Conditioning',
+    russianName: 'Условно-рефлекторная подготовка',
+    rarity: 'rare',
+    description: '-18% Перезарядки рывка, +6 Скорости. -8 Макс. ОЗ: подготовка идёт через истощение.',
+    cost: 46,
+    icon: 'Wind',
+    stats: { dashCooldown: 18, moveSpeed: 6, maxHp: -8 },
+    lore: 'Объект учат уходить от выстрела прежде, чем он прозвучит. Учат больно.',
+    tags: ['tech'],
+  },
+  {
+    id: 'vector_launch_bracing',
+    name: 'Vector Launch Bracing',
+    russianName: 'Опорная фиксация векторов',
+    rarity: 'epic',
+    description: '+1 заряд рывка. -8% Радиуса векторов: руки, упёртые в землю, не тянутся вперёд.',
+    cost: 68,
+    icon: 'Zap',
+    stats: { dashCharges: 1, vectorReach: -8 },
+    lore: 'Оттолкнуться векторами от земли — это то же движение, что и удержать удар. Дважды подряд его не сделать без потери в размахе.',
+    tags: ['vector'],
+  },
+  {
+    id: 'adrenal_shunt',
+    name: 'Adrenal Shunt',
+    russianName: 'Адреналиновый шунт',
+    rarity: 'rare',
+    description: '-12% Перезарядки рывка, +4% Уклонения. -1 Регенерации: тело не успевает чиниться.',
+    cost: 44,
+    icon: 'Activity',
+    stats: { dashCooldown: 12, dodge: 4, hpRegen: -1 },
+    lore: 'Дозатор в сонной артерии. Открывается сам, когда пульс уходит за двести.',
+    tags: ['tech', 'risk'],
+  },
+  {
+    id: 'pineal_amplifier',
+    name: 'Pineal Amplifier',
+    russianName: 'Усилитель шишковидной железы',
+    rarity: 'epic',
+    description: '+30% Силы ультимейта, -10% его перезарядки. -6% Силы ПСИ в обычных ударах.',
+    cost: 72,
+    icon: 'Sparkles',
+    stats: { ultimatePower: 30, ultimateCooldown: 10, psiPower: -6 },
+    lore: 'Железа, в которой институт нашёл источник векторов. Усилить её можно. Успокоить — нет.',
+    tags: ['vector'],
+  },
+  {
+    id: 'overload_capacitor',
+    name: 'Overload Capacitor',
+    russianName: 'Накопитель перегрузки',
+    rarity: 'rare',
+    description: '-22% Перезарядки ультимейта. -8% Скорости атаки: накопитель тянет из того же источника.',
+    cost: 58,
+    icon: 'BatteryCharging',
+    stats: { ultimateCooldown: 22, attackSpeed: -8 },
+    lore: 'Копит то, что иначе ушло бы в каждый отдельный удар.',
+    tags: ['tech'],
+  },
+  {
+    id: 'queen_awakening_trigger',
+    name: 'Queen Awakening Trigger',
+    russianName: 'Спусковой крючок пробуждения',
+    rarity: 'legendary',
+    description: '+45% Силы ультимейта. -20 Макс. ОЗ: каждое пробуждение стоит телу.',
+    cost: 88,
+    icon: 'Crown',
+    stats: { ultimatePower: 45, maxHp: -20 },
+    lore: 'То, что просыпается, не спрашивает разрешения и не возвращает взятое.',
+    tags: ['dna', 'risk'],
+  },
+
   /*
    * Frequency shifters.
    *

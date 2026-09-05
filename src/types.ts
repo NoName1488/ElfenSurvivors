@@ -170,6 +170,23 @@ export interface PlayerStats {
    * See VECTOR_BANDS in engine.ts.
    */
   vibrationBase: number;
+
+  /**
+   * The two keys the player presses on purpose.
+   *
+   * Kept as four separate numbers rather than one "cooldown reduction", because a shorter
+   * wait and a banked charge are different things to own: the first makes the ability
+   * routine, the second is an escape you are holding on to, and holding one changes how you
+   * walk into a room.
+   */
+  /** % off the ultimate's cooldown. */
+  ultimateCooldown: number;
+  /** % added to the ultimate's radius and damage. */
+  ultimatePower: number;
+  /** % off the dash cooldown. */
+  dashCooldown: number;
+  /** Extra dashes that can be banked before the first one has to recharge. */
+  dashCharges: number;
 }
 
 export interface CharacterMechanic {

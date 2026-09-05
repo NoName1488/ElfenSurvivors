@@ -345,6 +345,10 @@ export const LabShop: React.FC<LabShopProps> = ({
     bloodLifesteal: { ru: 'Вампиризм', en: 'Lifesteal', suffix: '%' },
     luck: { ru: 'Удача', en: 'Luck', suffix: '%' },
     vibrationBase: { ru: 'Частота', en: 'Frequency', suffix: 'Гц' },
+    ultimateCooldown: { ru: 'КД ультимейта', en: 'Ult Cooldown', suffix: '%' },
+    ultimatePower: { ru: 'Сила ультимейта', en: 'Ult Power', suffix: '%' },
+    dashCooldown: { ru: 'КД рывка', en: 'Dash Cooldown', suffix: '%' },
+    dashCharges: { ru: 'Заряды рывка', en: 'Dash Charges' },
   };
 
   const passiveStatRows = (stats: Record<string, number> | undefined, tier: number) => {

@@ -145,6 +145,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
     isPlayerStunned: false,
     mobilityCooldown: 0,
     maxMobilityCooldown: 2.8,
+    dashCharges: 1,
+    maxDashCharges: 1,
     mobilityName: 'Dash',
     mobilityDesc: '',
     baggedDna: 0,
@@ -230,6 +232,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         maxVectorGuard: Math.round(s.player.maxVectorGuard || 150),
         isPlayerStunned: !!s.player.isStunned,
         mobilityCooldown: s.player.mobilityCooldownTimer || 0,
+        dashCharges: s.player.dashChargesLeft ?? 1,
+        maxDashCharges: 1 + (s.stats.dashCharges || 0),
         maxMobilityCooldown: s.character.mobilitySkillCooldown || 2.8,
         mobilityName: s.character.mobilitySkillName || (isRu ? 'Рывок' : 'Dash'),
         mobilityDesc: s.character.mobilitySkillDesc || '',
@@ -1017,6 +1021,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               <span className="w-9 text-right tabular-nums text-cyan-200 shrink-0">
                 {hudState.mobilityCooldown > 0 ? `${hudState.mobilityCooldown.toFixed(1)}s` : ''}
               </span>
+              {/*
+                * Banked dashes.
+                *
+                * Only shown once the player owns a charge item, because a single pip that
+                * never changes is one more thing on a bar the playtesters already called
+                * overloaded.
+                */}
+              {hudState.maxDashCharges > 1 && (
+                <span className="flex items-center gap-0.5 shrink-0">
+                  {Array.from({ length: hudState.maxDashCharges }).map((_, ci) => (
+                    <span
+                      key={ci}
+                      className={`w-1.5 h-3 rounded-sm ${
+                        ci < hudState.dashCharges ? 'bg-cyan-300' : 'bg-cyan-900/70'
+                      }`}
+                    />
+                  ))}
+                </span>
+              )}
               {hudState.mobilityCooldown > 0 && hudState.maxMobilityCooldown > 0 && (
                 <span
                   className="absolute inset-y-0 left-0 bg-sky-500/20 rounded-lg pointer-events-none"

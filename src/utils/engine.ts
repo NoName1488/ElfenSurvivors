@@ -56,6 +56,8 @@ export interface GameEngineState {
     stunTimer: number;
     // Shift Mobility Skill
     mobilityCooldownTimer: number;
+    /** Dashes still banked. See dashCharges. */
+    dashChargesLeft?: number;
     mobilityActiveTimer: number;
     isDashing: boolean;
     dashVx: number;
@@ -539,6 +541,7 @@ export class GameEngine {
         isStunned: false,
         stunTimer: 0,
         mobilityCooldownTimer: 0,
+        dashChargesLeft: 1,
         mobilityActiveTimer: 0,
         isDashing: false,
         dashVx: 0,
@@ -1217,6 +1220,18 @@ export class GameEngine {
     stats.moveSpeed = Math.max(120, stats.moveSpeed);
     stats.dodge = Math.min(60, Math.max(0, stats.dodge));
 
+    /*
+     * Ability stats.
+     *
+     * Cooldown reduction is capped at 60% so the ultimate stays an event rather than
+     * becoming a second attack button, and charges at three because a fourth banked dash
+     * stops being a decision and starts being flight.
+     */
+    stats.ultimateCooldown = Math.min(60, Math.max(0, stats.ultimateCooldown || 0));
+    stats.ultimatePower = Math.max(0, stats.ultimatePower || 0);
+    stats.dashCooldown = Math.min(60, Math.max(0, stats.dashCooldown || 0));
+    stats.dashCharges = Math.min(3, Math.max(0, Math.round(stats.dashCharges || 0)));
+
     this.state.stats = stats;
     this.state.player.maxHp = stats.maxHp;
     if (this.state.player.hp > this.state.player.maxHp) {
@@ -1613,7 +1628,8 @@ export class GameEngine {
 
   public triggerSpecialAbility() {
     if (this.state.player.specialCooldownTimer <= 0 && this.state.isWaveActive) {
-      this.state.player.specialCooldownTimer = this.state.character.specialAbilityCooldown;
+      this.state.player.specialCooldownTimer =
+        this.state.character.specialAbilityCooldown * (1 - this.state.stats.ultimateCooldown / 100);
       this.state.player.specialActiveTimer = 6.0;
       this.triggerScreenShake(16, 0.55);
 
@@ -1629,8 +1645,9 @@ export class GameEngine {
        */
       const ultX = this.state.player.x;
       const ultY = this.state.player.y;
+      const ultRadius = 330 * (1 + this.state.stats.ultimatePower / 100);
       for (const e of this.state.enemies) {
-        if (Math.hypot(e.x - ultX, e.y - ultY) > 330) continue;
+        if (Math.hypot(e.x - ultX, e.y - ultY) > ultRadius) continue;
         if (e.vectorGuard !== undefined) e.vectorGuard = 0;
         if (e.vectorArms && e.vectorArms.length > 0) {
           e.vectorsDisabledTimer = Math.max(e.vectorsDisabledTimer || 0, e.isBoss ? 1.8 : 3.5);
@@ -1863,18 +1880,37 @@ export class GameEngine {
   }
 
   public triggerMobilitySkill() {
+    /*
+     * Charges, not a single cooldown.
+     *
+     * With no charge items owned this is exactly the old behaviour: one dash, then the
+     * wait. With them, dashes bank up to the maximum and the timer refills one at a time,
+     * so a player can hold two and spend both to cross something.
+     */
+    const maxCharges = 1 + (this.state.stats.dashCharges || 0);
+    if (this.state.player.dashChargesLeft === undefined) {
+      this.state.player.dashChargesLeft = maxCharges;
+    }
+    // Selling the charge item must not leave a banked dash above the new ceiling.
+    this.state.player.dashChargesLeft = Math.min(this.state.player.dashChargesLeft, maxCharges);
     if (
-      this.state.player.mobilityCooldownTimer > 0 ||
+      (this.state.player.dashChargesLeft || 0) <= 0 ||
       !this.state.isWaveActive ||
       this.state.player.hp <= 0 ||
       this.state.player.isStunned
     ) {
       return;
     }
+    this.state.player.dashChargesLeft = (this.state.player.dashChargesLeft || 1) - 1;
 
     const p = this.state.player;
     const char = this.state.character;
-    p.mobilityCooldownTimer = char.mobilitySkillCooldown || 2.8;
+    // Only start the clock if it is not already running; a second charge spent mid-recharge
+    // must not push the first one further away.
+    if (p.mobilityCooldownTimer <= 0) {
+      p.mobilityCooldownTimer =
+        (char.mobilitySkillCooldown || 2.8) * (1 - this.state.stats.dashCooldown / 100);
+    }
 
     /*
      * A dash is paid for out of posture.
@@ -2742,6 +2778,16 @@ export class GameEngine {
     // 1. Mobility Skill Timers
     if (p.mobilityCooldownTimer > 0) {
       p.mobilityCooldownTimer = Math.max(0, p.mobilityCooldownTimer - dt);
+      if (p.mobilityCooldownTimer <= 0) {
+        // One charge back. If there is still room for more, the clock starts again.
+        const maxCharges = 1 + (this.state.stats.dashCharges || 0);
+        p.dashChargesLeft = Math.min(maxCharges, (p.dashChargesLeft || 0) + 1);
+        if ((p.dashChargesLeft || 0) < maxCharges) {
+          p.mobilityCooldownTimer =
+            (this.state.character.mobilitySkillCooldown || 2.8) *
+            (1 - this.state.stats.dashCooldown / 100);
+        }
+      }
     }
 
     // 2. Vector Guard & Stun State Management
