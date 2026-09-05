@@ -158,7 +158,7 @@ export const TRANSLATIONS = {
     testSound: 'Проверить звук',
     close: 'ЗАКРЫТЬ',
 
-    // Brotato Shop
+    // Laboratory shop
     geneticEvolution: 'ГЕНЕТИЧЕСКАЯ ЭВОЛЮЦИЯ & ПСИХИЧЕСКАЯ МУТАЦИЯ',
     levelUp: 'ПОВЫШЕНИЕ УРОВНЯ',
     remainingStatChoices: 'Осталось выборов характеристик:',
@@ -334,7 +334,7 @@ export const TRANSLATIONS = {
     testSound: 'Test Sound',
     close: 'CLOSE',
 
-    // Brotato Shop
+    // Laboratory shop
     geneticEvolution: 'GENETIC EVOLUTION & PSYCHIC MUTATION',
     levelUp: 'LEVEL UP',
     remainingStatChoices: 'Remaining stat choices:',

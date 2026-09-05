@@ -5,7 +5,7 @@
  * and an evolving multi-movement progressive soundtrack system.
  */
 
-import { CUSTOM_PLAYLIST, trackUrl, MusicTrack } from '../data/musicPlaylist';
+import { getPlaylist, onPlayerTracksChanged, MusicTrack } from '../data/musicPlaylist';
 
 const AUDIO_SETTINGS_KEY = 'elfen_lied_audio_settings';
 
@@ -16,10 +16,17 @@ const AUDIO_SETTINGS_KEY = 'elfen_lied_audio_settings';
  * The per-subject themes (Lilium, Kurama's elegy, Anna's singularity) are still reachable
  * through 'hero_theme'; only the standalone entries for them were removed.
  */
-export const SELECTABLE_TRACKS = ['hero_theme', 'custom_playlist'];
+export const SELECTABLE_TRACKS = ['hero_theme', 'custom_playlist', 'player_playlist'];
 
 /** Track id for the file-based test soundtrack. */
 export const CUSTOM_PLAYLIST_TRACK = 'custom_playlist';
+/** The player's own folder, listed by the desktop build. */
+export const PLAYER_PLAYLIST_TRACK = 'player_playlist';
+
+/** Both file-backed options, as opposed to the procedural generators. */
+export function isFilePlaylistTrack(track: string): boolean {
+  return track === CUSTOM_PLAYLIST_TRACK || track === PLAYER_PLAYLIST_TRACK;
+}
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
@@ -338,7 +345,7 @@ class SoundEngine {
     if (this.currentCharacterId === characterId) return;
     this.currentCharacterId = characterId;
     // The file playlist is not character-scoped, so a subject swap must not restart it.
-    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK) return;
+    if (isFilePlaylistTrack(this.currentTrack)) return;
     if (this.isMusicPlaying) {
       this.stopMusic();
       this.startMusic();
@@ -348,7 +355,7 @@ class SoundEngine {
   public startBossBattle() {
     // The file playlist plays straight through. Cutting a five-minute track in half to
     // start a boss stinger, then cutting back, is worse than letting it run.
-    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK) return;
+    if (isFilePlaylistTrack(this.currentTrack)) return;
     if (this.currentTrack === 'boss_battle') return;
     this.trackBeforeBoss = this.currentTrack;
     this.currentTrack = 'boss_battle';
@@ -357,7 +364,7 @@ class SoundEngine {
   }
 
   public endBossBattle() {
-    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK) return;
+    if (isFilePlaylistTrack(this.currentTrack)) return;
     if (this.currentTrack !== 'boss_battle') return;
     // Return to whatever was playing, not unconditionally to 'hero_theme'.
     this.currentTrack = this.trackBeforeBoss || 'hero_theme';
@@ -418,11 +425,26 @@ class SoundEngine {
   public setTrack(track: string) {
     if (!SELECTABLE_TRACKS.includes(track)) return;
     if (this.currentTrack === track) return;
+
+    // The two file playlists have their own lengths, so an index carried over from a
+    // six-track soundtrack would point past the end of a two-file folder.
+    const wasFile = isFilePlaylistTrack(this.currentTrack);
+    const isFile = isFilePlaylistTrack(track);
+    if (wasFile !== isFile || (isFile && wasFile && track !== this.currentTrack)) {
+      this.playlistIndex = 0;
+      if (this.fileAudio) {
+        try { this.fileAudio.pause(); } catch (e) {}
+        // Force a reload on the next start: the element must not resume the old list's file.
+        this.fileAudio.removeAttribute('src');
+      }
+    }
+
     this.currentTrack = track;
     if (this.isMusicPlaying) {
       this.stopMusic();
       this.startMusic();
     }
+    this.notifyPlaylistChange();
   }
 
   public setMusicVolume(vol: number) {
@@ -475,7 +497,7 @@ class SoundEngine {
       this.sessionGain.connect(this.musicGain);
     }
 
-    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK) {
+    if (isFilePlaylistTrack(this.currentTrack)) {
       this.startFilePlaylist();
     } else if (this.currentTrack === 'boss_battle') {
       this.startBossBattleMusic(sessionId);
@@ -567,12 +589,18 @@ class SoundEngine {
     return this.musicVolume * 0.85;
   }
 
+  /** The list the transport controls act on: bundled soundtrack, or the player's folder. */
+  private activePlaylist(): MusicTrack[] {
+    return getPlaylist(this.currentTrack === PLAYER_PLAYLIST_TRACK ? 'player' : 'bundled');
+  }
+
   private startFilePlaylist() {
     const el = this.ensureFilePlayer();
-    if (!el || CUSTOM_PLAYLIST.length === 0) return;
+    const list = this.activePlaylist();
+    if (!el || list.length === 0) return;
 
-    const track = CUSTOM_PLAYLIST[this.playlistIndex % CUSTOM_PLAYLIST.length];
-    const url = trackUrl(track);
+    const track = list[this.playlistIndex % list.length];
+    const url = track.url;
     // Only reload when the source actually changes, otherwise resume where we paused.
     if (!el.src.endsWith(url)) {
       el.src = url;
@@ -593,22 +621,23 @@ class SoundEngine {
   }
 
   private advanceTrack(delta: number, autoplay: boolean) {
-    if (CUSTOM_PLAYLIST.length === 0) return;
-    if (this.playlistShuffle && delta > 0 && CUSTOM_PLAYLIST.length > 1) {
+    const list = this.activePlaylist();
+    if (list.length === 0) return;
+    if (this.playlistShuffle && delta > 0 && list.length > 1) {
       let next = this.playlistIndex;
       while (next === this.playlistIndex) {
-        next = Math.floor(Math.random() * CUSTOM_PLAYLIST.length);
+        next = Math.floor(Math.random() * list.length);
       }
       this.playlistIndex = next;
     } else {
-      const len = CUSTOM_PLAYLIST.length;
+      const len = list.length;
       this.playlistIndex = ((this.playlistIndex + delta) % len + len) % len;
     }
     if (this.fileAudio) {
       try { this.fileAudio.pause(); } catch (e) {}
       this.fileAudio.currentTime = 0;
     }
-    if (autoplay && this.currentTrack === CUSTOM_PLAYLIST_TRACK && this.canPlayMusic()) {
+    if (autoplay && isFilePlaylistTrack(this.currentTrack) && this.canPlayMusic()) {
       this.isMusicPlaying = true;
       this.startFilePlaylist();
     } else {
@@ -625,13 +654,13 @@ class SoundEngine {
   }
 
   public selectPlaylistTrack(index: number) {
-    if (index < 0 || index >= CUSTOM_PLAYLIST.length) return;
+    if (index < 0 || index >= this.activePlaylist().length) return;
     this.playlistIndex = index;
     if (this.fileAudio) {
       try { this.fileAudio.pause(); } catch (e) {}
       this.fileAudio.currentTime = 0;
     }
-    if (this.currentTrack === CUSTOM_PLAYLIST_TRACK && this.canPlayMusic()) {
+    if (isFilePlaylistTrack(this.currentTrack) && this.canPlayMusic()) {
       this.isMusicPlaying = true;
       this.startFilePlaylist();
     } else {
@@ -640,7 +669,7 @@ class SoundEngine {
   }
 
   public getPlaylist(): MusicTrack[] {
-    return CUSTOM_PLAYLIST;
+    return this.activePlaylist();
   }
 
   public getPlaylistIndex(): number {
@@ -648,12 +677,13 @@ class SoundEngine {
   }
 
   public getCurrentPlaylistTrack(): MusicTrack | null {
-    if (CUSTOM_PLAYLIST.length === 0) return null;
-    return CUSTOM_PLAYLIST[this.playlistIndex % CUSTOM_PLAYLIST.length];
+    const list = this.activePlaylist();
+    if (list.length === 0) return null;
+    return list[this.playlistIndex % list.length];
   }
 
   public isPlaylistActive(): boolean {
-    return this.currentTrack === CUSTOM_PLAYLIST_TRACK;
+    return isFilePlaylistTrack(this.currentTrack);
   }
 
   public getPlaylistShuffle(): boolean {
@@ -672,6 +702,20 @@ class SoundEngine {
       const i = this.playlistListeners.indexOf(cb);
       if (i !== -1) this.playlistListeners.splice(i, 1);
     };
+  }
+
+  /**
+   * Keeps the transport honest when the player's folder is rescanned underneath it: an
+   * index into a list that just shrank is clamped, and the UI is told to redraw.
+   */
+  public onPlayerLibraryChanged() {
+    const list = this.activePlaylist();
+    if (list.length === 0) {
+      this.playlistIndex = 0;
+    } else if (this.playlistIndex >= list.length) {
+      this.playlistIndex = 0;
+    }
+    this.notifyPlaylistChange();
   }
 
   private notifyPlaylistChange() {
@@ -2962,3 +3006,8 @@ class SoundEngine {
 }
 
 export const sound = new SoundEngine();
+
+// Rescanning the player's folder can change the list out from under the transport, so the
+// engine is wired to it once here rather than every component that triggers a refresh
+// having to remember to tell it.
+onPlayerTracksChanged(() => sound.onPlayerLibraryChanged());

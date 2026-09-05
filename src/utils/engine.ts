@@ -136,7 +136,7 @@ export interface GameEngineState {
   };
   laserSightTarget: { x: number; y: number } | null;
 
-  // Economy & Archetypes (Brotato Macro-Gameplay)
+  // Economy & build archetypes
   lastWaveDividend: number;
   freeRerollAvailable: boolean;
   savedLockedShopItems: any[];
@@ -1043,7 +1043,7 @@ export class GameEngine {
     this.state.activeArchetypes = archetypes;
     this.state.activeSynergies = activeSyns;
 
-    // 4.5 Weapon Set Tag Synergies (Brotato Class/Faction Sets 2.В.1)
+    // 4.5 Weapon set tag synergies
     const tagCounts: Record<WeaponTag, number> = {
       vector: 0,
       firearm: 0,
@@ -8586,7 +8586,7 @@ export class GameEngine {
     this.resetInput();
     this.state.isWaveActive = false;
 
-    // 2.Г.1: Bagged Materials Reserve (Brotato Mechanics)
+    // Bagged materials reserve
     // All uncollected DNA crystals on the arena floor are absorbed into the hidden Bagged reserve.
     // In the next combat phase, the first slain enemies drop double resources from this reserve.
     let uncollectedGroundDna = 0;

@@ -4,7 +4,7 @@ import { CHARACTERS, WEAPONS_DATABASE } from './data/gameData';
 import { GameEngine } from './utils/engine';
 import { CharacterSelect } from './components/CharacterSelect';
 import { GameCanvas } from './components/GameCanvas';
-import { BrotatoShop } from './components/BrotatoShop';
+import { LabShop } from './components/LabShop';
 import { GameOverModal } from './components/GameOverModal';
 import { LoreEncyclopediaModal } from './components/LoreEncyclopediaModal';
 import { AudioSettingsModal } from './components/AudioSettingsModal';
@@ -158,9 +158,9 @@ export default function App() {
         />
       )}
 
-      {/* 3. Between-Wave Brotato Shop & Level-up */}
+      {/* 3. Between-Wave Laboratory Shop & Level-up */}
       {phase === 'shop' && engine && (
-        <BrotatoShop
+        <LabShop
           engine={engine}
           pendingLevelUps={pendingLevelUps}
           onLevelUpChosen={handleLevelUpChosen}

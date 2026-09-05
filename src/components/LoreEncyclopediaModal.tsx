@@ -122,11 +122,11 @@ export const LoreEncyclopediaModal: React.FC<LoreEncyclopediaModalProps> = ({ on
             </p>
           </div>
 
-          {/* Section 5: Brotato Rules */}
+          {/* Section 5: How a run works */}
           <div className="glass-panel p-4 rounded-xl border-white/5">
             <h3 className="font-cinzel font-bold text-sm text-yellow-400 mb-1 flex items-center gap-1.5">
               <Swords className="w-4 h-4" />
-              <span>{isRu ? 'Геймплей в стиле Brotato' : 'Brotato-style Gameplay'}</span>
+              <span>{isRu ? 'Как устроен забег' : 'How a run works'}</span>
             </h3>
             <ul className="list-disc list-inside space-y-1.5 text-gray-400 mt-1">
               {isRu ? (

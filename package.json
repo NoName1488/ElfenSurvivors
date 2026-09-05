@@ -42,7 +42,7 @@
     "vite": "^6.2.3"
   },
   "productName": "Elfen Lied: Vector Survivor",
-  "description": "Brotato-style arena survival roguelite with Elfen Lied psychokinetic vectors.",
+  "description": "Arena survival roguelite set in the Elfen Lied universe: psychokinetic vectors, vector duels and DNA mutations.",
   "main": "electron/main.cjs",
   "build": {
     "appId": "com.elfenlied.vectorsurvivor",

@@ -36,7 +36,7 @@ import {
   Check,
 } from 'lucide-react';
 
-interface BrotatoShopProps {
+interface LabShopProps {
   engine: GameEngine;
   pendingLevelUps: number;
   onLevelUpChosen: () => void;
@@ -57,7 +57,7 @@ interface ShopItem {
   catalystForEvolutionId?: string;
 }
 
-export const BrotatoShop: React.FC<BrotatoShopProps> = ({
+export const LabShop: React.FC<LabShopProps> = ({
   engine,
   pendingLevelUps,
   onLevelUpChosen,
@@ -581,7 +581,7 @@ export const BrotatoShop: React.FC<BrotatoShopProps> = ({
   });
 
   return (
-    <div id="brotato-shop-screen" className="w-full h-full p-4 md:p-6 flex flex-col justify-between overflow-y-auto z-10 select-none">
+    <div id="lab-shop-screen" className="w-full h-full p-4 md:p-6 flex flex-col justify-between overflow-y-auto z-10 select-none">
       {/* Auto-Merge Celebration Toast */}
       {autoMergeToast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-none">

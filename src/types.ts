@@ -1,5 +1,5 @@
 /**
- * Types and interfaces for Elfen Lied: Vector Survivor (Brotato-style)
+ * Types and interfaces for Elfen Lied: Vector Survivor
  */
 
 export type WeaponRarity = 'common' | 'rare' | 'epic' | 'legendary' | 'ascended';
