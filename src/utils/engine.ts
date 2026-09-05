@@ -1579,8 +1579,37 @@ export class GameEngine {
   public triggerSpecialAbility() {
     if (this.state.player.specialCooldownTimer <= 0 && this.state.isWaveActive) {
       this.state.player.specialCooldownTimer = this.state.character.specialAbilityCooldown;
-      this.state.player.specialActiveTimer = 4.0;
-      this.triggerScreenShake(12, 0.4);
+      this.state.player.specialActiveTimer = 6.0;
+      this.triggerScreenShake(16, 0.55);
+
+      /*
+       * The ultimate is an event, not a bonus tick.
+       *
+       * Reported from play: pressing it did not feel like it changed anything. Each
+       * character's own payload is unchanged below, but every one of them now opens the
+       * field first - posture broken and arms staggered across a wide radius, hostile fire
+       * swept away - so the second after the button is a second where the fight is yours.
+       * Paid for with roughly three quarters again as long a cooldown: 15s to 26s for Lucy,
+       * 24s to 42s for Anna.
+       */
+      const ultX = this.state.player.x;
+      const ultY = this.state.player.y;
+      for (const e of this.state.enemies) {
+        if (Math.hypot(e.x - ultX, e.y - ultY) > 330) continue;
+        if (e.vectorGuard !== undefined) e.vectorGuard = 0;
+        if (e.vectorArms && e.vectorArms.length > 0) {
+          e.vectorsDisabledTimer = Math.max(e.vectorsDisabledTimer || 0, e.isBoss ? 1.8 : 3.5);
+        }
+        if (!e.isBoss) {
+          e.isStunned = true;
+          e.stunTimer = Math.max(e.stunTimer || 0, 1.6);
+        } else {
+          e.guardBreakRecoverTimer = Math.max(e.guardBreakRecoverTimer || 0, 2.2);
+          e.isStunned = true;
+          e.stunTimer = Math.max(e.stunTimer || 0, 1.2);
+        }
+      }
+      this.clearEnemyProjectiles();
 
       // Unique Ultimate Per Character
       if (this.state.character.id === 'lucy') {
@@ -1812,6 +1841,19 @@ export class GameEngine {
     const char = this.state.character;
     p.mobilityCooldownTimer = char.mobilitySkillCooldown || 2.8;
 
+    /*
+     * A dash is paid for out of posture.
+     *
+     * Bracing the vectors to throw your own body is the same act as bracing them to stop a
+     * blow, so it draws on the same pool. Dashing once to escape costs almost nothing;
+     * dashing through fight after fight leaves you with no guard when something finally
+     * connects, and an empty guard is a stun. Bando has no vectors and pays nothing, which
+     * is correct - his dash is a jump jet, and he has no guard to spend.
+     */
+    if (char.baseStats.vectorCount > 0) {
+      p.vectorGuard = Math.max(0, p.vectorGuard - p.maxVectorGuard * 0.22);
+    }
+
     // Determine dash direction from active inputs or auto-vector heading
     let dx = 0;
     let dy = 0;
@@ -1923,7 +1965,9 @@ export class GameEngine {
       p.dashVy = dy * dashSpeed;
       this.triggerScreenShake(7, 0.2);
 
-      p.vectorGuard = Math.min(p.maxVectorGuard, p.vectorGuard + 30);
+      // Nana braces on landing. Her vault is the one dash that returns more posture than
+      // it spends, which is what makes her the character who can hold a position.
+      p.vectorGuard = Math.min(p.maxVectorGuard, p.vectorGuard + p.maxVectorGuard * 0.34);
 
       for (let s = 0; s < 5; s++) {
         this.state.particles.push({
@@ -3292,6 +3336,24 @@ export class GameEngine {
           const baseDmg = (9 + psiEff * 0.15) * (1 + psiEff / 100) * charBonus;
           const isCrit = Math.random() < (this.state.stats.critChance / 100);
           let finalDmg = isCrit ? baseDmg * this.state.stats.critDamage : baseDmg;
+
+          /*
+           * Control falls away at the edge of the radius.
+           *
+           * Reach bought area and full power with it, so a long-reach build killed
+           * everything before it arrived and was never in danger - reported as "reach is
+           * immortality". In the source the trade runs the other way: Lucy has the shortest
+           * reach of any Diclonius and the finest control, Mariko reaches eleven metres and
+           * cannot stand. Inside 60% of the radius nothing changes; past that a strike
+           * loses up to 40% of its force by the fingertips. Reach still decides what you
+           * can touch. It no longer decides how hard.
+           */
+          const strikeDist = Math.hypot(bestTarget.x - pX, bestTarget.y - pY);
+          const controlEdge = baseReach * 0.6;
+          if (strikeDist > controlEdge) {
+            const past = Math.min(1, (strikeDist - controlEdge) / Math.max(1, baseReach - controlEdge));
+            finalDmg *= 1 - past * 0.4;
+          }
 
           // Special Mutation: Lucy Queen Execution
           if (this.hasMutation('lucy_queen_blades') && !bestTarget.isBoss && bestTarget.hp <= bestTarget.maxHp * 0.25) {
