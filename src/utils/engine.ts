@@ -1214,11 +1214,27 @@ export class GameEngine {
 
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2;
+      /*
+       * Arm roles scale with the arm count.
+       *
+       * They used to be assigned by literal index: arm 0 guarded, arm 1 threw, and nothing
+       * else changed until sixteen arms. So growing from three vectors to fifteen bought
+       * exactly one interceptor either way - the HUD reading "1 intercept" on an eight-arm
+       * build was telling the truth. Every arm can still intercept, but only a deflector
+       * gets the wide arc and the reach bonus, so interception did not scale at all.
+       *
+       * Now roughly a quarter guard and a fifth throw, and they are interleaved rather than
+       * bunched into one arc, so coverage grows evenly around the player as arms are added.
+       */
       let role: 'assault' | 'deflector' | 'flinger' = 'assault';
       if (count >= 3) {
-        if (i === 0 || (count >= 16 && i < 4)) {
+        const deflectors = Math.max(1, Math.round(count * 0.25));
+        const flingers = Math.max(1, Math.round(count * 0.2));
+        const deflectStride = count / deflectors;
+        const flingStride = count / flingers;
+        if (Math.floor(i % deflectStride) === 0) {
           role = 'deflector';
-        } else if (i === 1 || (count >= 16 && i < 8)) {
+        } else if (Math.floor((i + Math.floor(flingStride / 2)) % flingStride) === 0) {
           role = 'flinger';
         }
       }
@@ -6288,6 +6304,69 @@ export class GameEngine {
       if (e.deflectionCooldown !== undefined && e.deflectionCooldown > 0) {
         e.deflectionCooldown = Math.max(0, e.deflectionCooldown - dt);
       }
+      /*
+       * Reactive projectile parry.
+       *
+       * A Diclonius deflects bullets in the source material as a matter of course, and the
+       * player's arms already did it continuously and autonomously. The enemies did not:
+       * their only way to touch a projectile was inside the 'cyclone' attack, which they
+       * pick roughly one time in five, no more than once every few seconds, and which lasts
+       * 1.7s. In practice that meant bosses and hostile Diclonii walked into gunfire without
+       * ever raising an arm, which is what made them read as brainless.
+       *
+       * They now intercept the way the player does - within reach, on a cooldown that
+       * scales with how many arms they have - so shooting one from range is answered rather
+       * than ignored, and a flank or a broken horn is what opens them up.
+       */
+      const parryable =
+        e.vectorArms &&
+        e.vectorArms.length > 0 &&
+        !e.isStunned &&
+        !(e.vectorsDisabledTimer && e.vectorsDisabledTimer > 0);
+
+      if (parryable && (e.parryCooldownTimer || 0) <= 0) {
+        const parryReach = (e.vectorReach || 120) * 1.05;
+        for (const proj of this.state.projectiles) {
+          if (!proj || !proj.isPlayer || proj.isDeflected) continue;
+          const pd = Math.hypot(proj.x - e.x, proj.y - e.y);
+          if (pd > parryReach) continue;
+
+          // An arm has to be facing the incoming line, so a shot from behind gets through.
+          const incoming = Math.atan2(e.y - proj.y, e.x - proj.x);
+          let covered = false;
+          for (const bArm of e.vectorArms) {
+            let diff = Math.abs(bArm.currentAngle - (incoming + Math.PI));
+            while (diff > Math.PI) diff = Math.PI * 2 - diff;
+            if (diff < Math.PI * 0.42 && !bArm.striking) { covered = true; break; }
+          }
+          if (!covered) continue;
+
+          /*
+           * The parry knocks the shot aside; it does not return it.
+           *
+           * Sending it back at the player measured at 31 bot deaths a campaign against 3
+           * before - every ranged build was shooting itself, and being punished twice for
+           * one mistake. Batting the round away costs the player the shot and nothing else,
+           * which is the read we want: "that one did not land, go round it or break a horn".
+           */
+          proj.isDeflected = true;
+          proj.isPlayer = false;
+          const aside = Math.atan2(proj.vy, proj.vx) + (Math.random() < 0.5 ? -1 : 1) * (Math.PI * 0.55);
+          const speed = Math.hypot(proj.vx, proj.vy) * 0.55;
+          proj.vx = Math.cos(aside) * speed;
+          proj.vy = Math.sin(aside) * speed;
+          proj.color = e.color || '#ef4444';
+          proj.damage = 0;
+          proj.life = Math.min(proj.life, 0.35);
+          // Twice the recovery of a vector-on-vector parry: it should thin incoming fire,
+          // not create an immunity bubble around anything with arms.
+          e.parryCooldownTimer = bossParryCooldown(e.vectorArms.length) * 2.0;
+          sound.playVectorClash();
+          this.spawnVectorClash(proj.x, proj.y, Math.atan2(proj.vy, proj.vx), e.color || '#ef4444');
+          break;
+        }
+      }
+
       if (e.parryCooldownTimer !== undefined && e.parryCooldownTimer > 0) {
         e.parryCooldownTimer = Math.max(0, e.parryCooldownTimer - dt);
       }
