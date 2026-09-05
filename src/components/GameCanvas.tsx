@@ -934,7 +934,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           )}
 
           {/* Vector Resonance & Kinematics Telemetry (For Diclonius) */}
-          {hudState.vectorCount > 0 && hudState.wave >= 3 && (
+          {hudState.vectorCount > 0 && (
             <div
               id="vector-telemetry-badge"
               className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-lg border border-pink-500/30 bg-pink-950/30 text-xs font-mono shadow-[0_0_10px_rgba(236,72,153,0.15)]"
@@ -970,18 +970,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               onClick={() => engine.triggerMobilitySkill()}
               disabled={hudState.mobilityCooldown > 0 || hudState.isPlayerStunned}
               title={hudState.mobilityDesc}
-              className={`px-3 py-1.5 rounded-lg border text-xs uppercase tracking-wider font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`relative overflow-hidden px-3 py-1.5 rounded-lg border text-xs uppercase tracking-wider font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 hudState.mobilityCooldown <= 0 && !hudState.isPlayerStunned
                   ? 'border-sky-500 bg-sky-700/80 text-white shadow-[0_0_12px_rgba(14,165,233,0.5)] hover:bg-sky-600 active:scale-95'
                   : 'border-gray-800 bg-gray-900/40 text-gray-500 cursor-not-allowed'
               }`}
             >
-              <Wind className="w-3.5 h-3.5 text-cyan-300" />
-              <span>
-                {hudState.mobilityCooldown > 0
-                  ? `${hudState.mobilityCooldown.toFixed(1)}s`
-                  : `[SHIFT] ${hudState.mobilityName}`}
+              <Wind className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+              <span className="whitespace-nowrap">[SHIFT] {hudState.mobilityName}</span>
+              {/* Fixed-width slot: reserved whether or not there is a number in it. */}
+              <span className="w-9 text-right tabular-nums text-cyan-200 shrink-0">
+                {hudState.mobilityCooldown > 0 ? `${hudState.mobilityCooldown.toFixed(1)}s` : ''}
               </span>
+              {hudState.mobilityCooldown > 0 && hudState.maxMobilityCooldown > 0 && (
+                <span
+                  className="absolute inset-y-0 left-0 bg-sky-500/20 rounded-lg pointer-events-none"
+                  style={{
+                    width: `${Math.max(0, Math.min(100, (1 - hudState.mobilityCooldown / hudState.maxMobilityCooldown) * 100))}%`,
+                  }}
+                />
+              )}
             </button>
 
             {/* Ultimate Burst Button */}
@@ -989,18 +997,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               id="special-ability-btn"
               onClick={() => engine.triggerSpecialAbility()}
               disabled={hudState.specialCooldown > 0}
-              className={`px-4 py-1.5 rounded-lg border text-xs uppercase tracking-wider font-mono font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              className={`relative overflow-hidden px-4 py-1.5 rounded-lg border text-xs uppercase tracking-wider font-mono font-bold transition-all cursor-pointer flex items-center gap-2 ${
                 hudState.specialCooldown <= 0
                   ? 'border-red-500 bg-red-600 text-white shadow-[0_0_15px_rgba(220,38,38,0.6)] animate-vector-pulse hover:bg-red-500'
                   : 'border-red-900/40 bg-red-950/20 text-red-500/60 cursor-not-allowed'
               }`}
             >
-              <Zap className="w-3.5 h-3.5" />
-              <span>
-                {hudState.specialCooldown > 0
-                  ? `${Math.ceil(hudState.specialCooldown)}s`
-                  : `[${isRu ? 'ПРОБЕЛ' : 'SPACE'}] ${engine.state.character.specialAbilityName}`}
+              <Zap className="w-3.5 h-3.5 shrink-0" />
+              <span className="whitespace-nowrap">
+                [{isRu ? 'ПРОБЕЛ' : 'SPACE'}] {engine.state.character.specialAbilityName}
               </span>
+              <span className="w-9 text-right tabular-nums text-red-200 shrink-0">
+                {hudState.specialCooldown > 0 ? `${Math.ceil(hudState.specialCooldown)}s` : ''}
+              </span>
+              {hudState.specialCooldown > 0 && hudState.maxSpecialCooldown > 0 && (
+                <span
+                  className="absolute inset-y-0 left-0 bg-red-500/20 rounded-lg pointer-events-none"
+                  style={{
+                    width: `${Math.max(0, Math.min(100, (1 - hudState.specialCooldown / hudState.maxSpecialCooldown) * 100))}%`,
+                  }}
+                />
+              )}
             </button>
           </div>
         </div>

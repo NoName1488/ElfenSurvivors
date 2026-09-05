@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GameEngine, getDividendConfig, projectDividend, MAX_PASSIVE_ITEMS } from '../utils/engine';
-import { Weapon, PassiveItem, StatUpgradeOption, WeaponRarity } from '../types';
+import { Weapon, PassiveItem, StatUpgradeOption, WeaponRarity, WeaponType } from '../types';
 import { WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS, ASCENDED_STAT_UPGRADES, ITEM_SYNERGIES, WEAPON_EVOLUTIONS } from '../data/gameData';
 import { sound } from '../utils/sound';
 import { useLanguage } from '../utils/i18n';
@@ -170,15 +170,16 @@ export const LabShop: React.FC<LabShopProps> = ({
 
     const newOfferings: ShopItem[] = [];
 
-    // Check if we have preserved locked items from previous state or wave transition
+    /*
+     * Locked offers, read from the one place that records them.
+     *
+     * Reading is deliberately free of side effects. The previous version emptied the buffer
+     * as it read, which meant the second of StrictMode's two mount passes found nothing and
+     * silently re-rolled every slot - the reported "locked item vanishes next visit".
+     */
     const preservedItems: ShopItem[] = keepLocked
       ? shopItems.filter((i) => i.isLocked)
       : (engine.state.savedLockedShopItems || []).filter((i: any) => i.isLocked);
-
-    // If restoring from engine state, clear the buffer
-    if (!keepLocked && engine.state.savedLockedShopItems && engine.state.savedLockedShopItems.length > 0) {
-      engine.state.savedLockedShopItems = [];
-    }
 
     let catalystSlotUsed = false;
 
@@ -300,13 +301,81 @@ export const LabShop: React.FC<LabShopProps> = ({
     generateShopOfferings(true);
   };
 
+  /*
+   * What the card prints.
+   *
+   * Weapon damage scales at 1 + (tier-1) * 0.35 and augment stats at 1 + (tier-1) * 0.5,
+   * which is what the engine applies, so these are the real numbers for the tier on offer
+   * rather than the tier 1 entry from the database.
+   */
+  const weaponStatRows = (key: string, tier: number) => {
+    const w = WEAPONS_DATABASE[key as WeaponType];
+    const tierMult = 1 + (tier - 1) * 0.35;
+    const rows: { label: string; value: string }[] = [];
+    rows.push({ label: isRu ? 'Урон' : 'Damage', value: String(Math.round(w.damage * tierMult)) });
+    rows.push({
+      label: isRu ? 'Темп' : 'Rate',
+      value: `${(1 / Math.max(0.01, w.cooldown)).toFixed(1)}/${isRu ? 'с' : 's'}`,
+    });
+    rows.push({ label: isRu ? 'Дальность' : 'Range', value: `${Math.round(w.range)}` });
+    if (w.critChance > 0) {
+      rows.push({ label: isRu ? 'Крит' : 'Crit', value: `${Math.round(w.critChance * 100)}% x${w.critMultiplier}` });
+    }
+    if (w.penetration) rows.push({ label: isRu ? 'Пробитие' : 'Pierce', value: String(w.penetration) });
+    if (w.knockback) rows.push({ label: isRu ? 'Отброс' : 'Knock', value: String(w.knockback) });
+    if (w.vectorsUsed > 0) rows.push({ label: isRu ? 'Векторов' : 'Vectors', value: String(w.vectorsUsed) });
+    return rows;
+  };
+
+  /** Human labels and units for the augment stat block. */
+  const STAT_META: Record<string, { ru: string; en: string; suffix?: string }> = {
+    maxHp: { ru: 'Макс. ОЗ', en: 'Max HP' },
+    hpRegen: { ru: 'Реген', en: 'Regen', suffix: '/5s' },
+    psiPower: { ru: 'Сила ПСИ', en: 'PSI Power', suffix: '%' },
+    vectorCount: { ru: 'Векторы', en: 'Vectors' },
+    vectorReach: { ru: 'Радиус', en: 'Reach', suffix: '%' },
+    attackSpeed: { ru: 'Скор. атаки', en: 'Atk Speed', suffix: '%' },
+    critChance: { ru: 'Шанс крита', en: 'Crit Chance', suffix: '%' },
+    critDamage: { ru: 'Множ. крита', en: 'Crit Mult', suffix: 'x' },
+    armor: { ru: 'Броня', en: 'Armor' },
+    dodge: { ru: 'Уклонение', en: 'Dodge', suffix: '%' },
+    moveSpeed: { ru: 'Скорость', en: 'Move Speed' },
+    dnaHarvest: { ru: 'Сбор ДНК', en: 'DNA Harvest', suffix: '%' },
+    pickupRange: { ru: 'Радиус сбора', en: 'Pickup', suffix: 'px' },
+    bloodLifesteal: { ru: 'Вампиризм', en: 'Lifesteal', suffix: '%' },
+    luck: { ru: 'Удача', en: 'Luck', suffix: '%' },
+    vibrationBase: { ru: 'Частота', en: 'Frequency', suffix: 'Гц' },
+  };
+
+  const passiveStatRows = (stats: Record<string, number> | undefined, tier: number) => {
+    if (!stats) return [];
+    const tierMult = 1 + (tier - 1) * 0.5;
+    return Object.entries(stats)
+      .filter(([, v]) => typeof v === 'number' && v !== 0)
+      .map(([k, v]) => {
+        const meta = STAT_META[k];
+        const scaled = v * tierMult;
+        const rounded = Math.abs(scaled) < 10 ? Math.round(scaled * 10) / 10 : Math.round(scaled);
+        return {
+          label: meta ? (isRu ? meta.ru : meta.en) : k,
+          value: `${rounded > 0 ? '+' : ''}${rounded}${meta?.suffix || ''}`,
+          good: scaled > 0,
+        };
+      });
+  };
+
   const toggleLockItem = (id: string) => {
     sound.playUiClick();
-    setShopItems((prev) => prev.map((item) => (item.id === id ? { ...item, isLocked: !item.isLocked } : item)));
+    setShopItems((prev) => {
+      const next = prev.map((item) => (item.id === id ? { ...item, isLocked: !item.isLocked } : item));
+      // Record the lock the moment it is made, not when the shop is left. A lock the player
+      // can see on screen is a lock that survives, whatever happens next.
+      engine.state.savedLockedShopItems = next.filter((i) => i.isLocked);
+      return next;
+    });
   };
 
   const handleProceedNextWave = () => {
-    // Preserve locked items across wave transitions!
     engine.state.savedLockedShopItems = shopItems.filter((i) => i.isLocked);
     onNextWave();
   };
@@ -315,6 +384,33 @@ export const LabShop: React.FC<LabShopProps> = ({
     if (currentDna < item.cost) return;
 
     if (item.type === 'weapon') {
+      // Same weapon, lower tier: the purchase upgrades it in place instead of taking a slot.
+      const upgradable = engine.state.weapons.find(
+        (w) => w.type === item.weaponKey && w.tier < item.tier
+      );
+      if (upgradable) {
+        const template = WEAPONS_DATABASE[item.weaponKey!];
+        upgradable.tier = item.tier;
+        engine.recalculateStats();
+        const cascade = engine.autoMergeWeapons();
+        sound.playLevelUp();
+        setAutoMergeToast(
+          t('autoMergeToast', {
+            name: isRu ? template.russianName : template.name,
+            tier: cascade ? cascade.newTier : item.tier,
+          })
+        );
+        engine.state.player.dna -= item.cost;
+        setCurrentDna(engine.state.player.dna);
+        setPurchaseCounts((prev) => ({ ...prev, [item.weaponKey!]: (prev[item.weaponKey!] || 0) + 1 }));
+        setShopItems((prev) => {
+          const next = prev.filter((i) => i.id !== item.id);
+          engine.state.savedLockedShopItems = next.filter((i) => i.isLocked);
+          return next;
+        });
+        return;
+      }
+
       const matchingWeapon = engine.state.weapons.find(
         (w) => w.type === item.weaponKey && w.tier === item.tier && w.tier < 4
       );
@@ -361,6 +457,35 @@ export const LabShop: React.FC<LabShopProps> = ({
         }
       }
     } else if (item.type === 'passive' && item.passiveData) {
+      // Same augment, lower tier: upgrade in place rather than spend a second socket.
+      const upgradablePassive = engine.state.passiveItems.find(
+        (p) => p.id === item.passiveData!.id && (p.tier || 1) < (item.tier || 1)
+      );
+      if (upgradablePassive) {
+        upgradablePassive.tier = item.tier || 1;
+        engine.recalculateStats();
+        const cascade = engine.autoMergePassives();
+        sound.playLevelUp();
+        setAutoMergeToast(
+          t('autoMergeToast', {
+            name: isRu ? item.passiveData.russianName : item.passiveData.name,
+            tier: cascade ? cascade.newTier : item.tier || 1,
+          })
+        );
+        engine.state.player.dna -= item.cost;
+        setCurrentDna(engine.state.player.dna);
+        setPurchaseCounts((prev) => ({
+          ...prev,
+          [item.passiveData!.id]: (prev[item.passiveData!.id] || 0) + 1,
+        }));
+        setShopItems((prev) => {
+          const next = prev.filter((i) => i.id !== item.id);
+          engine.state.savedLockedShopItems = next.filter((i) => i.isLocked);
+          return next;
+        });
+        return;
+      }
+
       // Slots are finite. A purchase that cannot merge into an augment you already own is
       // refused when full, which is what forces the duplicate-merge decision to matter.
       const willMerge = engine.state.passiveItems.some(
@@ -391,7 +516,12 @@ export const LabShop: React.FC<LabShopProps> = ({
     const itemKey = item.type === 'weapon' ? item.weaponKey! : item.passiveData!.id;
     setPurchaseCounts((prev) => ({ ...prev, [itemKey]: (prev[itemKey] || 0) + 1 }));
 
-    setShopItems((prev) => prev.filter((i) => i.id !== item.id));
+    setShopItems((prev) => {
+      const next = prev.filter((i) => i.id !== item.id);
+      // A bought offer stops being a locked offer, or it comes back for sale next wave.
+      engine.state.savedLockedShopItems = next.filter((i) => i.isLocked);
+      return next;
+    });
   };
 
   /*
@@ -1007,10 +1137,10 @@ export const LabShop: React.FC<LabShopProps> = ({
           </div>
 
           {/* Equipped Passive Items / Augmentations */}
-          {engine.state.passiveItems.length > 0 && (
+          {(
             <div className="glass-panel rounded-xl p-4 border-white/10 flex flex-col gap-2 shadow-md">
               <div className="text-xs font-mono uppercase tracking-[0.2em] text-gray-400 font-bold border-b border-white/5 pb-2">
-                {t('passivesInventory')} ({engine.state.passiveItems.length})
+                {t('passivesInventory')} ({engine.state.passiveItems.length}/{MAX_PASSIVE_ITEMS})
               </div>
               <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
                 {engine.state.passiveItems.map((p, idx) => (
@@ -1299,6 +1429,37 @@ export const LabShop: React.FC<LabShopProps> = ({
                             <span>{item.passiveData.negativeEffect}</span>
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/*
+                      * The numbers.
+                      *
+                      * A card used to sell on flavour text alone. Buying is a spend decision
+                      * and a spend decision needs figures, so both kinds of offer print what
+                      * they do at the tier on sale.
+                      */}
+                    {isWeapon && item.weaponKey && (
+                      <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 p-2 rounded-lg bg-black/40 border border-white/5 text-2xs font-mono">
+                        {weaponStatRows(item.weaponKey, item.tier).map((row) => (
+                          <div key={row.label} className="flex items-center justify-between gap-2">
+                            <span className="text-gray-500">{row.label}</span>
+                            <span className="text-gray-200 font-bold">{row.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {!isWeapon && item.passiveData && passiveStatRows(item.passiveData.stats as any, item.tier).length > 0 && (
+                      <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 p-2 rounded-lg bg-black/40 border border-white/5 text-2xs font-mono">
+                        {passiveStatRows(item.passiveData.stats as any, item.tier).map((row) => (
+                          <div key={row.label} className="flex items-center justify-between gap-2">
+                            <span className="text-gray-500">{row.label}</span>
+                            <span className={row.good ? 'text-emerald-300 font-bold' : 'text-rose-400 font-bold'}>
+                              {row.value}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     )}
 

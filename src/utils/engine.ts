@@ -1160,10 +1160,18 @@ export class GameEngine {
     }
     stats.vectorReach = effectiveVectorReach(stats.vectorReach);
 
-    // Resting frequency is a position on a scale, not a resource to max out, so it is held
-    // inside the scale. The floor sits below the phase threshold and the ceiling below the
-    // top of the critical band, which leaves room for the per-strike buildup to still matter.
-    stats.vibrationBase = Math.max(150, Math.min(960, stats.vibrationBase || 250));
+    /*
+     * Resting frequency is a position on a scale, not a bar to fill.
+     *
+     * It is held below the critical threshold on purpose: the top band is reached by
+     * striking, not by shopping. Frequency bought past that ceiling is not discarded - it
+     * becomes climb rate below, so a frequency build reaches the cutting and detonating
+     * bands in one or two strikes rather than four. That keeps every frequency item live
+     * and keeps the four bands reachable instead of collapsing the whole scale onto one.
+     */
+    const rawVibration = stats.vibrationBase || 250;
+    stats.vibrationBase = Math.max(150, Math.min(880, rawVibration));
+    this.vibrationOverflow = Math.max(0, Math.min(600, rawVibration - 880));
 
     // Minimum constraints
     stats.maxHp = Math.max(20, stats.maxHp);
@@ -2707,6 +2715,32 @@ export class GameEngine {
     p.y = Math.max(pad, Math.min(this.state.arenaHeight - pad, p.y));
   }
 
+  /**
+   * How far the player's vectors currently reach, in pixels.
+   *
+   * Shared rather than local because the soldiers need it too: a rifleman who is supposed to
+   * fire from beyond the radius has to know where the radius is, and it moves with upgrades,
+   * with ultrasonic suppression and with Nana's stance.
+   */
+  playerVectorReach(): number {
+    const reachMultiplier = 1 + this.state.stats.vectorReach / 100;
+    let reach =
+      (this.state.character.id === 'nana' ? 145 : this.state.character.id === 'mariko' ? 165 : 110) *
+      reachMultiplier;
+    // Ultrasonic frequency interference collapses reach by 35%.
+    if (this.state.player.vectorSuppressedTimer > 0) reach *= 0.65;
+    // Nana's printed cost for mobility: unbraced vectors lose a quarter of their reach.
+    if (this.state.character.id === 'nana' && !this.state.characterResource.isActive) reach *= 0.75;
+    return reach;
+  }
+
+  /**
+   * Resting frequency bought past the 880 Hz ceiling, in Hz.
+   *
+   * Spent as strike climb rate rather than discarded. See recalculateStats.
+   */
+  vibrationOverflow = 0;
+
   private updateVectorArms(dt: number) {
     if (this.state.vectorArms.length === 0) return;
 
@@ -2718,15 +2752,7 @@ export class GameEngine {
       this.state.player.vectorSuppressedTimer = Math.max(0, this.state.player.vectorSuppressedTimer - dt);
     }
 
-    const reachMultiplier = 1 + this.state.stats.vectorReach / 100;
-    let baseReach = (this.state.character.id === 'nana' ? 145 : this.state.character.id === 'mariko' ? 165 : 110) * reachMultiplier;
-    if (isSuppressed) {
-      baseReach *= 0.65; // Ultrasonic frequency interference collapses reach by 35%
-    }
-    // Nana's printed cost for mobility: unbraced vectors lose a quarter of their reach.
-    if (this.state.character.id === 'nana' && !this.state.characterResource.isActive) {
-      baseReach *= 0.75;
-    }
+    const baseReach = this.playerVectorReach();
 
     let atkSpeedMod = 1 + this.state.stats.attackSpeed / 100;
     if (isSuppressed) {
@@ -2967,8 +2993,21 @@ export class GameEngine {
         }
       }
 
-      // 2. High-Priority Autonomous Bullet & Rocket Deflection (Kinetic Intercept)
-      if (!arm.striking && arm.attackCooldown <= 0.1) {
+      /*
+       * 2. Bullet interception.
+       *
+       * This was the single largest reason a motionless player survived. Every arm whose
+       * cooldown had fallen below 0.1s - which is nearly always - scanned every incoming
+       * projectile, and any hit within a wide arc was not merely stopped but handed back as
+       * a 45+psi round with three penetration. Eight arms cover every bearing, so a player
+       * who never moved was protected on all sides and killed the shooters with their own
+       * ammunition. Being shot at was a net gain.
+       *
+       * Now an arm must be genuinely free, an interception costs it real time, and stopping
+       * a bullet is all that most arms do. Returning fire is the deflector role's job and
+       * Nana's specialty, and it returns a normal round rather than a superior one.
+       */
+      if (!arm.striking && arm.attackCooldown <= 0) {
         const isDeflectorRole = arm.role === 'deflector';
         const deflectReachBonus = (this.hasMutation('nana_auto_deflect') ? 1.4 : 1.0) * (isDeflectorRole ? 1.2 : 1.0);
         for (const proj of this.state.projectiles) {
@@ -2983,10 +3022,38 @@ export class GameEngine {
               // Deflectors guard a wider arc (up to 120° around their base angle)
               const maxDeflectAngle = Math.PI * (isDeflectorRole ? 0.65 : 0.4) * deflectReachBonus;
               if (angleDiff < maxDeflectAngle) {
-                // Intercept & deflect bullet with vector tip!
+                /*
+                 * Who can actually send a round back.
+                 *
+                 * A deflector-role arm can, because that is the role. Nana can, because
+                 * reflection is her whole build and her active stance is built around it.
+                 * Every other arm swats the round out of the air and nothing more.
+                 */
+                const canReturnFire =
+                  isDeflectorRole ||
+                  this.hasMutation('nana_auto_deflect') ||
+                  (this.state.character.id === 'nana' && this.state.characterResource.isActive);
+
+                arm.vibrationHz = Math.min(1000, arm.vibrationHz + 120);
+
+                if (!canReturnFire) {
+                  proj.life = 0;
+                  this.state.bulletsDeflected = (this.state.bulletsDeflected || 0) + 1;
+                  sound.playDeflection();
+                  this.spawnVectorClash(proj.x, proj.y, projAngle, '#94a3b8');
+                  arm.striking = true;
+                  arm.strikeProgress = 0;
+                  arm.targetX = proj.x;
+                  arm.targetY = proj.y;
+                  arm.strikeType = 'deflect';
+                  // A swat costs the arm most of a strike. Holding a perimeter against
+                  // sustained fire has to have a price, or standing still buys immunity.
+                  arm.attackCooldown = 0.55 / atkSpeedMod;
+                  break;
+                }
+
                 proj.isPlayer = true;
                 proj.isDeflected = true;
-                arm.vibrationHz = Math.min(1000, arm.vibrationHz + 120);
 
                 // Auto-target nearest hostile soldier or dropship
                 let bestTargetAngle = Math.atan2(-proj.vy, -proj.vx);
@@ -3001,8 +3068,10 @@ export class GameEngine {
                 proj.vy = Math.sin(bestTargetAngle) * deflectedSpeed;
                 const stanceReflectBonus =
                   this.state.character.id === 'nana' && this.state.characterResource.isActive ? 2.5 : 1;
-                proj.damage = Math.round((45 + this.state.stats.psiPower * 0.85) * psiMultiplier * stanceReflectBonus);
-                proj.penetration = 3;
+                // A returned round is a round, not an upgrade. It used to out-damage most
+                // of the weapons the player could buy, which made being shot at profitable.
+                proj.damage = Math.round((16 + this.state.stats.psiPower * 0.28) * psiMultiplier * stanceReflectBonus);
+                proj.penetration = 1;
 
                 // Nana Kinetic Battery Heal & Impenetrable Anchor Achievement (2.Е.2)
                 if (this.hasMutation('nana_kinetic_battery')) {
@@ -3034,7 +3103,7 @@ export class GameEngine {
                 arm.targetX = proj.x;
                 arm.targetY = proj.y;
                 arm.strikeType = 'deflect';
-                arm.attackCooldown = (0.25 / atkSpeedMod);
+                arm.attackCooldown = 0.45 / atkSpeedMod;
                 break;
               }
             }
@@ -3470,7 +3539,10 @@ export class GameEngine {
              * that idles low still climbs during a sustained fight - the band is where the
              * arm sits right now, not a fixed loadout choice.
              */
-            arm.vibrationHz = Math.min(1000, (arm.vibrationHz || restingHz) + 75);
+            // Overflow frequency is spent here: a build that shopped hard for frequency
+            // climbs roughly three times faster and reaches the top band in one strike.
+            const climb = 75 + this.vibrationOverflow * 0.32;
+            arm.vibrationHz = Math.min(1300, (arm.vibrationHz || restingHz) + climb);
             const band = vectorBand(arm.vibrationHz);
 
             if (band === 'shear') {
@@ -3479,8 +3551,11 @@ export class GameEngine {
             } else if (band === 'critical') {
               // Extreme frequency becomes visible and detonates on contact. Splash is
               // deliberately modest per target - its value is hitting a packed rank at all.
-              this.damageEnemy(bestTarget, Math.round(finalDmg * 0.3), true);
-              const blastR = 74;
+              // Inside the top band the blast still grows with frequency, so the scale keeps
+              // paying above 900 instead of flattening the moment the band is entered.
+              const overBand = Math.min(1, Math.max(0, (arm.vibrationHz - 900) / 400));
+              this.damageEnemy(bestTarget, Math.round(finalDmg * (0.3 + overBand * 0.25)), true);
+              const blastR = 74 + overBand * 38;
               for (const other of this.state.enemies) {
                 if (other === bestTarget || other.hp <= 0) continue;
                 if (Math.hypot(other.x - bestTarget.x, other.y - bestTarget.y) > blastR) continue;
@@ -7469,7 +7544,7 @@ export class GameEngine {
       // Shoot cooldown
       if (e.shootCooldown !== undefined && !e.isReloading) {
         e.lastShoot = (e.lastShoot || 0) + dt;
-        if (e.lastShoot >= e.shootCooldown && dist < 520) {
+        if (e.lastShoot >= e.shootCooldown && dist < (e.type === 'sat_grunt' ? 640 : 520)) {
           e.lastShoot = 0;
           this.enemyShoot(e);
         }
@@ -7666,6 +7741,33 @@ export class GameEngine {
           const strafeAng = angle + Math.PI * 0.5 * (e.id % 2 === 0 ? 1 : -1);
           e.x += Math.cos(strafeAng) * moveSpeed * 0.65 * dt;
           e.y += Math.sin(strafeAng) * moveSpeed * 0.65 * dt;
+        }
+      } else if (e.type === 'sat_grunt' && !e.isElite) {
+        /*
+         * The rifleman holds outside the vectors.
+         *
+         * The counter-Diclonius doctrine in the source is one sentence long: never enter the
+         * radius. Every soldier who walks inside it dies, and the ones who survive are the
+         * ones firing from a distance the arms cannot reach. The grunt was doing the
+         * opposite - closing to arm's length with a rifle - which fed the player free kills
+         * and made standing still the strongest way to play.
+         *
+         * He now paces the radius instead. A player who wants him dead has to walk over and
+         * take him, which is the loop the whole game is built on: short reach, absolute
+         * power inside it, so you must close. He backs away more slowly than a player walks,
+         * so closing always works - he buys time, he does not kite forever.
+         */
+        const standoff = this.playerVectorReach() + 150;
+        if (dist < standoff - 40) {
+          e.x -= Math.cos(angle) * moveSpeed * 0.62 * dt;
+          e.y -= Math.sin(angle) * moveSpeed * 0.62 * dt;
+        } else if (dist > standoff + 70) {
+          e.x += Math.cos(angle) * moveSpeed * dt;
+          e.y += Math.sin(angle) * moveSpeed * dt;
+        } else {
+          const strafeAng = angle + Math.PI * 0.5 * (e.id % 2 === 0 ? 1 : -1);
+          e.x += Math.cos(strafeAng) * moveSpeed * 0.5 * dt;
+          e.y += Math.sin(strafeAng) * moveSpeed * 0.5 * dt;
         }
       } else if (e.type === 'sat_shotgunner' || e.type === 'riot_shield' || e.type === 'sat_heavy_commando') {
         // Tactical squad flanking: angle offset creates an encirclement pincer
