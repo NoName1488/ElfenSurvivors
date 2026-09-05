@@ -104,11 +104,13 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
     } else if (type === 'ambient') {
       sound.setMusicVolume(0.25);
       sound.setSfxVolume(0.24);
-      sound.setTrack('ambient_only');
+      // The standalone ambient track was removed; the meditation preset is now quiet
+      // volumes plus breathing pauses on the automatic subject theme.
+      sound.setTrack('hero_theme');
       sound.setBreathingPausesEnabled(true);
       setMusicVol(25);
       setSfxVol(24);
-      setCurrentTrack('ambient_only');
+      setCurrentTrack('hero_theme');
       setBreathingPauses(true);
     }
   };
@@ -118,50 +120,8 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
       id: 'hero_theme',
       nameRu: 'Автоматически (Тема выбранного героя)',
       nameEn: 'Automatic (Subject Theme)',
-      descRu: 'Меняется под персонажа (Люси, Нью, Нана, Бандо, Марико, Курама, Анна)',
-      descEn: 'Adapts to selected subject with dedicated progressive movements',
-    },
-    {
-      id: 'adaptive_medley',
-      nameRu: 'Динамический микс (Сменяет темы по ходу забега)',
-      nameEn: 'Adaptive Medley (Evolving Themes)',
-      descRu: 'Бесшовно чередует темы и эмбиент каждые несколько минут, полностью исключая зацикливание',
-      descEn: 'Seamlessly rotates themes and ambient interludes to eliminate repetition',
-    },
-    {
-      id: 'lilium',
-      nameRu: 'Lilium (Кафедральный хор & Музыкальная шкатулка)',
-      nameEn: 'Lilium (Cathedral Choir & Music Box)',
-      descRu: 'Смягченные колокольчики, глубокий виолончельный бас и 5-секундные паузы для отдыха слуха',
-      descEn: 'Softened bells, warm cello pedals, and 5s auditory rest intervals',
-    },
-    {
-      id: 'enoshima_ambient',
-      nameRu: 'Берег Эносимы (Меланхоличное фортепиано & Виолончель)',
-      nameEn: 'Enoshima Shoreline (Piano & Cello)',
-      descRu: 'Просторная акустическая баллада с медленным темпом, снимающая усталость',
-      descEn: 'Spacious, soothing acoustic piano and warm cello sanctuary',
-    },
-    {
-      id: 'kurama_elegy',
-      nameRu: 'Раскаяние Курамы (Симфоническая элегия)',
-      nameEn: "Kurama's Remorse (Symphonic Elegy)",
-      descRu: 'Трогательные фортепианные арпеджио и струнные, отражающие трагедию директора',
-      descEn: 'Poignant classical piano arpeggios and strings reflecting parental grief',
-    },
-    {
-      id: 'singularity',
-      nameRu: 'Сингулярность Анны (Космический хор & Саб-дрон)',
-      nameEn: 'Anna Singularity (Cosmic Choir)',
-      descRu: 'Медитативный вокальный хорал, глубокие аналоговые гармоники без навязчивой мелодии',
-      descEn: 'Meditative choral vowel swell and analog sub drone for sublime focus',
-    },
-    {
-      id: 'ambient_only',
-      nameRu: 'Медитативный эмбиент (Полное отсутствие мелодии)',
-      nameEn: 'Pure Atmospheric Ambient (No Melody)',
-      descRu: 'Теплый морской ветер и аналоговый суб-бас — абсолютный фокус на уклонении от врагов',
-      descEn: 'Warm ocean wind and sub-harmonics without any repeating melody',
+      descRu: 'Меняется под персонажа (Люси, Ню, Нана, Бандо, Марико, Курама, Анна). Во время боя с боссом сама переключается на оркестровую тему',
+      descEn: 'Adapts to the selected subject. Switches to the orchestral boss theme during boss fights',
     },
     {
       id: 'custom_playlist',
@@ -169,13 +129,6 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
       nameEn: 'Test Soundtrack (audio files)',
       descRu: 'Плейлист из 6 треков. Играет подряд и не прерывается на боссов',
       descEn: 'Six-track playlist. Plays straight through, boss fights do not interrupt it',
-    },
-    {
-      id: 'boss_battle',
-      nameRu: 'Битва боссов (Оркестровый накал)',
-      nameEn: 'Boss Battle (Clash of Diclonii)',
-      descRu: 'Симфонический бой: литавры, стаккато струнных и готические хоралы',
-      descEn: 'Symphonic combat: driving timpani, staccato cello, dramatic surges',
     },
   ];
 

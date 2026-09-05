@@ -9,6 +9,15 @@ import { CUSTOM_PLAYLIST, trackUrl, MusicTrack } from '../data/musicPlaylist';
 
 const AUDIO_SETTINGS_KEY = 'elfen_lied_audio_settings';
 
+/**
+ * Tracks the player can pick in the settings.
+ * 'boss_battle' is deliberately absent: it is still generated, but the engine switches to it
+ * on its own when a boss spawns, so offering it as a permanent choice made no sense.
+ * The per-subject themes (Lilium, Kurama's elegy, Anna's singularity) are still reachable
+ * through 'hero_theme'; only the standalone entries for them were removed.
+ */
+export const SELECTABLE_TRACKS = ['hero_theme', 'custom_playlist'];
+
 /** Track id for the file-based test soundtrack. */
 export const CUSTOM_PLAYLIST_TRACK = 'custom_playlist';
 
@@ -85,7 +94,9 @@ class SoundEngine {
         if (typeof parsed.musicMuted === 'boolean') this.musicMuted = parsed.musicMuted;
         if (typeof parsed.sfxMuted === 'boolean') this.sfxMuted = parsed.sfxMuted;
         if (typeof parsed.isMuted === 'boolean') this.isMuted = parsed.isMuted;
-        if (typeof parsed.currentTrack === 'string') this.currentTrack = parsed.currentTrack;
+        if (typeof parsed.currentTrack === 'string' && SELECTABLE_TRACKS.includes(parsed.currentTrack)) {
+          this.currentTrack = parsed.currentTrack;
+        }
         if (typeof parsed.breathingPausesEnabled === 'boolean') this.breathingPausesEnabled = parsed.breathingPausesEnabled;
       }
     } catch (e) {}
@@ -405,6 +416,7 @@ class SoundEngine {
   }
 
   public setTrack(track: string) {
+    if (!SELECTABLE_TRACKS.includes(track)) return;
     if (this.currentTrack === track) return;
     this.currentTrack = track;
     if (this.isMusicPlaying) {
@@ -469,16 +481,10 @@ class SoundEngine {
       this.startBossBattleMusic(sessionId);
     } else if (this.currentTrack === 'lilium' || this.currentTrack === 'lilium_complete') {
       this.startLiliumMusic(sessionId);
-    } else if (this.currentTrack === 'enoshima_ambient') {
-      this.startEnoshimaAmbientMusic(sessionId);
     } else if (this.currentTrack === 'kurama_elegy') {
       this.startKuramaElegyMusic(sessionId);
     } else if (this.currentTrack === 'singularity') {
       this.startSingularityMusic(sessionId);
-    } else if (this.currentTrack === 'ambient_only') {
-      this.startAmbientOnlyMusic(sessionId);
-    } else if (this.currentTrack === 'adaptive_medley') {
-      this.startAdaptiveMedleyMusic(sessionId);
     } else {
       // hero_theme: dynamically mapped per character
       if (this.currentCharacterId === 'nyu') {
@@ -1743,218 +1749,6 @@ class SoundEngine {
     playChoralSwell();
   }
 
-  /**
-   * 10. ENOSHIMA SHORELINE: AMBIENT PIANO & CELLO
-   * Ultra-relaxing, slow-tempo acoustic ocean sanctuary.
-   */
-  private startEnoshimaAmbientMusic(sessionId: number, onCycleComplete?: () => void) {
-    if (!this.ctx || !this.isMusicPlaying || sessionId !== this.musicSessionId) return;
-
-    const phrases = [
-      { note: 261.63, bass: 65.41, dur: 1.4 },
-      { note: 329.63, bass: 0, dur: 1.2 },
-      { note: 392.0, bass: 0, dur: 1.8 },
-      { note: 329.63, bass: 87.31, dur: 1.4 },
-      { note: 293.66, bass: 0, dur: 1.2 },
-      { note: 261.63, bass: 0, dur: 2.2 },
-    ];
-
-    let pIdx = 0;
-    const playEnoshimaStep = () => {
-      if (sessionId !== this.musicSessionId || !this.isMusicPlaying || !this.ctx || !this.canPlayMusic()) return;
-      const step = phrases[pIdx];
-      const now = this.ctx.currentTime;
-      const dur = step.dur;
-
-      try {
-        const osc = this.ctx.createOscillator();
-        const filter = this.ctx.createBiquadFilter();
-        const gain = this.ctx.createGain();
-
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(step.note, now);
-
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(1100, now);
-
-        gain.gain.setValueAtTime(0.0001, now);
-        gain.gain.linearRampToValueAtTime(0.09, now + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + dur * 1.4);
-
-        osc.connect(filter);
-        filter.connect(gain);
-        this.connectMusic(gain);
-
-        osc.start(now);
-        osc.stop(now + dur * 1.4);
-
-        if (step.bass > 0) {
-          const bOsc = this.ctx.createOscillator();
-          const bGain = this.ctx.createGain();
-          bOsc.type = 'sine';
-          bOsc.frequency.setValueAtTime(step.bass, now);
-
-          bGain.gain.setValueAtTime(0.0001, now);
-          bGain.gain.linearRampToValueAtTime(0.10, now + 0.1);
-          bGain.gain.exponentialRampToValueAtTime(0.0001, now + dur * 1.8);
-
-          bOsc.connect(bGain);
-          this.connectMusic(bGain);
-          bOsc.start(now);
-          bOsc.stop(now + dur * 1.8);
-        }
-      } catch (e) {}
-
-      pIdx++;
-      if (pIdx >= phrases.length) {
-        pIdx = 0;
-        if (onCycleComplete) {
-          onCycleComplete();
-          return;
-        }
-        if (this.breathingPausesEnabled) {
-          this.playAmbientDrone(5.0);
-          this.scheduleMusicStep(sessionId, playEnoshimaStep, 5200);
-          return;
-        }
-      }
-
-      this.scheduleMusicStep(sessionId, playEnoshimaStep, dur * 950);
-    };
-
-    playEnoshimaStep();
-  }
-
-  /**
-   * 11. PURE ATMOSPHERIC AMBIENT (ZERO REPETITIVE MELODY)
-   * Perfect for long sessions and players who find repeating melodies tiring.
-   */
-  private startAmbientOnlyMusic(sessionId: number) {
-    if (!this.ctx || !this.isMusicPlaying || sessionId !== this.musicSessionId) return;
-
-    const chords = [
-      { root: 55.0, harmonics: [110, 164.81, 220], dur: 5.0 },
-      { root: 43.65, harmonics: [87.31, 130.81, 174.61], dur: 5.2 },
-      { root: 49.0, harmonics: [98.0, 146.83, 196.0], dur: 5.0 },
-    ];
-
-    let idx = 0;
-    const playAmbientStep = () => {
-      if (sessionId !== this.musicSessionId || !this.isMusicPlaying || !this.ctx || !this.canPlayMusic()) return;
-      const step = chords[idx];
-      const now = this.ctx.currentTime;
-      const dur = step.dur;
-
-      try {
-        const osc = this.ctx.createOscillator();
-        const filter = this.ctx.createBiquadFilter();
-        const gain = this.ctx.createGain();
-
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(step.root, now);
-
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(160, now);
-
-        gain.gain.setValueAtTime(0.0001, now);
-        gain.gain.linearRampToValueAtTime(0.12, now + 1.5);
-        gain.gain.linearRampToValueAtTime(0.0001, now + dur);
-
-        osc.connect(filter);
-        filter.connect(gain);
-        this.connectMusic(gain);
-
-        osc.start(now);
-        osc.stop(now + dur);
-
-        step.harmonics.forEach((freq) => {
-          if (!this.ctx) return;
-          const hOsc = this.ctx.createOscillator();
-          const hFilter = this.ctx.createBiquadFilter();
-          const hGain = this.ctx.createGain();
-
-          hOsc.type = 'sine';
-          hOsc.frequency.setValueAtTime(freq, now);
-
-          hFilter.type = 'lowpass';
-          hFilter.frequency.setValueAtTime(450, now);
-
-          hGain.gain.setValueAtTime(0.0001, now);
-          hGain.gain.linearRampToValueAtTime(0.035, now + 1.8);
-          hGain.gain.linearRampToValueAtTime(0.0001, now + dur);
-
-          hOsc.connect(hFilter);
-          hFilter.connect(hGain);
-          this.connectMusic(hGain);
-
-          hOsc.start(now);
-          hOsc.stop(now + dur);
-        });
-      } catch (e) {}
-
-      idx = (idx + 1) % chords.length;
-      this.scheduleMusicStep(sessionId, playAmbientStep, dur * 880);
-    };
-
-    playAmbientStep();
-  }
-
-  /**
-   * 12. ADAPTIVE MEDLEY (CYCLES BETWEEN THEMES TO NEVER GET REPETITIVE)
-   */
-  private startAdaptiveMedleyMusic(sessionId: number) {
-    if (!this.ctx || !this.isMusicPlaying || sessionId !== this.musicSessionId) return;
-    const medleyPlaylist = ['lilium', 'enoshima_ambient', 'kurama_elegy', 'ambient_only'];
-    let medleyIdx = 0;
-
-    const runMedleyTrack = () => {
-      if (!this.isMusicPlaying || sessionId !== this.musicSessionId) return;
-
-      // 1. Terminate any active oscillators from previous sub-track
-      this.activeMusicOscillators.forEach((node) => {
-        try {
-          (node as any).stop?.();
-          node.disconnect();
-        } catch (e) {}
-      });
-      this.activeMusicOscillators.clear();
-
-      // 2. Clear any pending step timeouts from previous sub-track
-      this.clearAllMusicTimeouts();
-
-      // 3. Allocate fresh sub-session ID so lingering callbacks from previous sub-track abort
-      this.musicSessionId++;
-      const activeSubSession = this.musicSessionId;
-
-      const track = medleyPlaylist[medleyIdx];
-      medleyIdx = (medleyIdx + 1) % medleyPlaylist.length;
-
-      if (track === 'lilium') this.startLiliumMusic(activeSubSession);
-      else if (track === 'enoshima_ambient') this.startEnoshimaAmbientMusic(activeSubSession);
-      else if (track === 'kurama_elegy') this.startKuramaElegyMusic(activeSubSession);
-      else this.startAmbientOnlyMusic(activeSubSession);
-
-      // Switch to next theme in 75 seconds for seamless variety
-      this.scheduleMusicStep(activeSubSession, () => {
-        if (activeSubSession === this.musicSessionId && this.currentTrack === 'adaptive_medley' && this.isMusicPlaying) {
-          runMedleyTrack();
-        }
-      }, 75000);
-    };
-
-    runMedleyTrack();
-  }
-
-  // =========================================================================
-  // SOUND EFFECTS: RE-ENGINEERED TO ELIMINATE SHARP EAR FATIGUE
-  // Every sound passes through the anti-harshness SFX bus and includes a 3-4ms
-  // linear attack ramp to eliminate digital click pops, with rate limiting.
-  // =========================================================================
-
-  /**
-   * Vector Slash: Silky, lethal aerodynamic slice
-   * Replaced screeching trebles with warm, smooth aerodynamic wind slice.
-   */
   public playVectorSlash() {
     if (!this.canPlaySfx()) return;
     const nowPerf = performance.now();

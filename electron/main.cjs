@@ -12,6 +12,7 @@ const { app, BrowserWindow, protocol, session, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { Readable } = require('node:stream');
+const { checkForUpdates } = require('./updater.cjs');
 
 // Minimal MIME table. Only the types this build actually ships.
 const MIME_TYPES = {
@@ -162,6 +163,13 @@ async function createWindow() {
   });
 
   await win.loadURL(`${APP_SCHEME}://local/index.html`);
+
+  // Check for a newer release on every launch, a few seconds in so the check never
+  // competes with startup. Silent when already up to date, and silent on any failure.
+  setTimeout(() => {
+    checkForUpdates(win, { silent: true });
+  }, 4000);
+
   return win;
 }
 
