@@ -16,16 +16,22 @@ const AUDIO_SETTINGS_KEY = 'elfen_lied_audio_settings';
  * The per-subject themes (Lilium, Kurama's elegy, Anna's singularity) are still reachable
  * through 'hero_theme'; only the standalone entries for them were removed.
  */
-export const SELECTABLE_TRACKS = ['hero_theme', 'custom_playlist', 'player_playlist'];
+export const SELECTABLE_TRACKS = ['hero_theme', 'player_playlist'];
 
-/** Track id for the file-based test soundtrack. */
-export const CUSTOM_PLAYLIST_TRACK = 'custom_playlist';
 /** The player's own folder, listed by the desktop build. */
 export const PLAYER_PLAYLIST_TRACK = 'player_playlist';
 
-/** Both file-backed options, as opposed to the procedural generators. */
+/**
+ * A setting saved before the bundled soundtrack was removed.
+ *
+ * Kept only so an existing player's stored choice can be recognised and moved rather than
+ * silently leaving them on a playlist that no longer exists.
+ */
+const REMOVED_BUNDLED_TRACK = 'custom_playlist';
+
+/** The one file-backed option, as opposed to the procedural generators. */
 export function isFilePlaylistTrack(track: string): boolean {
-  return track === CUSTOM_PLAYLIST_TRACK || track === PLAYER_PLAYLIST_TRACK;
+  return track === PLAYER_PLAYLIST_TRACK;
 }
 
 class SoundEngine {
@@ -101,7 +107,10 @@ class SoundEngine {
         if (typeof parsed.musicMuted === 'boolean') this.musicMuted = parsed.musicMuted;
         if (typeof parsed.sfxMuted === 'boolean') this.sfxMuted = parsed.sfxMuted;
         if (typeof parsed.isMuted === 'boolean') this.isMuted = parsed.isMuted;
-        if (typeof parsed.currentTrack === 'string' && SELECTABLE_TRACKS.includes(parsed.currentTrack)) {
+        if (typeof parsed.currentTrack === 'string' && parsed.currentTrack === REMOVED_BUNDLED_TRACK) {
+          // The bundled soundtrack is gone; send anyone who had it selected to the themes.
+          this.currentTrack = 'hero_theme';
+        } else if (typeof parsed.currentTrack === 'string' && SELECTABLE_TRACKS.includes(parsed.currentTrack)) {
           this.currentTrack = parsed.currentTrack;
         }
         if (typeof parsed.breathingPausesEnabled === 'boolean') this.breathingPausesEnabled = parsed.breathingPausesEnabled;
@@ -589,9 +598,9 @@ class SoundEngine {
     return this.musicVolume * 0.85;
   }
 
-  /** The list the transport controls act on: bundled soundtrack, or the player's folder. */
+  /** The list the transport controls act on: the player's own folder. */
   private activePlaylist(): MusicTrack[] {
-    return getPlaylist(this.currentTrack === PLAYER_PLAYLIST_TRACK ? 'player' : 'bundled');
+    return getPlaylist();
   }
 
   private startFilePlaylist() {

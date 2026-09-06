@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { sound } from '../utils/sound';
 import {
-  BUNDLED_PLAYLIST,
   MusicTrack,
   getPlayerTracks,
   isDesktopBuild,
@@ -25,7 +24,6 @@ interface AudioSettingsModalProps {
   onClose: () => void;
 }
 
-const BUNDLED_COUNT = BUNDLED_PLAYLIST.length;
 
 export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose }) => {
   const { t, isRu } = useLanguage();
@@ -123,39 +121,8 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
     sound.setBreathingPausesEnabled(nextVal);
   };
 
-  const applyPreset = (type: 'soft' | 'standard' | 'ambient') => {
-    sound.playUiClick();
-    if (type === 'soft') {
-      sound.setMusicVolume(0.24);
-      sound.setSfxVolume(0.28);
-      sound.setBreathingPausesEnabled(true);
-      setMusicVol(24);
-      setSfxVol(28);
-      setBreathingPauses(true);
-    } else if (type === 'standard') {
-      sound.setMusicVolume(0.32);
-      sound.setSfxVolume(0.38);
-      sound.setBreathingPausesEnabled(true);
-      setMusicVol(32);
-      setSfxVol(38);
-      setBreathingPauses(true);
-    } else if (type === 'ambient') {
-      sound.setMusicVolume(0.25);
-      sound.setSfxVolume(0.24);
-      // The standalone ambient track was removed; the meditation preset is now quiet
-      // volumes plus breathing pauses on the automatic subject theme.
-      sound.setTrack('hero_theme');
-      sound.setBreathingPausesEnabled(true);
-      setMusicVol(25);
-      setSfxVol(24);
-      setCurrentTrack('hero_theme');
-      setBreathingPauses(true);
-    }
-  };
-
-  // Whichever file playlist the transport is currently driving.
-  const activeList: MusicTrack[] =
-    currentTrack === 'player_playlist' ? playerTracks : BUNDLED_PLAYLIST;
+  // The one file playlist the transport can drive.
+  const activeList: MusicTrack[] = playerTracks;
 
   const trackOptions = [
     {
@@ -164,13 +131,6 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
       nameEn: 'Automatic (Subject Theme)',
       descRu: 'Меняется под персонажа (Люси, Ню, Нана, Бандо, Марико, Курама, Анна). Во время боя с боссом сама переключается на оркестровую тему',
       descEn: 'Adapts to the selected subject. Switches to the orchestral boss theme during boss fights',
-    },
-    {
-      id: 'custom_playlist',
-      nameRu: 'Саундтрек игры',
-      nameEn: 'Game Soundtrack',
-      descRu: `${BUNDLED_COUNT} треков. Играют подряд и не прерываются на боссов`,
-      descEn: `${BUNDLED_COUNT} tracks. They play straight through, boss fights do not interrupt them`,
     },
     {
       id: 'player_playlist',
@@ -242,32 +202,6 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
             </div>
           </div>
 
-          {/* Quick Presets */}
-          <div className="pt-2 border-t border-emerald-500/20 flex items-center justify-between gap-2">
-            <span className="text-xs font-mono text-emerald-400 uppercase font-bold">
-              {isRu ? 'Пресеты:' : 'Presets:'}
-            </span>
-            <div className="flex items-center gap-1.5 flex-1 justify-end">
-              <button
-                onClick={() => applyPreset('soft')}
-                className="px-2 py-1 rounded bg-emerald-950/80 hover:bg-emerald-900/80 border border-emerald-500/40 text-xs font-mono text-emerald-300 transition-colors cursor-pointer"
-              >
-                {isRu ? 'Мягкий' : 'Soft'}
-              </button>
-              <button
-                onClick={() => applyPreset('standard')}
-                className="px-2 py-1 rounded bg-neutral-900/80 hover:bg-neutral-800 border border-white/10 text-xs font-mono text-gray-300 transition-colors cursor-pointer"
-              >
-                {isRu ? 'Базовый' : 'Standard'}
-              </button>
-              <button
-                onClick={() => applyPreset('ambient')}
-                className="px-2 py-1 rounded bg-neutral-900/80 hover:bg-neutral-800 border border-white/10 text-xs font-mono text-pink-300 transition-colors cursor-pointer"
-              >
-                {isRu ? 'Медитация' : 'Ambient'}
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Sliders Container */}
@@ -402,7 +336,7 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
               )}
 
               {/* Transport, shown for whichever file playlist is active */}
-              {(currentTrack === 'custom_playlist' || currentTrack === 'player_playlist') && activeList.length > 0 && (
+              {currentTrack === 'player_playlist' && activeList.length > 0 && (
                 <div className="mt-2 p-2.5 rounded-lg bg-black/50 border border-pink-500/30 flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
@@ -505,46 +439,6 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({ onClose 
               <Volume2 className="w-3.5 h-3.5 text-amber-400" />
             </div>
 
-            {/* Test SFX Interactive Panel */}
-            <div className="pt-2 border-t border-white/5 flex flex-col gap-1.5">
-              <span className="text-xs font-mono text-gray-400 uppercase">
-                {isRu ? 'Послушать эффекты:' : 'Preview effects:'}
-              </span>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                <button
-                  onClick={() => sound.playVectorSlash()}
-                  disabled={isSfxMuted || sfxVol === 0}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <Play className="w-2.5 h-2.5 text-amber-400" />
-                  <span>{isRu ? 'Вектор' : 'Slash'}</span>
-                </button>
-                <button
-                  onClick={() => sound.playVectorClash()}
-                  disabled={isSfxMuted || sfxVol === 0}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <Play className="w-2.5 h-2.5 text-amber-400" />
-                  <span>{isRu ? 'Столкновение' : 'Clash'}</span>
-                </button>
-                <button
-                  onClick={() => sound.playShotgun()}
-                  disabled={isSfxMuted || sfxVol === 0}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <Play className="w-2.5 h-2.5 text-amber-400" />
-                  <span>{isRu ? 'Дробовик' : 'Shotgun'}</span>
-                </button>
-                <button
-                  onClick={() => sound.playDeflection()}
-                  disabled={isSfxMuted || sfxVol === 0}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono text-gray-300 hover:text-white glass-panel hover:border-amber-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <Play className="w-2.5 h-2.5 text-amber-400" />
-                  <span>{isRu ? 'Отражение' : 'Deflect'}</span>
-                </button>
-              </div>
-            </div>
           </div>
         </div>
 

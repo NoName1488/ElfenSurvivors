@@ -6,13 +6,12 @@
  * file playlist swaps the generator out and routes the element through its own full
  * bandwidth chain.
  *
- * Two sources feed it:
- *   - the bundled soundtrack shipped in /public/music
- *   - whatever the player has dropped into their own music folder
+ * One source feeds it: whatever the player has dropped into their own music folder. A
+ * bundled soundtrack used to sit beside it and was removed along with its files.
  *
- * The player's folder only exists in the desktop build, where the main process lists it and
- * serves it over app://. In a browser there is no folder to read, so that playlist is
- * simply empty and the UI says so.
+ * That folder only exists in the desktop build, where the main process lists it and serves
+ * it over app://. In a browser there is no folder to read, so the playlist is simply empty
+ * and the UI says so.
  */
 
 export interface MusicTrack {
@@ -21,8 +20,8 @@ export interface MusicTrack {
   url: string;
   artist: string;
   title: string;
-  /** Where the track came from, which decides which playlist it belongs to. */
-  source: 'bundled' | 'player';
+  /** Where the track came from. Only the player's own folder feeds this now. */
+  source: 'player';
 }
 
 /** Shape exposed by electron/preload.cjs. Absent in the browser build. */
@@ -47,14 +46,6 @@ export function isDesktopBuild(): boolean {
 const MUSIC_BASE_PATH = '/music/';
 
 /** The soundtrack that ships with the game. */
-export const BUNDLED_PLAYLIST: MusicTrack[] = [
-  { id: 'decalius_loneliness', url: MUSIC_BASE_PATH + 'decalius-loneliness.mp3', artist: 'Decalius', title: 'Loneliness', source: 'bundled' },
-  { id: 'agony_her_dead_eyes', url: MUSIC_BASE_PATH + 'minuta-agonii-her-dead-eyes.mp3', artist: 'минута агонии', title: 'Her Dead Eyes', source: 'bundled' },
-  { id: 'agony_my_friend', url: MUSIC_BASE_PATH + 'minuta-agonii-my-friend-killed-himself-last-spring.mp3', artist: 'минута агонии', title: 'My Friend Killed Himself Last Spring', source: 'bundled' },
-  { id: 'desolate_ghost', url: MUSIC_BASE_PATH + 'desolate-thoughts-ghost.mp3', artist: 'Desolate Thoughts', title: 'Ghost', source: 'bundled' },
-  { id: 'desolate_bitter_reality', url: MUSIC_BASE_PATH + 'desolate-thoughts-bitter-reality.mp3', artist: 'Desolate Thoughts', title: 'Bitter Reality', source: 'bundled' },
-  { id: 'wintercult_frozen', url: MUSIC_BASE_PATH + 'wintercult-frozen-in-melancholy.mp3', artist: 'Wintercult', title: 'Frozen in Melancholy', source: 'bundled' },
-];
 
 /**
  * Tracks from the player's own folder.
@@ -120,6 +111,6 @@ export async function openPlayerMusicFolder(): Promise<boolean> {
   }
 }
 
-export function getPlaylist(source: 'bundled' | 'player'): MusicTrack[] {
-  return source === 'bundled' ? BUNDLED_PLAYLIST : playerTracks;
+export function getPlaylist(): MusicTrack[] {
+  return playerTracks;
 }
