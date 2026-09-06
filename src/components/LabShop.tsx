@@ -8,7 +8,7 @@ import { PsychicMutationTree } from './PsychicMutationTree';
 import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
 import { ItemIcon } from './ItemIcon';
-import { exchange, tradeQuote, lostTradeBonuses } from '../utils/shopTrade';
+import { exchange, tradeQuote, lostTradeBonuses, saleValue } from '../utils/shopTrade';
 import {
   Dna,
   RefreshCw,
@@ -108,6 +108,19 @@ export const LabShop: React.FC<LabShopProps> = ({
     return engine.state.passiveItems.length >= MAX_PASSIVE_ITEMS &&
       !engine.state.passiveItems.some(p => p.id === offer.passiveData?.id && (p.tier || 1) === offer.tier && offer.tier < 4);
   };
+  /*
+   * The most any single sale could return, which is what decides whether a replacement is
+   * reachable at all. Enabling the button on "a refund might cover it" was reported from
+   * play: at 28 DNA against a 108 offer every trade was still offered, and the shortfall
+   * only appeared inside the dialog.
+   */
+  const bestRefundFor = (offer: ShopItem) => {
+    const pool: { cost: number; tier?: number }[] =
+      offer.type === 'weapon' ? engine.state.weapons : engine.state.passiveItems;
+    return pool.reduce((best, item) => Math.max(best, saleValue(item, soldThisVisit)), 0);
+  };
+  const canAffordTrade = (offer: ShopItem) => currentDna + bestRefundFor(offer) >= offer.cost;
+
   const beginPurchase = (offer: ShopItem) => {
     if (needsTrade(offer)) {
       setTradeOffer(offer);
@@ -810,7 +823,9 @@ export const LabShop: React.FC<LabShopProps> = ({
             </div>
             <p className="text-sm text-zinc-400">{isRu ? 'Показан вклад предметов до бонусов персонажа и ограничений. Слияния дубликатов выполняются автоматически.' : 'Item contributions before character bonuses and caps. Duplicates fuse automatically.'}</p>
             {lost.length > 0 && <p className="text-amber-300">{isRu ? 'Будут потеряны бонусы: ' : 'Bonuses lost: '}{lost.map(b => isRu ? b.ru : b.en).join(', ')}</p>}
-            {quote && <p className="font-bold">{isRu ? 'Цена' : 'Price'}: {tradeOffer.cost} − {isRu ? 'возврат' : 'refund'} {quote.refund} = {quote.netCost} {t('dna')} · {isRu ? 'Остаток' : 'Balance'}: {currentDna - quote.netCost}</p>}
+            {quote && <p className="font-bold">{isRu ? 'Цена' : 'Price'}: {tradeOffer.cost} − {isRu ? 'возврат' : 'refund'} {quote.refund} = {quote.netCost} {t('dna')} · {quote.affordable
+              ? `${isRu ? 'Остаток' : 'Balance'}: ${currentDna - quote.netCost}`
+              : `${isRu ? 'не хватает' : 'short by'} ${quote.netCost - currentDna}`}</p>}
             <p className="text-sm text-zinc-400">{isRu ? `Возврат ${Math.round(refundRate(soldThisVisit) * 100)}%. Замена считается одной продажей.` : `${Math.round(refundRate(soldThisVisit) * 100)}% refund. Replacement counts as one sale.`}</p>
             <div className="flex gap-3">
               <button className="px-5 py-3 border rounded-lg" onClick={() => setTradeOffer(null)}>{isRu ? 'Отмена' : 'Cancel'}</button>
@@ -1356,7 +1371,8 @@ export const LabShop: React.FC<LabShopProps> = ({
 
               // If inventory is 6/6, buying is permitted IF a merge is possible!
               const requiresTrade = needsTrade(item);
-              const canBuy = requiresTrade || canAfford;
+              // A replacement is only offered when some sale in the inventory could pay for it.
+              const canBuy = requiresTrade ? canAffordTrade(item) : canAfford;
 
               // Also check passive item matching
               const matchingPassive = !isWeapon && item.passiveData && engine.state.passiveItems.find(
@@ -1554,7 +1570,11 @@ export const LabShop: React.FC<LabShopProps> = ({
                     }`}
                   >
                     {requiresTrade ? (
-                      <span>{isRu ? 'Купить и заменить' : 'Buy and replace'} · {item.cost} {t('dna')}</span>
+                      <span>
+                        {canBuy
+                          ? `${isRu ? 'Купить и заменить' : 'Buy and replace'} · ${item.cost} ${t('dna')}`
+                          : `${isRu ? 'Не хватает ДНК' : 'Not enough DNA'} · ${item.cost}`}
+                      </span>
                     ) : canMerge || willPassiveMerge ? (
                       <span className="flex items-center gap-1.5">
                         <Sparkles className="w-3.5 h-3.5 text-black" />
