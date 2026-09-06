@@ -107,7 +107,13 @@ export interface PassiveItem {
   stats: Partial<PlayerStats>;
   lore?: string;
   // 'relic' marks the keepsakes - items that are a memory rather than a piece of hardware.
-  tags?: ('blood' | 'tech' | 'vector' | 'stasis' | 'kinetic' | 'dna' | 'firearm' | 'risk' | 'relic' | 'defense')[];
+  /*
+   * 'tech' says how a piece behaves; it does not say who could be wearing it. Both a SAT
+   * exo-rig and the restraint helmet bolted onto a horned subject are tech, and offering
+   * either to the wrong body is what these two add: human_tech is soldier issue, and
+   * diclonius_tech is hardware the lab fits to a subject. Untagged tech stays universal.
+   */
+  tags?: ('blood' | 'tech' | 'vector' | 'stasis' | 'kinetic' | 'dna' | 'firearm' | 'risk' | 'relic' | 'defense' | 'human_tech' | 'diclonius_tech')[];
   restrictedToKind?: CharacterKind; // Some items only for Diclonius or Cyborg
   isExperimental?: boolean; // High Risk / High Reward Prototype
   positiveEffect?: string;
@@ -589,6 +595,12 @@ export interface Enemy {
    */
   hornsRemaining?: number;
   vectorsDisabledTimer?: number;
+  /* Refractory window after a shutdown ends, so a boss cannot be chain-disabled. */
+  vectorDisableImmuneTimer?: number;
+  /* Same idea for stuns: a boss that just recovered cannot be immediately re-stunned. */
+  stunImmuneTimer?: number;
+  /* What is left of the current boss stun episode. Refreshes cannot extend it. */
+  stunEpisodeRemaining?: number;
 
   // --- Vector twins ---
   // A linked pair sharing one posture pool: breaking the guard needs both worked down, and
@@ -684,6 +696,9 @@ export interface DamageNumber {
   isCrit: boolean;
   vy: number;
   scale?: number;
+  /* Target this number belongs to, so repeat hits accumulate instead of stacking up. */
+  sourceId?: number;
+  amount?: number;
 }
 
 export interface ShellCasing {

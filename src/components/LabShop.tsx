@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GameEngine, getDividendConfig, projectDividend, MAX_PASSIVE_ITEMS } from '../utils/engine';
-import { Weapon, PassiveItem, StatUpgradeOption, WeaponRarity, WeaponType } from '../types';
+import { Character, Weapon, PassiveItem, StatUpgradeOption, WeaponRarity, WeaponType } from '../types';
 import { WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS, ASCENDED_STAT_UPGRADES, ITEM_SYNERGIES, WEAPON_EVOLUTIONS } from '../data/gameData';
 import { sound } from '../utils/sound';
 import { useLanguage } from '../utils/i18n';
@@ -8,6 +8,7 @@ import { PsychicMutationTree } from './PsychicMutationTree';
 import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
 import { ItemIcon } from './ItemIcon';
+import { exchange, tradeQuote, lostTradeBonuses } from '../utils/shopTrade';
 import {
   Dna,
   RefreshCw,
@@ -78,6 +79,62 @@ export const LabShop: React.FC<LabShopProps> = ({
   const [showShopMutationModal, setShowShopMutationModal] = useState<boolean>(false);
   const [showAudioModal, setShowAudioModal] = useState<boolean>(false);
   const [autoMergeToast, setAutoMergeToast] = useState<string | null>(null);
+  /*
+   * Claimed once, on the visit the trial closed. The engine keeps the full run list for the
+   * game-over summary; draining here is what stops the banner reappearing every wave.
+   *
+   * The drain lives in an effect, not in a useState initializer: StrictMode double-invokes
+   * initializers, and the second call would find the queue already empty and render nothing.
+   * Re-entering the effect after the queue is drained is a no-op, so the banner survives it.
+   */
+  const [announcedUnlocks, setAnnouncedUnlocks] = useState<Character[]>([]);
+  useEffect(() => {
+    const claimed = engine.pendingTrialUnlocks;
+    if (claimed.length === 0) return;
+    engine.pendingTrialUnlocks = [];
+    setAnnouncedUnlocks(claimed);
+    sound.playCharacterUnlocked();
+  }, []);
+  const [tradeOffer, setTradeOffer] = useState<ShopItem | null>(null);
+  const [tradeTarget, setTradeTarget] = useState<Weapon | PassiveItem | null>(null);
+
+  const lowerCopy = (offer: ShopItem) => offer.type === 'weapon'
+    ? engine.state.weapons.find(w => w.type === offer.weaponKey && w.tier < offer.tier)
+    : engine.state.passiveItems.find(p => p.id === offer.passiveData?.id && (p.tier || 1) < offer.tier);
+  const needsTrade = (offer: ShopItem) => {
+    if (lowerCopy(offer)) return true;
+    if (offer.type === 'weapon') return engine.state.weapons.length >= 6 &&
+      !engine.state.weapons.some(w => w.type === offer.weaponKey && w.tier === offer.tier && w.tier < 4);
+    return engine.state.passiveItems.length >= MAX_PASSIVE_ITEMS &&
+      !engine.state.passiveItems.some(p => p.id === offer.passiveData?.id && (p.tier || 1) === offer.tier && offer.tier < 4);
+  };
+  const beginPurchase = (offer: ShopItem) => {
+    if (needsTrade(offer)) {
+      setTradeOffer(offer);
+      setTradeTarget(lowerCopy(offer) || null);
+    } else buyItem(offer);
+  };
+  const confirmTrade = () => {
+    if (!tradeOffer || !tradeTarget || !shopItems.some(i => i.id === tradeOffer.id)) return;
+    const inventory = (tradeOffer.type === 'weapon' ? engine.state.weapons : engine.state.passiveItems) as (Weapon | PassiveItem)[];
+    const incoming = tradeOffer.type === 'weapon'
+      ? { ...WEAPONS_DATABASE[tradeOffer.weaponKey!], tier: tradeOffer.tier, id: `weapon_${crypto.randomUUID()}` }
+      : { ...tradeOffer.passiveData!, tier: tradeOffer.tier };
+    if (!exchange(inventory, tradeTarget, incoming, tradeOffer.cost, soldThisVisit, engine.state.player)) return;
+    const next = shopItems.filter(i => i.id !== tradeOffer.id);
+    engine.state.savedLockedShopItems = next.filter(i => i.isLocked);
+    setShopItems(next);
+    setSoldThisVisit(n => n + 1);
+    const key = tradeOffer.weaponKey || tradeOffer.passiveData!.id;
+    setPurchaseCounts(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+    engine.autoMergeWeapons();
+    engine.autoMergePassives();
+    engine.recalculateStats();
+    setCurrentDna(engine.state.player.dna);
+    setTradeOffer(null);
+    setTradeTarget(null);
+    sound.playLevelUp();
+  };
 
   const { rate: dividendRate, cap: maxDividend, hasVault: hasCryoVault } = getDividendConfig(engine.state.passiveItems);
   const projectedDividend = projectDividend(currentDna, engine.state.passiveItems);
@@ -138,21 +195,38 @@ export const LabShop: React.FC<LabShopProps> = ({
   const generateShopOfferings = (keepLocked: boolean = false) => {
     const baseWave = engine.state.wave;
 
-    // Subjects without biological vectors (Bando the cyborg, Chief Kurama the human) can
-    // never manifest a vector arm, so offering them psychokinetic weapons sold a purchase
-    // whose entire visual and fantasy layer is missing. Passives were already filtered by
-    // kind; weapons were not.
+    /*
+     * The terminal offers a subject only what that subject could actually bring to bear.
+     *
+     * Downward: subjects without biological vectors (Bando the cyborg, Chief Kurama the
+     * human) can never manifest a vector arm, so psychokinetic weapons sold a purchase whose
+     * entire visual and fantasy layer was missing.
+     *
+     * Upward: a vector subject is not carrying SAT hardware. The vector entries are not
+     * objects at all - slasher, barrier, rupture, snatch and throw are techniques, and the
+     * terminal is where a subject develops them. A rifle is the one category that had to be
+     * picked up from somewhere, and the catalogue included the anti-vector laser built to
+     * put this subject down. Firearms belong to the soldiers hunting her.
+     */
     const hasVectors = engine.state.character.baseStats.vectorCount > 0;
     const availableWeaponKeys = Object.keys(WEAPONS_DATABASE).filter((key) => {
       const cat = WEAPONS_DATABASE[key as keyof typeof WEAPONS_DATABASE].category;
       if (!hasVectors && (cat === 'vector' || cat === 'telekinesis')) return false;
+      if (hasVectors && (cat === 'firearm' || cat === 'cyberware')) return false;
       return true;
     });
 
+    /*
+     * restrictedToKind is declared on the type but set on no item in the catalogue, so this
+     * clause has never excluded anything - the tag pair below is what actually splits it.
+     * Kept because an item may yet want a single-kind lock rather than a body-type one.
+     */
     const eligiblePassives = PASSIVE_ITEMS.filter((item) => {
       if (item.restrictedToKind && item.restrictedToKind !== engine.state.character.kind) {
         return false;
       }
+      if (hasVectors && item.tags?.includes('human_tech')) return false;
+      if (!hasVectors && item.tags?.includes('diclonius_tech')) return false;
       return true;
     });
 
@@ -388,33 +462,6 @@ export const LabShop: React.FC<LabShopProps> = ({
     if (currentDna < item.cost) return;
 
     if (item.type === 'weapon') {
-      // Same weapon, lower tier: the purchase upgrades it in place instead of taking a slot.
-      const upgradable = engine.state.weapons.find(
-        (w) => w.type === item.weaponKey && w.tier < item.tier
-      );
-      if (upgradable) {
-        const template = WEAPONS_DATABASE[item.weaponKey!];
-        upgradable.tier = item.tier;
-        engine.recalculateStats();
-        const cascade = engine.autoMergeWeapons();
-        sound.playLevelUp();
-        setAutoMergeToast(
-          t('autoMergeToast', {
-            name: isRu ? template.russianName : template.name,
-            tier: cascade ? cascade.newTier : item.tier,
-          })
-        );
-        engine.state.player.dna -= item.cost;
-        setCurrentDna(engine.state.player.dna);
-        setPurchaseCounts((prev) => ({ ...prev, [item.weaponKey!]: (prev[item.weaponKey!] || 0) + 1 }));
-        setShopItems((prev) => {
-          const next = prev.filter((i) => i.id !== item.id);
-          engine.state.savedLockedShopItems = next.filter((i) => i.isLocked);
-          return next;
-        });
-        return;
-      }
-
       const matchingWeapon = engine.state.weapons.find(
         (w) => w.type === item.weaponKey && w.tier === item.tier && w.tier < 4
       );
@@ -461,35 +508,6 @@ export const LabShop: React.FC<LabShopProps> = ({
         }
       }
     } else if (item.type === 'passive' && item.passiveData) {
-      // Same augment, lower tier: upgrade in place rather than spend a second socket.
-      const upgradablePassive = engine.state.passiveItems.find(
-        (p) => p.id === item.passiveData!.id && (p.tier || 1) < (item.tier || 1)
-      );
-      if (upgradablePassive) {
-        upgradablePassive.tier = item.tier || 1;
-        engine.recalculateStats();
-        const cascade = engine.autoMergePassives();
-        sound.playLevelUp();
-        setAutoMergeToast(
-          t('autoMergeToast', {
-            name: isRu ? item.passiveData.russianName : item.passiveData.name,
-            tier: cascade ? cascade.newTier : item.tier || 1,
-          })
-        );
-        engine.state.player.dna -= item.cost;
-        setCurrentDna(engine.state.player.dna);
-        setPurchaseCounts((prev) => ({
-          ...prev,
-          [item.passiveData!.id]: (prev[item.passiveData!.id] || 0) + 1,
-        }));
-        setShopItems((prev) => {
-          const next = prev.filter((i) => i.id !== item.id);
-          engine.state.savedLockedShopItems = next.filter((i) => i.isLocked);
-          return next;
-        });
-        return;
-      }
-
       // Slots are finite. A purchase that cannot merge into an augment you already own is
       // refused when full, which is what forces the duplicate-merge decision to matter.
       const willMerge = engine.state.passiveItems.some(
@@ -757,6 +775,50 @@ export const LabShop: React.FC<LabShopProps> = ({
 
   return (
     <div id="lab-shop-screen" className="w-full h-full p-4 md:p-6 flex flex-col justify-between overflow-y-auto z-10 select-none">
+      {announcedUnlocks.length > 0 && <p role="status" className="p-3 rounded-lg border border-amber-500 text-amber-300 text-base">
+        {isRu ? 'Открыты персонажи: ' : 'Characters unlocked: '}{announcedUnlocks.map(c => isRu ? c.russianName : c.name).join(', ')}
+      </p>}
+      {tradeOffer && (() => {
+        const incoming = tradeOffer.type === 'weapon'
+          ? { ...WEAPONS_DATABASE[tradeOffer.weaponKey!], tier: tradeOffer.tier }
+          : { ...tradeOffer.passiveData!, tier: tradeOffer.tier };
+        const choices = tradeOffer.type === 'weapon' ? engine.state.weapons : engine.state.passiveItems;
+        const quote = tradeTarget ? tradeQuote(tradeOffer.cost, tradeTarget, soldThisVisit, currentDna) : null;
+        const lost = tradeTarget ? lostTradeBonuses(engine, tradeTarget, incoming) : [];
+        const rows = (item: Weapon | PassiveItem) => 'stats' in item
+          ? passiveStatRows(item.stats, item.tier || 1)
+          : [
+            { label: isRu ? 'Базовый урон с тиром' : 'Base tier damage', value: String(Math.round(item.damage * (1 + (item.tier - 1) * 0.35))) },
+            { label: isRu ? 'Интервал' : 'Interval', value: `${item.cooldown}s` },
+            { label: isRu ? 'Базовая дальность' : 'Base range', value: String(item.range) },
+            { label: isRu ? 'Пробитие' : 'Pierce', value: String(item.penetration || 0) },
+          ];
+        return <dialog ref={node => { if (node && !node.open) node.showModal(); }} aria-labelledby="trade-title" onCancel={() => setTradeOffer(null)} className="fixed inset-0 m-0 w-screen h-screen max-w-none max-h-none z-[80] bg-black/90 text-white flex items-center justify-center p-4">
+          <section className="w-full max-w-3xl max-h-[90vh] overflow-y-auto bg-zinc-950 border border-amber-600 rounded-xl p-5 space-y-4">
+            <h2 id="trade-title" className="text-xl font-bold">{isRu ? 'Купить и заменить' : 'Buy and replace'}</h2>
+            <p>{isRu ? 'Выберите предмет для продажи. Ничего не списывается до подтверждения.' : 'Choose gear to sell. Nothing changes until confirmation.'}</p>
+            <div className="grid sm:grid-cols-2 gap-2">
+              {choices.map((item, index) => <button key={index} autoFocus={index === 0} aria-pressed={item === tradeTarget} onClick={() => setTradeTarget(item)} className={`p-3 text-left border rounded-lg ${item === tradeTarget ? 'border-amber-400 bg-amber-950' : 'border-zinc-600'}`}>
+                {isRu ? item.russianName : item.name} · T{item.tier || 1}
+              </button>)}
+            </div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {[tradeTarget, incoming].map((item, index) => item && <div key={index} className="p-3 border border-zinc-700 rounded-lg space-y-2">
+                <h3 className="font-bold">{index === 0 ? (isRu ? 'Продажа' : 'Selling') : (isRu ? 'Покупка' : 'Buying')}: {isRu ? item.russianName : item.name} · T{item.tier || 1}</h3>
+                {rows(item).map(row => <div key={row.label} className="flex justify-between gap-3"><span>{row.label}</span><span>{row.value}</span></div>)}
+              </div>)}
+            </div>
+            <p className="text-sm text-zinc-400">{isRu ? 'Показан вклад предметов до бонусов персонажа и ограничений. Слияния дубликатов выполняются автоматически.' : 'Item contributions before character bonuses and caps. Duplicates fuse automatically.'}</p>
+            {lost.length > 0 && <p className="text-amber-300">{isRu ? 'Будут потеряны бонусы: ' : 'Bonuses lost: '}{lost.map(b => isRu ? b.ru : b.en).join(', ')}</p>}
+            {quote && <p className="font-bold">{isRu ? 'Цена' : 'Price'}: {tradeOffer.cost} − {isRu ? 'возврат' : 'refund'} {quote.refund} = {quote.netCost} {t('dna')} · {isRu ? 'Остаток' : 'Balance'}: {currentDna - quote.netCost}</p>}
+            <p className="text-sm text-zinc-400">{isRu ? `Возврат ${Math.round(refundRate(soldThisVisit) * 100)}%. Замена считается одной продажей.` : `${Math.round(refundRate(soldThisVisit) * 100)}% refund. Replacement counts as one sale.`}</p>
+            <div className="flex gap-3">
+              <button className="px-5 py-3 border rounded-lg" onClick={() => setTradeOffer(null)}>{isRu ? 'Отмена' : 'Cancel'}</button>
+              <button disabled={!quote?.affordable} className="px-5 py-3 bg-amber-600 rounded-lg disabled:opacity-40" onClick={confirmTrade}>{quote && !quote.affordable ? (isRu ? 'Не хватает ДНК' : 'Not enough DNA') : (isRu ? 'Подтвердить замену' : 'Confirm replacement')}</button>
+            </div>
+          </section>
+        </dialog>;
+      })()}
       {/* Auto-Merge Celebration Toast */}
       {autoMergeToast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-none">
@@ -1293,7 +1355,8 @@ export const LabShop: React.FC<LabShopProps> = ({
               const canMerge = !!matchingWeapon;
 
               // If inventory is 6/6, buying is permitted IF a merge is possible!
-              const canBuy = (!isWeaponInvFull || canMerge) && canAfford;
+              const requiresTrade = needsTrade(item);
+              const canBuy = requiresTrade || canAfford;
 
               // Also check passive item matching
               const matchingPassive = !isWeapon && item.passiveData && engine.state.passiveItems.find(
@@ -1478,7 +1541,7 @@ export const LabShop: React.FC<LabShopProps> = ({
 
                   {/* Buy Button */}
                   <button
-                    onClick={() => buyItem(item)}
+                    onClick={() => beginPurchase(item)}
                     disabled={!canBuy}
                     className={`w-full py-2.5 rounded-lg font-mono font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
                       canBuy
@@ -1490,8 +1553,8 @@ export const LabShop: React.FC<LabShopProps> = ({
                         : 'bg-black/50 text-gray-600 border border-white/5 cursor-not-allowed'
                     }`}
                   >
-                    {isWeaponInvFull && !canMerge ? (
-                      <span>{t('inventoryFull')}</span>
+                    {requiresTrade ? (
+                      <span>{isRu ? 'Купить и заменить' : 'Buy and replace'} · {item.cost} {t('dna')}</span>
                     ) : canMerge || willPassiveMerge ? (
                       <span className="flex items-center gap-1.5">
                         <Sparkles className="w-3.5 h-3.5 text-black" />

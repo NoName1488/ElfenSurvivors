@@ -28,7 +28,9 @@ import {
   PatrolBoat,
 } from '../types';
 import { sound } from './sound';
-import { getActiveDifficulty, recordDifficultyCleared, DifficultyLevel } from './difficulty';
+import { getActiveDifficulty, recordDifficultyCleared, getClearedDifficulties, DifficultyLevel } from './difficulty';
+import { recordCharacterTrials } from './progression';
+import { recordRunStats } from './stats';
 import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG, FINAL_CAMPAIGN_WAVE } from '../data/gameData';
 
 /**
@@ -203,6 +205,123 @@ export const DIVIDEND_BASE_RATE = 0.08;
 export const DIVIDEND_BASE_CAP = 35;
 export const DIVIDEND_VAULT_RATE = 0.15;
 export const DIVIDEND_VAULT_CAP = 90;
+
+/*
+ * Bando's trial threshold. He is the SAT operator Lucy takes apart who gets back up, so the
+ * trial asks for the same thing: finish a wave you nearly did not survive.
+ */
+export const TRIAL_CRITICAL_HP_FRACTION = 0.2;
+
+/*
+ * Boss vector shutdowns, bounded.
+ *
+ * Measured on waves 12, 14 and 15, across seeds and on both a strong and a deliberately
+ * weak loadout: a boss stood with its vectors disabled 49-62% of its time on screen and
+ * stunned another 10-18%, while the player was inside its attack range 68-94% of the time.
+ * It opened one or two attacks in an entire fight. There was nothing to read because there
+ * was almost nothing happening - the screen was the escort, not the boss.
+ *
+ * Two causes. Breaking both horns set the timer to Infinity and emptied the arms, so the
+ * rest of the fight was a health bar with no behaviour; and every ultimate re-applied a
+ * fresh shutdown with nothing stopping it from landing again immediately.
+ *
+ * Horn breaking still pays - it is the canon way to put a Diclonius down, and it still
+ * strips the guard, halves what a boss can bring to bear and buys a long opening. It just
+ * stops deleting the fight.
+ */
+export const BOSS_VECTOR_SHUTDOWN_IMMUNITY = 4;
+export const BOSS_BOTH_HORNS_SHUTDOWN = 7;
+/*
+ * Bounding the shutdowns moved the suppression rather than removing it: with its vectors up
+ * the boss was guard-broken more often, and stun went from 10% of its screen time to 27%.
+ *
+ * Refusing a stun only once the previous one expired changed nothing, and the run came back
+ * byte for byte identical - because under sustained fire the stun is re-applied every frame,
+ * so it never expires and the refusal never armed. The cap has to be on the episode: a boss
+ * stun runs for at most this long no matter how many times it is re-applied, and then the
+ * boss is briefly immune. Ordinary units are untouched.
+ */
+export const BOSS_STUN_MAX_EPISODE = 1.6;
+export const BOSS_STUN_IMMUNITY = 3;
+
+/*
+ * The escort a boss fights with.
+ *
+ * Spawning used to stop dead the moment a boss arrived, so the escort thinned out and the
+ * apex asset of the institute finished the fight standing on its own while its soldiers
+ * watched. Every boss in the campaign is institute property - Mariko and the silpelits are
+ * its weapons, Bando is SAT, Kakuzawa runs the place - and the player is the thing that got
+ * out. They have every reason to screen it and none to stand there.
+ *
+ * A screen, not a second wave: about half rate, its own low ceiling, and no Diclonii - the
+ * institute is not going to field more of what it is trying to recover.
+ */
+export const BOSS_ESCORT_RATE = 0.5;
+export const BOSS_ESCORT_CAP = 20;
+
+/*
+ * Nana's kinetic shield, in health.
+ *
+ * The gauge was written every frame, drawn in the HUD as "KINETIC SHIELD 88/100" and read by
+ * nothing: every effect she had keyed off the boolean anchor check instead. A player watched
+ * a bar fill while planted and drain while moving, reasonably concluded it was a resource
+ * worth protecting, and was protecting a number that gated nothing.
+ *
+ * It is a shield now - which is what it is called, and the currency her stance was missing.
+ * Anchoring paid +35% damage and a 2.5x return round, while what standing in the open
+ * actually costs is health: measured over twelve waves, standing still killed her thirty
+ * times more often than moving did (59 deaths against 2).
+ */
+export const NANA_SHIELD_HP_PER_POINT = 0.5;
+const DICLONIUS_SPAWN_TYPES: ReadonlySet<string> = new Set([
+  'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin', 'silpelit_clone',
+]);
+
+/*
+ * Damage text, aggregated per target.
+ *
+ * Measured at 43-85 new numbers a second on a boss wave, median 30 on screen at once, peak
+ * 88. A reader takes in a few text events a second; the rest was texture pretending to be
+ * information. Repeat hits on one target now accumulate into the number already floating
+ * over it, which also makes a big hit finally look big.
+ */
+export const DAMAGE_NUMBER_MERGE_OPACITY = 0.35;
+/*
+ * Per-target merging alone took 48 new numbers a second down to 21 - still far past reading
+ * speed, because in a crowd the hits land on many different bodies. Numbers close enough to
+ * be read as one cluster merge too: what the eye wants there is "this much, about here",
+ * not a separate figure for each body in the pile.
+ */
+export const DAMAGE_NUMBER_MERGE_RADIUS = 52;
+/** Sentinel target id for damage dealt to the player. */
+const PLAYER_DAMAGE_SOURCE = -1;
+
+
+/*
+ * Global combat tempo.
+ *
+ * Kept at 1.0 by default on purpose. Scaling the step slows the player exactly as much as
+ * it slows the enemies, so the ratios a reader actually parses - how many things resolve at
+ * once, which of them is loud, how long a wind-up lasts relative to the strike - are all
+ * unchanged, and the controls go mushy for nothing. Legibility is a density and hierarchy
+ * problem, not a speed one; this knob stays because a slower whole is still a reasonable
+ * accessibility option, not because it answers that problem.
+ *
+ * Everything in the simulation steps from dt and nothing in it reads the wall clock, so the
+ * scale is safe at any value. The probes call update() directly with a fixed step and never
+ * pass through it, so seeded baselines are unaffected either way.
+ */
+export const COMBAT_TIME_SCALE = 1;
+const TIME_SCALE_KEY = 'elfen_lied_combat_time_scale';
+
+/** Testing knob: set the key in localStorage to try a tempo without a rebuild. */
+export function readCombatTimeScale(): number {
+  try {
+    const raw = Number(localStorage.getItem(TIME_SCALE_KEY));
+    if (Number.isFinite(raw) && raw > 0) return Math.max(0.3, Math.min(1, raw));
+  } catch (e) {}
+  return COMBAT_TIME_SCALE;
+}
 
 export function getDividendConfig(passiveItems: { id: string }[]): { rate: number; cap: number; hasVault: boolean } {
   const hasVault = passiveItems.some((p) => p.id === DNA_VAULT_ITEM_ID);
@@ -521,6 +640,16 @@ export class GameEngine {
   private nyuRepulseTimer: number = 0;
   private armAnimTime: number = 0;
   private bankedDnaSnapshot: number = 0;
+  /*
+   * Counters for the lifetime record, snapshotted the same way banked DNA is. A run that
+   * carries on into endless mode banks a second time, so what is recorded each time is the
+   * delta since the last bank - otherwise the campaign would be counted twice.
+   */
+  private runSeconds = 0;
+  private bankedSecondsSnapshot = 0;
+  private bankedKillsSnapshot = 0;
+  private bankedBossesSnapshot = 0;
+  private bankedDeflectedSnapshot = 0;
   private tacticalAmbushTimer: number = 14;
 
   public onLevelUpCallback?: (newLevel: number) => void;
@@ -1338,7 +1467,23 @@ export class GameEngine {
     }
   }
 
+  /** Wall-clock seconds are multiplied by this before the simulation steps. */
+  public timeScale = readCombatTimeScale();
+
+  /** Everything earned this run, for the game-over summary. */
+  public trialUnlocks: Character[] = [];
+  /*
+   * The shop drains this on open so an unlock is announced on the visit it happened.
+   * trialUnlocks alone kept the banner on screen at every later shop for the rest of the run.
+   */
+  public pendingTrialUnlocks: Character[] = [];
+  private trialCompletedWaves = new Set<number>();
+  private trialWentCritical = false;
+  private trialDefeatedMariko = false;
+  public firstClearSeal: number | null = null;
+
   public startWave(waveNum: number) {
+    this.trialWentCritical = false;
     /*
      * Close the previous wave's line in the run report before the counters move on.
      *
@@ -1686,7 +1831,7 @@ export class GameEngine {
         if (Math.hypot(e.x - ultX, e.y - ultY) > ultRadius) continue;
         if (e.vectorGuard !== undefined) e.vectorGuard = 0;
         if (e.vectorArms && e.vectorArms.length > 0) {
-          e.vectorsDisabledTimer = Math.max(e.vectorsDisabledTimer || 0, e.isBoss ? 1.8 : 3.5);
+          this.disableVectors(e, e.isBoss ? 1.8 : 3.5);
         }
         if (!e.isBoss) {
           e.isStunned = true;
@@ -2236,6 +2381,9 @@ export class GameEngine {
 
   public update(dt: number) {
     if (!this.state.isWaveActive) return;
+    // Live simulation time only: a paused or between-wave game never reaches here, so the
+    // lifetime playtime figure is time actually spent fighting.
+    this.runSeconds += dt;
 
     this.armAnimTime += dt;
 
@@ -2271,6 +2419,19 @@ export class GameEngine {
 
     // Character specific passive systems
     this.updateCharacterMechanics(dt);
+
+    /*
+     * Sampled per frame rather than read at the end of the wave. A player who is driven to a
+     * sliver and then heals back up has done the thing Bando's trial is about; reading the
+     * final bar would miss exactly that run.
+     */
+    if (
+      this.state.isWaveActive &&
+      this.state.player.hp > 0 &&
+      this.state.player.hp < this.state.player.maxHp * TRIAL_CRITICAL_HP_FRACTION
+    ) {
+      this.trialWentCritical = true;
+    }
 
     // Wave countdown & Boss Encounter Climax
     if (this.state.isWaveEnding) {
@@ -2744,7 +2905,14 @@ export class GameEngine {
       const isAnchored = (this.state.player.stationaryTimer || 0) >= ANCHOR_THRESHOLD;
       if (isAnchored) {
         this.state.characterResource.isActive = true;
-        this.state.characterResource.current = Math.min(100, this.state.characterResource.current + dt * 55);
+        /*
+         * Slower than it used to be. While the gauge gated nothing its fill rate was free;
+         * now that a full bar is 50 absorbed health, filling it in under two seconds made
+         * planting strictly better than moving - measured at 8 deaths standing against 1
+         * moving, with the anchored damage bonus on top of that. Planting is meant to be a
+         * commitment that pays, not a button.
+         */
+        this.state.characterResource.current = Math.min(100, this.state.characterResource.current + dt * 40);
       } else {
         this.state.characterResource.isActive = false;
         this.state.characterResource.current = Math.max(0, this.state.characterResource.current - dt * 70);
@@ -3875,16 +4043,29 @@ export class GameEngine {
                 if (bestTarget.hornsRemaining && bestTarget.hornsRemaining > 0) {
                   bestTarget.hornsRemaining--;
                   if (bestTarget.hornsRemaining <= 0) {
-                    // Both horns gone: the vectors do not come back. What is left is a body.
-                    bestTarget.vectorsDisabledTimer = Number.POSITIVE_INFINITY;
-                    bestTarget.vectorArms = [];
-                    bestTarget.vectorCount = 0;
-                    bestTarget.stunTimer = 3.2;
-                    breakText = loc('ОБА РОГА СЛОМАНЫ — ВЕКТОРОВ БОЛЬШЕ НЕТ', 'BOTH HORNS BROKEN - VECTORS GONE');
+                    if (bestTarget.isBoss) {
+                      /*
+                       * A boss comes back maimed rather than finished: a long opening, then
+                       * half the vectors it had. Permanent removal read as the fight ending
+                       * while the health bar carried on.
+                       */
+                      this.disableVectors(bestTarget, BOSS_BOTH_HORNS_SHUTDOWN);
+                      bestTarget.vectorCount = Math.max(1, Math.floor((bestTarget.vectorCount || 2) / 2));
+                      bestTarget.vectorArms = (bestTarget.vectorArms || []).slice(0, bestTarget.vectorCount);
+                      bestTarget.stunTimer = 3.2;
+                      breakText = loc('ОБА РОГА СЛОМАНЫ — ПОЛОВИНА ВЕКТОРОВ ОТКАЗАЛА', 'BOTH HORNS BROKEN - HALF THE VECTORS GONE');
+                    } else {
+                      // An ordinary unit with both horns gone is a body, and stays one.
+                      bestTarget.vectorsDisabledTimer = Number.POSITIVE_INFINITY;
+                      bestTarget.vectorArms = [];
+                      bestTarget.vectorCount = 0;
+                      bestTarget.stunTimer = 3.2;
+                      breakText = loc('ОБА РОГА СЛОМАНЫ — ВЕКТОРОВ БОЛЬШЕ НЕТ', 'BOTH HORNS BROKEN - VECTORS GONE');
+                    }
                     breakColor = '#f87171';
                   } else {
                     // One horn: the vectors go quiet for a while and the guard cannot hold.
-                    bestTarget.vectorsDisabledTimer = 4.5;
+                    this.disableVectors(bestTarget, 4.5);
                     breakText = loc('РОГ СЛОМАН — ВЕКТОРЫ ОТКАЗАЛИ', 'HORN BROKEN - VECTORS DOWN');
                     breakColor = '#fb923c';
                   }
@@ -5713,6 +5894,18 @@ export class GameEngine {
    */
   private concurrentEnemyCap(): number {
     const waveConfig = WAVES.find((w) => w.waveNumber === this.state.wave) || WAVES[WAVES.length - 1];
+    /*
+     * Thinning the escort while a boss stands was tried here and measured as doing nothing:
+     * identical to the digit with and without it. Not because the field is empty - the boss
+     * arrives with 59 to 121 of the escort still standing - but because spawning has already
+     * stopped by then (updateEnemySpawning returns once waveTimer has run out and the boss
+     * is in), so a lower cap has nothing left to refuse.
+     *
+     * The escort that is standing is spread over the whole arena; inside the player's focus
+     * circle the median during a boss fight is 1. The boss is hard to read for a structural
+     * reason instead: it arrives only after the authored timer has fully run out, so it owns
+     * 23 to 33 seconds of a 108 to 133 second wave.
+     */
     return Math.round(
       (this.state.assaultPhaseActive
         ? waveConfig.maxConcurrentEnemies
@@ -5721,9 +5914,12 @@ export class GameEngine {
   }
 
   private updateEnemySpawning(dt: number) {
-    if (this.state.isWaveEnding || (this.state.waveTimer <= 0 && this.state.bossSpawnedInWave)) {
-      return;
-    }
+    if (this.state.isWaveEnding) return;
+    const timerSpent = this.state.waveTimer <= 0 && this.state.bossSpawnedInWave;
+    const escorting = timerSpent && this.state.enemies.some((e) => e.isBoss);
+    // Timer gone and the boss already down: nothing left to feed.
+    if (timerSpent && !escorting) return;
+
     const waveConfig = WAVES.find((w) => w.waveNumber === this.state.wave) || WAVES[WAVES.length - 1];
     this.lastEnemySpawn += dt;
 
@@ -5731,13 +5927,22 @@ export class GameEngine {
     // The sweep used to run at 0.78, which measured as eleven of twenty waves costing the
     // player literally no health: the trickle died on the vector perimeter faster than it
     // arrived, so most of a wave was dead air.
-    const phaseRateMult = (this.state.assaultPhaseActive ? 1.65 : 0.95) * this.difficulty.densityMult;
+    const phaseRateMult = (escorting
+      ? BOSS_ESCORT_RATE
+      : this.state.assaultPhaseActive ? 1.65 : 0.95) * this.difficulty.densityMult;
     const interval = 1 / (waveConfig.enemySpawnRate * phaseRateMult);
-    const concurrentCap = this.concurrentEnemyCap();
+    const concurrentCap = escorting
+      ? Math.min(this.concurrentEnemyCap(), BOSS_ESCORT_CAP)
+      : this.concurrentEnemyCap();
 
-    if (this.lastEnemySpawn >= interval && this.state.enemies.length < concurrentCap) {
+    // The institute screens its weapon with soldiers, not with more of its subjects.
+    const roster = escorting
+      ? waveConfig.allowedEnemies.filter((t) => !DICLONIUS_SPAWN_TYPES.has(t))
+      : waveConfig.allowedEnemies;
+
+    if (roster.length > 0 && this.lastEnemySpawn >= interval && this.state.enemies.length < concurrentCap) {
       this.lastEnemySpawn = 0;
-      const type = this.pickSpawnType(waveConfig.allowedEnemies);
+      const type = this.pickSpawnType(roster);
       this.spawnEnemy(type, undefined, undefined, this.state.assaultPhaseActive && Math.random() < 0.22);
     }
 
@@ -7650,7 +7855,33 @@ export class GameEngine {
       // freeze for impact weight; when it also froze the state machine, a player landing
       // ~16 strikes a second kept a boss in hitstop 72% of all frames, so its stun timer
       // drained 0.17s over 2.5s, its guard never regenerated and it never acted again.
-      if (e.isStunned) {
+      if (e.isBoss) {
+        /*
+         * The cap is enforced here rather than at each caller: every hit still lands its
+         * damage, its guard break and its spectacle, it just cannot keep the boss pinned.
+         */
+        if ((e.stunImmuneTimer || 0) > 0) {
+          e.stunImmuneTimer = Math.max(0, (e.stunImmuneTimer || 0) - dt);
+          if (e.isStunned) { e.isStunned = false; e.stunTimer = 0; }
+        } else if (e.isStunned) {
+          if (e.stunEpisodeRemaining === undefined) {
+            e.stunEpisodeRemaining = Math.min(e.stunTimer || 0, BOSS_STUN_MAX_EPISODE);
+          }
+          e.stunEpisodeRemaining -= dt;
+          if (e.stunEpisodeRemaining <= 0) {
+            e.isStunned = false;
+            e.stunTimer = 0;
+            e.stunEpisodeRemaining = undefined;
+            e.stunImmuneTimer = BOSS_STUN_IMMUNITY;
+            if (e.maxVectorGuard) e.vectorGuard = Math.round(e.maxVectorGuard * 0.5);
+          } else {
+            // Re-applying the stun must not extend it past the episode.
+            e.stunTimer = e.stunEpisodeRemaining;
+          }
+        } else {
+          e.stunEpisodeRemaining = undefined;
+        }
+      } else if (e.isStunned) {
         e.stunTimer = (e.stunTimer || 0) - dt;
         if (e.stunTimer <= 0) {
           e.isStunned = false;
@@ -7663,6 +7894,9 @@ export class GameEngine {
 
       // A unit with a broken horn has no vectors for the duration - no parry, no vector
       // attack, and the guard cannot rebuild. This is the window the duel was fought for.
+      if ((e.vectorDisableImmuneTimer || 0) > 0) {
+        e.vectorDisableImmuneTimer = Math.max(0, (e.vectorDisableImmuneTimer || 0) - dt);
+      }
       if (e.vectorsDisabledTimer !== undefined && e.vectorsDisabledTimer > 0) {
         if (Number.isFinite(e.vectorsDisabledTimer)) {
           e.vectorsDisabledTimer -= dt;
@@ -9630,8 +9864,8 @@ export class GameEngine {
              */
             if (p.antiVector && enemy.vectorCount && enemy.vectorCount > 0) {
               enemy.vectorGuard = Math.max(0, (enemy.vectorGuard || 0) - p.damage * 0.9);
-              if (enemy.vectorGuard <= 0 && (enemy.vectorsDisabledTimer || 0) <= 0) {
-                enemy.vectorsDisabledTimer = 3.2;
+              if (enemy.vectorGuard <= 0 && (enemy.vectorsDisabledTimer || 0) <= 0
+                  && this.disableVectors(enemy, 3.2)) {
                 enemy.vectorGuard = (enemy.maxVectorGuard || 100) * 0.35;
                 sound.playGuardBreak();
                 this.state.damageNumbers.push({
@@ -9993,13 +10227,12 @@ export class GameEngine {
       }
     }
 
-    this.state.damageNumbers.push({
-      id: ++this.dmgNumIdCounter,
-      x: enemy.x + (Math.random() * 20 - 10),
+    // Drawn whether or not the number merges, so the seeded stream does not shift.
+    const dmgJitterX = Math.random() * 20 - 10;
+    this.pushDamageNumber(enemy.id, finalDamage, {
+      x: enemy.x + dmgJitterX,
       y: enemy.y - 12,
-      text: finalDamage.toString() + (isCrit ? '!' : ''),
       color: dmgColor,
-      opacity: 1,
       isCrit,
       vy: -60,
     });
@@ -10014,8 +10247,72 @@ export class GameEngine {
     }
   }
 
+  /*
+   * The single door every vector shutdown goes through, so the refractory window cannot be
+   * walked around by whichever system happens to fire next. Ordinary units are unchanged:
+   * only bosses carry an immunity, and only they need one.
+   */
+  /*
+   * Adds to the number already floating over this target if one is still fresh, otherwise
+   * starts a new one. Callers draw their position jitter from the random stream before
+   * calling, whether or not this merges, so the simulation is bit-identical either way.
+   */
+  private pushDamageNumber(
+    sourceId: number,
+    amount: number,
+    n: { x: number; y: number; color: string; isCrit: boolean; vy: number; prefix?: string },
+  ) {
+    const suffix = n.isCrit ? '!' : '';
+    const label = (total: number, crit: boolean) =>
+      `${n.prefix || ''}${Math.round(total)}${crit ? '!' : ''}`;
+    const fresh = (d: DamageNumber) => d.opacity > DAMAGE_NUMBER_MERGE_OPACITY && d.amount !== undefined;
+    // Same target first, then whatever is close enough to read as one cluster. Damage to the
+    // player never merges into enemy damage: those are opposite pieces of information.
+    const existing =
+      this.state.damageNumbers.find((d) => d.sourceId === sourceId && fresh(d)) ||
+      this.state.damageNumbers.find(
+        (d) =>
+          fresh(d) &&
+          (d.sourceId === PLAYER_DAMAGE_SOURCE) === (sourceId === PLAYER_DAMAGE_SOURCE) &&
+          Math.hypot(d.x - n.x, d.y - n.y) < DAMAGE_NUMBER_MERGE_RADIUS,
+      );
+    if (existing) {
+      existing.amount = (existing.amount || 0) + amount;
+      existing.isCrit = existing.isCrit || n.isCrit;
+      existing.text = label(existing.amount, existing.isCrit);
+      existing.opacity = 1;
+      existing.x = n.x;
+      existing.y = n.y;
+      existing.color = n.color;
+      return;
+    }
+    this.state.damageNumbers.push({
+      id: ++this.dmgNumIdCounter,
+      x: n.x,
+      y: n.y,
+      text: `${n.prefix || ''}${Math.round(amount)}${suffix}`,
+      color: n.color,
+      opacity: 1,
+      isCrit: n.isCrit,
+      vy: n.vy,
+      sourceId,
+      amount,
+    });
+  }
+
+  private disableVectors(e: Enemy, seconds: number): boolean {
+    if ((e.vectorDisableImmuneTimer || 0) > 0) return false;
+    e.vectorsDisabledTimer = Math.max(e.vectorsDisabledTimer || 0, seconds);
+    if (e.isBoss && Number.isFinite(seconds)) {
+      e.vectorDisableImmuneTimer = seconds + BOSS_VECTOR_SHUTDOWN_IMMUNITY;
+    }
+    return true;
+  }
+
   private killEnemy(enemy: Enemy) {
     const idx = this.state.enemies.indexOf(enemy);
+    if (idx === -1) return;
+    if (enemy.type === 'boss_mariko_unbound' || enemy.type === 'boss_mariko_berserk') this.trialDefeatedMariko = true;
     if (idx !== -1) {
       this.state.enemies.splice(idx, 1);
     }
@@ -10416,6 +10713,35 @@ export class GameEngine {
      */
     finalDamage = Math.min(finalDamage, Math.ceil(this.state.player.maxHp * 0.45));
 
+    /*
+     * The shield stands in front of the body, after dodge so that dodging is not wasted
+     * while it holds. It absorbs whether or not she is still anchored: what she built by
+     * planting is hers to spend on the way out, which is what makes repositioning a
+     * decision rather than a punishment.
+     */
+    if (this.state.character.id === 'nana' && this.state.characterResource.current > 0) {
+      const pool = this.state.characterResource.current * NANA_SHIELD_HP_PER_POINT;
+      const absorbed = Math.min(finalDamage, pool);
+      this.state.characterResource.current = Math.max(
+        0, this.state.characterResource.current - absorbed / NANA_SHIELD_HP_PER_POINT,
+      );
+      finalDamage -= absorbed;
+      if (absorbed > 0) {
+        this.state.damageNumbers.push({
+          id: ++this.dmgNumIdCounter,
+          x: this.state.player.x,
+          y: this.state.player.y - 22,
+          text: `-${Math.round(absorbed)}`,
+          color: '#38bdf8',
+          opacity: 1,
+          isCrit: false,
+          vy: -46,
+        });
+      }
+      // Fully absorbed: nothing reaches her, so no health number and no death check.
+      if (finalDamage <= 0) return;
+    }
+
     this.state.player.hp -= finalDamage;
 
     /*
@@ -10472,15 +10798,13 @@ export class GameEngine {
       sound.playHeartbeat();
     }
 
-    this.state.damageNumbers.push({
-      id: ++this.dmgNumIdCounter,
+    this.pushDamageNumber(PLAYER_DAMAGE_SOURCE, finalDamage, {
       x: this.state.player.x,
       y: this.state.player.y - 15,
-      text: `-${finalDamage}`,
       color: '#ef4444',
-      opacity: 1,
       isCrit: false,
       vy: -50,
+      prefix: '-',
     });
 
     if (this.state.player.hp <= 0) {
@@ -10920,6 +11244,22 @@ export class GameEngine {
   private bankRunProgress(won: boolean) {
     const unbanked = Math.max(0, this.state.totalDnaCollected - this.bankedDnaSnapshot);
     this.bankedDnaSnapshot = this.state.totalDnaCollected;
+    const since = (value: number, mark: number) => Math.max(0, value - mark);
+    recordRunStats({
+      won,
+      characterId: this.state.character.id,
+      seconds: since(this.runSeconds, this.bankedSecondsSnapshot),
+      kills: since(this.state.kills, this.bankedKillsSnapshot),
+      bosses: since(this.state.bossesKilled, this.bankedBossesSnapshot),
+      deflected: since(this.state.bulletsDeflected, this.bankedDeflectedSnapshot),
+      dna: unbanked,
+      wave: this.state.wave,
+      streak: this.state.maxKillStreak,
+    });
+    this.bankedSecondsSnapshot = this.runSeconds;
+    this.bankedKillsSnapshot = this.state.kills;
+    this.bankedBossesSnapshot = this.state.bossesKilled;
+    this.bankedDeflectedSnapshot = this.state.bulletsDeflected;
     recordRunCompleted(
       won,
       this.state.wave,
@@ -10930,12 +11270,29 @@ export class GameEngine {
       this.difficulty.rewardMult
     );
     // A win opens the next clearance level.
-    if (won) recordDifficultyCleared(this.difficulty.level);
+    if (won) {
+      const firstClear = !getClearedDifficulties().includes(this.difficulty.level);
+      recordDifficultyCleared(this.difficulty.level);
+      if (firstClear && getClearedDifficulties().includes(this.difficulty.level)) this.firstClearSeal = this.difficulty.level;
+    }
   }
 
   private finishWave() {
     this.resetInput();
     this.state.isWaveActive = false;
+    if (!this.trialCompletedWaves.has(this.state.wave)) {
+      this.trialCompletedWaves.add(this.state.wave);
+      const earned = recordCharacterTrials({
+        characterId: this.state.character.id,
+        completedWave: this.state.wave,
+        bulletsDeflected: this.state.bulletsDeflected,
+        hpFraction: this.state.player.hp / Math.max(1, this.state.player.maxHp),
+        wentCritical: this.trialWentCritical,
+        defeatedMariko: this.trialDefeatedMariko,
+      });
+      this.trialUnlocks.push(...earned);
+      this.pendingTrialUnlocks.push(...earned);
+    }
 
     // Bagged materials reserve
     // All uncollected DNA crystals on the arena floor are absorbed into the hidden Bagged reserve.

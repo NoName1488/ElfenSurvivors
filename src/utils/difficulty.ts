@@ -22,6 +22,7 @@
 
 const STORAGE_CLEARED_KEY = 'elfen_lied_difficulty_cleared_v1';
 const STORAGE_SELECTED_KEY = 'elfen_lied_difficulty_selected_v1';
+const STORAGE_SEAL_KEY = 'elfen_lied_dossier_seal_v1';
 
 export interface DifficultyLevel {
   level: number;
@@ -128,7 +129,7 @@ function readClearedLevels(): number[] {
     const raw = localStorage.getItem(STORAGE_CLEARED_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((n) => typeof n === 'number') : [];
+    return Array.isArray(parsed) ? [...new Set<number>(parsed.filter((n) => Number.isInteger(n) && n >= 1 && n <= 5))] : [];
   } catch (e) {
     return [];
   }
@@ -149,14 +150,12 @@ export function getClearedDifficulties(): number[] {
 export function getMaxUnlockedDifficulty(): number {
   const cleared = readClearedLevels();
   let max = DEFAULT_DIFFICULTY;
-  for (const level of DIFFICULTY_LEVELS) {
-    if (cleared.includes(level.level) && level.level + 1 > max) max = level.level + 1;
-  }
+  while (max < DIFFICULTY_LEVELS.length && cleared.includes(max)) max++;
   return Math.min(DIFFICULTY_LEVELS.length, max);
 }
 
 export function isDifficultyUnlocked(level: number): boolean {
-  return level <= getMaxUnlockedDifficulty();
+  return Number.isInteger(level) && level >= 1 && level <= getMaxUnlockedDifficulty();
 }
 
 export function getSelectedDifficulty(): number {
@@ -173,6 +172,7 @@ export function getSelectedDifficulty(): number {
 }
 
 export function setSelectedDifficulty(level: number): void {
+  if (!isDifficultyUnlocked(level)) return;
   try {
     localStorage.setItem(STORAGE_SELECTED_KEY, String(Math.max(1, Math.min(DIFFICULTY_LEVELS.length, level))));
   } catch (e) {}
@@ -180,11 +180,13 @@ export function setSelectedDifficulty(level: number): void {
 
 /** Records a campaign win at this clearance, which opens the next one. */
 export function recordDifficultyCleared(level: number): number | null {
+  if (!isDifficultyUnlocked(level)) return null;
   const cleared = readClearedLevels();
   if (cleared.includes(level)) return null;
   cleared.push(level);
   try {
     localStorage.setItem(STORAGE_CLEARED_KEY, JSON.stringify(cleared));
+    localStorage.setItem(STORAGE_SEAL_KEY, String(level));
   } catch (e) {}
   const next = level + 1;
   return next <= DIFFICULTY_LEVELS.length ? next : null;
@@ -197,4 +199,17 @@ export function getDifficulty(level: number): DifficultyLevel {
 /** The active run's clearance. Read once per run rather than per frame. */
 export function getActiveDifficulty(): DifficultyLevel {
   return getDifficulty(getSelectedDifficulty());
+}
+
+/** Cosmetic proof of a first clear. No combat stats and no repeatable payout. */
+export function getDossierSeal(): DifficultyLevel | null {
+  try {
+    const level = Number(localStorage.getItem(STORAGE_SEAL_KEY));
+    return getClearedDifficulties().includes(level) ? getDifficulty(level) : null;
+  } catch { return null; }
+}
+
+export function setDossierSeal(level: number): void {
+  if (level !== 0 && !getClearedDifficulties().includes(level)) return;
+  try { localStorage.setItem(STORAGE_SEAL_KEY, String(level)); } catch {}
 }

@@ -6,6 +6,7 @@ import { sound } from '../utils/sound';
 import { useLanguage } from '../utils/i18n';
 import { MetaProgressionModal } from './MetaProgressionModal';
 import { FINAL_CAMPAIGN_WAVE } from '../data/gameData';
+import { getDifficulty } from '../utils/difficulty';
 
 interface GameOverModalProps {
   engine: GameEngine;
@@ -32,9 +33,16 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 
   return (
     <div id="game-over-modal" className="fixed inset-0 bg-[#050505]/95 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in zoom-in-95 duration-200 select-none">
-      <div className={`max-w-lg w-full glass-panel rounded-2xl p-6 md:p-8 shadow-2xl flex flex-col items-center gap-6 border ${
+      <div className={`max-w-lg w-full max-h-[95vh] overflow-y-auto glass-panel rounded-2xl p-6 md:p-8 shadow-2xl flex flex-col items-center gap-6 border ${
         isVictory ? 'border-amber-500/80 shadow-[0_0_40px_rgba(245,158,11,0.2)]' : 'border-red-600/60 shadow-[0_0_30px_rgba(220,38,38,0.2)]'
       }`}>
+        {engine.trialUnlocks.length > 0 && <p className="text-amber-300 text-base" role="status">
+          {isRu ? 'Открыты персонажи: ' : 'Characters unlocked: '}{engine.trialUnlocks.map(c => isRu ? c.russianName : c.name).join(', ')}
+        </p>}
+        {engine.firstClearSeal !== null && <p className="text-base" style={{ color: getDifficulty(engine.firstClearSeal).color }}>
+          {isRu ? 'Первая победа! Открыто оформление досье: ' : 'First clear! Dossier decoration unlocked: '}
+          {isRu ? getDifficulty(engine.firstClearSeal).ru : getDifficulty(engine.firstClearSeal).en}
+        </p>}
         {/* Icon & Title */}
         <div className="flex flex-col items-center text-center">
           <div className={`w-16 h-16 rounded-xl flex items-center justify-center mb-3 shadow-xl border ${

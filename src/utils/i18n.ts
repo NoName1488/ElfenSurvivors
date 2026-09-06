@@ -75,6 +75,7 @@ export const TRANSLATIONS = {
     unlockReq: 'ТРЕБОВАНИЯ РАЗБЛОКИРОВКИ',
     available: 'Доступен сразу',
     needWins: 'Требуется побед в кампании: {count}',
+    trialNotDone: 'ИСПЫТАНИЕ НЕ ПРОЙДЕНО',
 
     // Character Card & Details
     startingWeapon: 'СТАРТОВОЕ ВООРУЖЕНИЕ',
@@ -237,6 +238,10 @@ export const TRANSLATIONS = {
     statUnitMoveSpeed: ' Скор. бега',
     statUnitRegen: ' Реген/5с',
     statUnitLifesteal: '% Вампиризм',
+    statUnitMaxHp: ' Макс. ОЗ',
+    statUnitPickupRange: 'px Радиус сбора',
+    statUnitDnaHarvest: '% Сбор ДНК',
+    statUnitLuck: '% Удача',
   },
   en: {
     // App & Header
@@ -253,6 +258,7 @@ export const TRANSLATIONS = {
     unlockReq: 'UNLOCK REQUIREMENTS',
     available: 'Available immediately',
     needWins: 'Campaign victories required: {count}',
+    trialNotDone: 'TRIAL NOT COMPLETE',
 
     // Character Card & Details
     startingWeapon: 'STARTING WEAPON',
@@ -415,6 +421,10 @@ export const TRANSLATIONS = {
     statUnitMoveSpeed: ' Move Speed',
     statUnitRegen: ' Regen/5s',
     statUnitLifesteal: '% Lifesteal',
+    statUnitMaxHp: ' Max HP',
+    statUnitPickupRange: 'px Pickup',
+    statUnitDnaHarvest: '% DNA Harvest',
+    statUnitLuck: '% Luck',
   },
 } as const;
 

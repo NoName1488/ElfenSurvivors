@@ -298,8 +298,8 @@ export const ACHIEVEMENTS_CONFIG: Achievement[] = [
     russianTitle: 'Резонанс двух душ (Ню и Люси)',
     description: 'Collect 150 DNA in peaceful mode and trigger the Awakened Lucy frenzy.',
     russianDescription: 'Соберите 150 ДНК в мирном режиме за Ню и пробудите ярость Люси.',
-    rewardDesc: '+50 Lab DNA & Nyu Status',
-    russianRewardDesc: '+50 ДНК НИИ и разблокировка Ню',
+    rewardDesc: '+50 Lab DNA',
+    russianRewardDesc: '+50 ДНК НИИ',
     icon: 'Heart',
     isUnlocked: false,
     progress: 0,
@@ -322,8 +322,8 @@ export const ACHIEVEMENTS_CONFIG: Achievement[] = [
     id: 'ach_secret_restrained_lucy',
     title: 'Containment Protocol Breached',
     russianTitle: 'Гриф Секретно: Прорыв Оков',
-    description: 'Win the campaign as Lucy using only vectors and telekinesis (no firearms or cyberware).',
-    russianDescription: 'Пройдите кампанию за Люси без огнестрела и кибернетики. Разблокирует Субъекта 00.',
+    description: 'Win the campaign as Lucy using vector weapons only - no telekinesis.',
+    russianDescription: 'Пройдите кампанию за Люси только векторным оружием, без телекинеза. Разблокирует Субъекта 00.',
     rewardDesc: '+80 Lab DNA & Subject 00',
     russianRewardDesc: '+80 ДНК НИИ & Персонаж: Субъект 00',
     icon: 'Layers',
@@ -519,7 +519,6 @@ export const ACHIEVEMENT_DNA_REWARDS: Record<string, number> = {
 
 // Characters granted directly by an achievement unlock.
 const ACHIEVEMENT_CHARACTER_UNLOCKS: Record<string, string> = {
-  ach_nyu_awakening: 'nyu',
   ach_secret_restrained_lucy: 'restrained_lucy',
   ach_secret_kurama: 'kurama',
   ach_secret_anna: 'anna_kakuzawa',

@@ -1016,7 +1016,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'HardHat',
     stats: { vibrationBase: -260, psiPower: -12, armor: 3 },
     lore: 'Глухой шлем из высокопрочной стали. Надевался на объекты при перевозке. На испытаниях принял на себя пулю .50 калибра — и тем спас объекту жизнь.',
-    tags: ['tech', 'defense'],
+    tags: ['tech', 'defense', 'diclonius_tech'],
   },
   {
     id: 'ajna_inhibitor',
@@ -1028,7 +1028,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'CircleDot',
     stats: { vibrationBase: -140, vectorReach: -8, armor: 2 },
     lore: 'Прибор, вживляемый в лобную кость для полного подчинения объекта. Побочный эффект: колебания векторов срываются в нижний диапазон.',
-    tags: ['tech', 'dna'],
+    tags: ['tech', 'dna', 'diclonius_tech'],
   },
   {
     id: 'pineal_overgrowth',
@@ -1133,7 +1133,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'Crosshair',
     stats: { psiPower: 7, critChance: 5 },
     lore: 'Обычные девять миллиметров вектор отбивает не глядя. Вольфрамовый сердечник в полсотни калибра — уже нет.',
-    tags: ['firearm', 'tech'],
+    tags: ['firearm', 'tech', 'human_tech'],
   },
   {
     id: 'barbed_bolts',
@@ -1145,7 +1145,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'Crosshair',
     stats: { psiPower: 4, critChance: 4, critDamage: 0.1 },
     lore: 'Самая примитивная и самая надёжная контрмера во всей программе: слишком тяжёлые, чтобы отбить вблизи, и с зазубринами, чтобы нельзя было вынуть.',
-    tags: ['firearm'],
+    tags: ['firearm', 'human_tech'],
   },
   {
     id: 'rocket_fist',
@@ -1181,7 +1181,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'Shield',
     stats: { armor: 2, critDamage: 0.15, maxHp: 10 },
     lore: 'Военные бионические аугментации, устойчивые к сверхнагрузкам.',
-    tags: ['tech', 'firearm'],
+    tags: ['tech', 'firearm', 'human_tech'],
   },
   {
     id: 'bando_laser_sight',
@@ -1193,7 +1193,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'Crosshair',
     stats: { critChance: 5, vectorReach: 10 },
     lore: 'Оптический имплант с мгновенным захватом траекторий.',
-    tags: ['tech', 'firearm'],
+    tags: ['tech', 'firearm', 'human_tech'],
   },
   {
     id: 'diclonius_horns',
@@ -1229,7 +1229,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'ShieldCheck',
     stats: { armor: 2, maxHp: 14, moveSpeed: -5 },
     lore: 'Многослойный кевлар, усиленный композитными пластинами.',
-    tags: ['tech'],
+    tags: ['tech', 'human_tech'],
   },
   {
     id: 'adrenaline_injector',
@@ -1286,7 +1286,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'Lock',
     stats: { psiPower: 8, attackSpeed: 5 },
     lore: 'Пять зарядов, вживлённых в тело объекта, и телефон, с которого их подрывают. Перепрошиты в боевой стимулятор.',
-    tags: ['stasis', 'tech'],
+    tags: ['stasis', 'tech', 'diclonius_tech'],
   },
   {
     id: 'tungsten_slugs',
@@ -1298,7 +1298,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'Disc',
     stats: { psiPower: 8, critChance: 5, critDamage: 0.15 },
     lore: 'Сверхплотные сердечники, прошивающие бетонные укрытия.',
-    tags: ['firearm', 'tech'],
+    tags: ['firearm', 'tech', 'human_tech'],
   },
   {
     id: 'kakuzawa_glass_eye',
@@ -1389,7 +1389,7 @@ export const PASSIVE_ITEMS: PassiveItem[] = [
     icon: 'Shield',
     stats: { armor: 5, maxHp: 30, moveSpeed: -22 },
     lore: 'Баллистический экзоскелет высшего класса защиты, сковывающий быстрое маневрирование.',
-    tags: ['tech', 'risk'],
+    tags: ['tech', 'risk', 'human_tech'],
     isExperimental: true,
     positiveEffect: '+5 Брони, +30 Макс ОЗ',
     negativeEffect: '-22 Скорости бега',
@@ -1722,7 +1722,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 11,
-    duration: 80,
+    duration: 78,
     enemySpawnRate: 6.4,
     allowedEnemies: ['sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'silpelit_clone', 'mutant_beast', 'sat_sniper', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 92,
@@ -1737,7 +1737,7 @@ export const WAVES: WaveConfig[] = [
   // =========================================================================
   {
     waveNumber: 12,
-    duration: 80,
+    duration: 74,
     enemySpawnRate: 6.8,
     allowedEnemies: ['sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'emp_disruptor', 'sat_sniper', 'silpelit_clone', 'mutant_beast', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 98,
@@ -1747,7 +1747,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 13,
-    duration: 86,
+    duration: 70,
     enemySpawnRate: 7.2,
     allowedEnemies: ['sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'silpelit_clone', 'mutant_beast', 'sat_sniper', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 104,
@@ -1757,7 +1757,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 14,
-    duration: 92,
+    duration: 66,
     enemySpawnRate: 7.6,
     allowedEnemies: ['sat_tank', 'sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'silpelit_clone', 'mutant_beast', 'emp_disruptor', 'sat_sniper', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 110,
@@ -1767,7 +1767,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 15,
-    duration: 100,
+    duration: 62,
     enemySpawnRate: 8.2,
     allowedEnemies: ['sat_tank', 'sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'silpelit_clone', 'mutant_beast', 'emp_disruptor', 'sat_sniper', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 120,
@@ -1782,7 +1782,7 @@ export const WAVES: WaveConfig[] = [
   // =========================================================================
   {
     waveNumber: 16,
-    duration: 100,
+    duration: 70,
     enemySpawnRate: 8.6,
     allowedEnemies: ['sat_tank', 'sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 125,
@@ -1792,7 +1792,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 17,
-    duration: 105,
+    duration: 70,
     enemySpawnRate: 9.0,
     allowedEnemies: ['sat_tank', 'sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 130,
@@ -1802,7 +1802,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 18,
-    duration: 110,
+    duration: 70,
     enemySpawnRate: 9.4,
     allowedEnemies: ['sat_tank', 'sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 135,
@@ -1812,7 +1812,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 19,
-    duration: 115,
+    duration: 70,
     enemySpawnRate: 9.8,
     allowedEnemies: ['sat_tank', 'sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 140,
@@ -1822,7 +1822,7 @@ export const WAVES: WaveConfig[] = [
   },
   {
     waveNumber: 20,
-    duration: 125,
+    duration: 70,
     enemySpawnRate: 10.5,
     allowedEnemies: ['sat_tank', 'sat_apc', 'sat_grunt', 'sat_shotgunner', 'riot_shield', 'hazmat_flamer', 'sat_sniper', 'emp_disruptor', 'silpelit_clone', 'mutant_beast', 'silpelit_duelist', 'silpelit_lancer', 'silpelit_twin'],
     maxConcurrentEnemies: 150,

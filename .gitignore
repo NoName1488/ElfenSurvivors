@@ -16,3 +16,13 @@ win-unpacked/
 # Local tooling, not part of the game
 .claude/
 CLAUDE.md
+.agents/
+AGENTS.md
+
+# Local agent bridge: the path points at this machine, so it is not shared.
+.mcp.json
+
+# Shop QA fixture: boots LabShop with a full 6/6 + 12/12 inventory to exercise the
+# buy-and-replace dialog, which is otherwise most of a run away.
+.codex-trade-qa.html
+.codex-trade-qa.tsx

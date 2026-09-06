@@ -55,6 +55,7 @@ export default function App() {
 
     newEngine.onGameOverCallback = (victory: boolean) => {
       setIsVictory(victory);
+      if (victory) recordCampaignVictory(character.id);
 
       // 1. Check secret feat conditions
       const secretUnlocked = checkAndUnlockSecretRunFeats({
@@ -77,12 +78,6 @@ export default function App() {
         if (secretUnlocked.id === 'restrained_lucy') recordAchievementProgress('ach_secret_restrained_lucy', 1);
         if (secretUnlocked.id === 'kurama') recordAchievementProgress('ach_secret_kurama', 1);
         if (secretUnlocked.id === 'anna_kakuzawa') recordAchievementProgress('ach_secret_anna', 1);
-      } else if (victory) {
-        const unlockResult = recordCampaignVictory(character.id);
-        setNewlyUnlockedCharacter(unlockResult.newlyUnlockedCharacter);
-        if (unlockResult.newlyUnlockedCharacter) {
-          sound.playCharacterUnlocked();
-        }
       } else {
         setNewlyUnlockedCharacter(null);
       }

@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import { Character } from '../types';
 import { CHARACTERS, WEAPONS_DATABASE } from '../data/gameData';
 import { sound } from '../utils/sound';
-import { getTotalWins, isCharacterUnlocked, CHARACTER_UNLOCK_REQUIREMENTS } from '../utils/progression';
+import { getTotalWins, isCharacterUnlocked, CHARACTER_UNLOCK_REQUIREMENTS, trialDescription, trialProgressLabel } from '../utils/progression';
 import {
   DIFFICULTY_LEVELS,
   getSelectedDifficulty,
   setSelectedDifficulty,
   getMaxUnlockedDifficulty,
+  getClearedDifficulties, getDossierSeal, setDossierSeal,
 } from '../utils/difficulty';
 import { useLanguage } from '../utils/i18n';
 import { LanguageFlagButton } from './LanguageFlagButton';
@@ -21,12 +22,14 @@ import {
   Play,
   Crosshair,
   Layers,
+  BarChart3,
   BookOpen,
   Trophy,
   Sliders,
   FlaskConical,
 } from 'lucide-react';
 import { MetaProgressionModal } from './MetaProgressionModal';
+import { StatsModal } from './StatsModal';
 
 interface CharacterSelectProps {
   onSelectCharacter: (character: Character) => void;
@@ -41,7 +44,9 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
   const [selectedId, setSelectedId] = useState<string>(CHARACTERS[0].id);
   const [showAudioModal, setShowAudioModal] = useState<boolean>(false);
   const [showMetaModal, setShowMetaModal] = useState<boolean>(false);
+  const [showStatsModal, setShowStatsModal] = useState<boolean>(false);
   const [difficulty, setDifficulty] = useState<number>(() => getSelectedDifficulty());
+  const [seal, setSeal] = useState(() => getDossierSeal());
   const maxDifficulty = getMaxUnlockedDifficulty();
   const activeDifficulty = DIFFICULTY_LEVELS.find((d) => d.level === difficulty) || DIFFICULTY_LEVELS[1];
   const totalWins = getTotalWins();
@@ -66,17 +71,6 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
     if (char.kind === 'diclonius') return isRu ? 'ДИКЛОНИУС' : 'DICLONIUS';
     if (char.kind === 'neo_diclonius') return isRu ? 'ОБЪЕКТ' : 'SUBJECT';
     return isRu ? 'СИЛПЕЛИТ' : 'SILPELIT';
-  };
-
-  // "1 ПОБЕДА / 2 ПОБЕДЫ / 5 ПОБЕД" - Russian needs three forms, and the lock badges show
-  // counts from 1 to 4, which crosses two of them.
-  const winsWord = (count: number) => {
-    if (!isRu) return count === 1 ? 'WIN' : 'WINS';
-    const mod10 = count % 10;
-    const mod100 = count % 100;
-    if (mod10 === 1 && mod100 !== 11) return 'ПОБЕДА';
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'ПОБЕДЫ';
-    return 'ПОБЕД';
   };
 
   /*
@@ -205,6 +199,19 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
             <span className="text-2xs font-mono font-bold" style={{ color: activeDifficulty.color }}>
               {activeDifficulty.level}. {isRu ? activeDifficulty.ru : activeDifficulty.en}
             </span>
+            <span className="text-sm text-zinc-300">
+              {getClearedDifficulties().includes(difficulty)
+                ? (isRu ? 'Отметка допуска получена' : 'Clearance seal earned')
+                : (isRu ? 'Первая победа: оформление досье' : 'First clear: dossier decoration')}
+              {difficulty >= 2 && difficulty < 5 && !getClearedDifficulties().includes(difficulty) && (isRu ? ` и допуск ${difficulty + 1}` : ` and clearance ${difficulty + 1}`)}
+            </span>
+            <label className="text-sm" style={{ color: seal?.color }}>
+              {isRu ? 'Отметка досье: ' : 'Dossier seal: '}
+              <select aria-label={isRu ? 'Оформление досье' : 'Dossier decoration'} value={seal?.level || 0} className="bg-zinc-950 border rounded p-1" onChange={e => { setDossierSeal(Number(e.target.value)); setSeal(getDossierSeal()); }}>
+                <option value={0}>{isRu ? 'Без отметки' : 'None'}</option>
+                {DIFFICULTY_LEVELS.filter(d => getClearedDifficulties().includes(d.level)).map(d => <option key={d.level} value={d.level}>{d.level} · {isRu ? d.ru : d.en}</option>)}
+              </select>
+            </label>
           </div>
 
           {/* Lab Research & Meta-Progression Button */}
@@ -218,6 +225,19 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
           >
             <FlaskConical className="w-4 h-4 text-red-400" />
             <span>{isRu ? 'НИИ: Мета-Исследования' : 'Institute Research'}</span>
+          </button>
+
+          {/* Lifetime Statistics Button */}
+          <button
+            id="stats-btn"
+            onClick={() => {
+              sound.playUiClick();
+              setShowStatsModal(true);
+            }}
+            className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg glass-panel hover:border-red-500/50 text-gray-300 hover:text-white font-mono text-xs font-bold transition-all cursor-pointer shadow-lg"
+          >
+            <BarChart3 className="w-4 h-4 text-red-400" />
+            <span>{isRu ? 'СТАТИСТИКА' : 'STATISTICS'}</span>
           </button>
 
           {/* Lab Archive Button */}
@@ -256,7 +276,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
             const isSecret = !!req && req.requiredWins < 0;
             const lockLabel = isSecret
               ? isRu ? 'СЕКРЕТ' : 'SECRET'
-              : `${req ? req.requiredWins : 0} ${winsWord(req ? req.requiredWins : 0)}`;
+              : (isRu ? 'ИСПЫТАНИЕ' : 'TRIAL');
             const charName = isRu && char.russianName ? char.russianName : char.name;
             const charTitle = isRu && char.russianTitle ? char.russianTitle : char.title;
 
@@ -338,7 +358,10 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
         </div>
 
         {/* Right: Selected Character Dossier (7 cols) */}
-        <div className="lg:col-span-7 glass-panel rounded-2xl p-5 flex flex-col gap-4 shadow-2xl relative min-h-0 overflow-y-auto">
+        <div style={seal ? { borderColor: seal.color, boxShadow: `inset 0 0 28px ${seal.color}18` } : undefined} className="lg:col-span-7 glass-panel rounded-2xl p-5 flex flex-col gap-4 shadow-2xl relative min-h-0 overflow-y-auto">
+          {seal && <div className="text-sm font-bold border-b pb-2" style={{ color: seal.color, borderColor: seal.color }}>
+            {isRu ? 'ПРОЙДЕННЫЙ ДОПУСК' : 'CLEARANCE COMPLETED'} {seal.level} · {isRu ? seal.ru : seal.en}
+          </div>}
           {/* Top colored accent line */}
           <div
             className="absolute top-0 left-0 right-0 h-1"
@@ -475,10 +498,10 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                     {t('subjectLocked')}
                   </div>
                   <div className="text-xs font-mono text-white font-bold mt-0.5">
-                    {t('unlockReq')}: {selectedReq.description}
+                    {t('unlockReq')}: {trialDescription(selectedChar.id, isRu)}
                   </div>
                   <div className="text-xs font-mono text-gray-300 mt-0.5">
-                    {t('winsCount')}: <span className="text-amber-400 font-bold">{totalWins}</span> / {selectedReq.requiredWins}
+                    {trialProgressLabel(selectedChar.id, isRu)}
                   </div>
                 </div>
               </div>
@@ -489,9 +512,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                 className="w-full py-4 rounded-xl text-zinc-500 font-cinzel font-black text-sm md:text-base tracking-widest border border-zinc-800 bg-zinc-900/60 cursor-not-allowed flex items-center justify-center gap-2.5 shadow-none"
               >
                 <Lock className="w-5 h-5 text-zinc-500" />
-                <span>
-                  {t('needWins', { count: selectedReq.requiredWins })} ({totalWins}/{selectedReq.requiredWins})
-                </span>
+                <span>{t('trialNotDone')}</span>
               </button>
             </div>
           ) : (
@@ -519,6 +540,8 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
       )}
 
       {/* Meta-Progression & Research Lab Modal */}
+      {showStatsModal && <StatsModal onClose={() => setShowStatsModal(false)} />}
+
       {showMetaModal && (
         <MetaProgressionModal onClose={() => setShowMetaModal(false)} />
       )}
