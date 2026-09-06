@@ -381,11 +381,11 @@ export const CHARACTERS: Character[] = [
     russianName: 'Анна Какудзава',
     russianTitle: 'Изменённая дочь директора Какудзавы',
     kind: 'neo_diclonius',
-    description: 'Гротескный гигантский высший разум: скорость бега снижена на -60%, рывки отключены. Зато гравитационный колодец притягивает к себе ВСЕХ врагов и пули со всей карты, преобразуя пули в пси-энергию.',
+    description: 'Тело, которое отец растил, пока оно не перестало быть телом. Ходить почти не может (-60% скорости, рывка нет). Зато десятки векторов, которыми она не умеет управлять, тянут к ней всё с карты — врагов и пули, — а пули уходят в неё саму.',
     avatarColor: '#7c3aed',
     hornColor: '#c084fc',
     accentColor: '#a855f7',
-    lore: 'Дочь профессора Какудзавы, рожденная истинным высшим Диклониусом. Её тело трансформировалось в колоссальный живой суперкомпьютер с гипертрофированным мозгом, способным искривлять пространство-время.',
+    lore: 'Дочь директора института. Отец проверял на ней, что будет, если довести изменения до конца, и она перестала быть человеком по форме — осталась разрастающаяся масса, которую держат в резервуаре. Страшнее всего то, что она сохранила речь и всё это время оставалась в сознании.',
     baseStats: {
       maxHp: 120,
       hpRegen: 2,
@@ -402,7 +402,7 @@ export const CHARACTERS: Character[] = [
       pickupRange: 400,
       bloodLifesteal: 2,
       luck: 10,
-      // Анна: гравитационное ядро держит вектора в видимом диапазоне
+      // Анна: масса гонит вектора на предельной частоте, они видимы и без её желания
       vibrationBase: 940,
       // The two keys the player presses on purpose. Shop items move these; nothing
       // starts with any of them.
@@ -418,18 +418,18 @@ export const CHARACTERS: Character[] = [
     secretHintEn: 'Reach Wave 25 in Endless Mode OR synthesize a Tier 5 Catalytic Evolution in a winning run.',
     secretRequirementRu: 'Волна 25 в бесконечном режиме или Катализатор T5 в победе.',
     secretRequirementEn: 'Wave 25 in Endless Mode or Tier 5 Catalyst in a win.',
-    specialAbilityName: 'Хроно-Стазис Мозга',
-    specialAbilityDesc: 'Коллапс пространственно-временного континуума: полностью останавливает время на 5 секунд для всех врагов и снарядов на экране.',
+    specialAbilityName: 'Она держит всех',
+    specialAbilityDesc: 'Масса тянется во все стороны разом. На 5 секунд всё на экране — люди, техника, пули в воздухе — застревает в том, чего не видит и не может стряхнуть.',
     specialAbilityCooldown: 42,
-    mobilitySkillName: 'Гравитационный коллапс-сдвиг',
-    mobilitySkillDesc: 'Анна сжимает пространство вокруг себя, мгновенно перемещаясь на 200px с круговым гравитационным взрывом.',
+    mobilitySkillName: 'Перебросить массу',
+    mobilitySkillDesc: 'Анна не бегает. Она упирается векторами в землю и перекидывает себя на 200px, расшвыривая всё, что стояло рядом.',
     mobilitySkillCooldown: 4.5,
     mechanic: {
       type: 'gravitational_core',
-      resourceName: 'ГРАВИТАЦИОННАЯ СИНГУЛЯРНОСТЬ',
+      resourceName: 'МАССА',
       resourceMax: 100,
-      description: 'Колоссальный гравитационный колодец: поглощает вражеские пули, восстанавливая HP (+0.5 HP за пулю) и заряжая Сингулярность. -60% Скорости движения.',
-      passiveBonusText: 'Абсолютный магнит 400px / Поглощение пуль в HP / -60% Скорости',
+      description: 'Пули вязнут в массе и идут ей на пользу: +0.5 ОЗ за попадание, и тем же копится ресурс. Ходить при этом почти невозможно: -60% скорости.',
+      passiveBonusText: 'Тянет всё в радиусе 400px / Пули идут в ОЗ / -60% скорости',
     },
   },
 ];
@@ -1930,7 +1930,7 @@ export const WEAPON_EVOLUTIONS: WeaponEvolution[] = [
     color: '#f97316',
     icon: 'Crosshair',
     powerSpikeSummary: 'High-Explosive Cluster Shells + 14 Tungsten Fragments',
-    russianPowerSpikeSummary: 'Кассетные термобарические ядра + 14 рикошетящих осколков',
+    russianPowerSpikeSummary: 'Кассетные вольфрамовые ядра + 14 рикошетящих осколков',
   },
   {
     id: 'evo_titan_gatling',

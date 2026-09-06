@@ -7223,7 +7223,7 @@ export class GameEngine {
         specialAbility: 'heavy_arsenal',
       },
       boss_goliath_mech: {
-        name: 'Боевой мех SAT «Голиаф»',
+        name: 'Штурмовая машина разграждения SAT',
         color: '#0284c7',
         baseHp: 44000,
         baseShield: 18000,
@@ -7259,7 +7259,7 @@ export class GameEngine {
         specialAbility: 'needle_barrage',
       },
       boss_leviathan_gunship: {
-        name: 'Воздушный Дредноут «Левиафан»',
+        name: 'Ударный вертолёт SAT',
         color: '#ef4444',
         baseHp: 74000,
         baseShield: 30000,
