@@ -205,12 +205,19 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                 : (isRu ? 'Первая победа: оформление досье' : 'First clear: dossier decoration')}
               {difficulty >= 2 && difficulty < 5 && !getClearedDifficulties().includes(difficulty) && (isRu ? ` и допуск ${difficulty + 1}` : ` and clearance ${difficulty + 1}`)}
             </span>
-            <label className="text-sm" style={{ color: seal?.color }}>
+            {/* Asked in playtest what it does. It decorates the dossier and nothing else, so
+                the control says so rather than leaving the player to test it. */}
+            <label className="text-sm" style={{ color: seal?.color }} title={isRu
+              ? 'Оформление досье: рамка и заголовок в цвете пройденного допуска. На бой не влияет.'
+              : 'Dossier decoration: frame and header in the colour of a cleared clearance. No effect in combat.'}>
               {isRu ? 'Отметка досье: ' : 'Dossier seal: '}
               <select aria-label={isRu ? 'Оформление досье' : 'Dossier decoration'} value={seal?.level || 0} className="bg-zinc-950 border rounded p-1" onChange={e => { setDossierSeal(Number(e.target.value)); setSeal(getDossierSeal()); }}>
                 <option value={0}>{isRu ? 'Без отметки' : 'None'}</option>
                 {DIFFICULTY_LEVELS.filter(d => getClearedDifficulties().includes(d.level)).map(d => <option key={d.level} value={d.level}>{d.level} · {isRu ? d.ru : d.en}</option>)}
               </select>
+              <span className="ml-2 text-2xs text-zinc-500">
+                {isRu ? 'только оформление' : 'decoration only'}
+              </span>
             </label>
           </div>
 

@@ -229,6 +229,18 @@ export function recordCharacterTrials(run: CharacterTrialRun): Character[] {
   return newlyUnlocked;
 }
 
+/*
+ * The name to print for a subject.
+ *
+ * No character in the roster actually sets russianName - every name lives in `name` and is
+ * already Russian - so `isRu ? c.russianName : c.name` silently yields undefined, which is
+ * how the unlock banner came to read "Characters unlocked:" with nothing after it. The
+ * fallback is what CharacterSelect always did; this is that, in one place.
+ */
+export function characterDisplayName(char: { name: string; russianName?: string }, isRu: boolean): string {
+  return (isRu && char.russianName) || char.name;
+}
+
 export function trialDescription(id: string, isRu: boolean): string {
   const en: Record<string, string> = {
     lucy: 'Available from the start.',

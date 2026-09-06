@@ -9,6 +9,7 @@ import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
 import { ItemIcon } from './ItemIcon';
 import { exchange, tradeQuote, lostTradeBonuses, saleValue } from '../utils/shopTrade';
+import { characterDisplayName } from '../utils/progression';
 import {
   Dna,
   RefreshCw,
@@ -789,7 +790,7 @@ export const LabShop: React.FC<LabShopProps> = ({
   return (
     <div id="lab-shop-screen" className="w-full h-full p-4 md:p-6 flex flex-col justify-between overflow-y-auto z-10 select-none">
       {announcedUnlocks.length > 0 && <p role="status" className="p-3 rounded-lg border border-amber-500 text-amber-300 text-base">
-        {isRu ? 'Открыты персонажи: ' : 'Characters unlocked: '}{announcedUnlocks.map(c => isRu ? c.russianName : c.name).join(', ')}
+        {isRu ? 'Открыты персонажи: ' : 'Characters unlocked: '}{announcedUnlocks.map(c => characterDisplayName(c, isRu)).join(', ')}
       </p>}
       {tradeOffer && (() => {
         const incoming = tradeOffer.type === 'weapon'
