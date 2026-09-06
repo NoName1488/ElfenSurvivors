@@ -107,6 +107,14 @@ export const PsychicMutationTree: React.FC<PsychicMutationTreeProps> = ({
     else if (stat === 'moveSpeed') unitLabel = t('statUnitMoveSpeed');
     else if (stat === 'hpRegen') unitLabel = t('statUnitRegen');
     else if (stat === 'bloodLifesteal') unitLabel = t('statUnitLifesteal');
+    /*
+     * Anything missing here fell through to the raw key, so a node advertised "+40
+     * pickupRange" to the player. maxHp alone appears on fifteen nodes.
+     */
+    else if (stat === 'maxHp') unitLabel = t('statUnitMaxHp');
+    else if (stat === 'pickupRange') unitLabel = t('statUnitPickupRange');
+    else if (stat === 'dnaHarvest') unitLabel = t('statUnitDnaHarvest');
+    else if (stat === 'luck') unitLabel = t('statUnitLuck');
 
     return `+${val} ${unitLabel}`;
   };

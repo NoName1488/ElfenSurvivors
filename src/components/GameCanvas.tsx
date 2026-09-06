@@ -234,7 +234,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
       lastTime = time;
 
       if (!isPaused) {
-        engine.update(dt);
+        // Tempo is applied here, at the only place the simulation is stepped from real time.
+        engine.update(dt * engine.timeScale);
         if (realFrameMs > 0 && realFrameMs < 5000) engine.reportFrameTime(realFrameMs);
       }
 
@@ -387,7 +388,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         engine.triggerSpecialAbility();
       } else if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
         engine.triggerMobilitySkill();
-      } else if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+      } else if (e.key === 'p' || e.key === 'P' || e.code === 'KeyP' || e.key === 'Escape') {
+        // e.code as well as e.key: on a Russian layout the P key reports 'з', so the pause
+        // hint promised a key that did nothing for exactly the players the game is in.
         engine.resetInput();
         onPauseToggleRef.current();
       } else {
@@ -717,8 +720,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
 
       {/* Grand Boss Health & Shield Bar (Souls-like) */}
       {hudState.activeBoss && (
-        <div className="relative z-20 w-full px-4 md:px-12 py-2.5 bg-black/90 border-b-2 border-red-500/60 backdrop-blur-md flex flex-col items-center shadow-[0_4px_25px_rgba(0,0,0,0.8)] animate-in slide-in-from-top duration-500">
-          <div className="w-full max-w-2xl flex items-center justify-between text-xs font-cinzel font-bold tracking-wider mb-1">
+        /*
+          Reported from play: the boss block took a band off the top of the screen and the
+          arena with it. It sits in the flow rather than over the arena, so every row it
+          carries is a row the player cannot see the fight through. The posture readout used
+          to own a whole text line of its own; it is a chip in the header now.
+        */
+        <div className="relative z-20 w-full px-4 md:px-12 py-1.5 bg-black/90 border-b-2 border-red-500/60 backdrop-blur-md flex flex-col items-center shadow-[0_4px_25px_rgba(0,0,0,0.8)] animate-in slide-in-from-top duration-500">
+          <div className="w-full max-w-2xl flex items-center justify-between gap-2 text-xs font-cinzel font-bold tracking-wider mb-0.5">
             <div className="flex items-center gap-2">
               <Skull className="w-4 h-4 text-red-500 animate-pulse" />
               <span className="text-white text-sm tracking-wide font-black" style={{ color: hudState.activeBoss.color }}>
@@ -732,6 +741,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               )}
             </div>
             <div className="flex items-center gap-2 font-mono text-xs">
+              {hudState.activeBoss.maxVectorGuard && hudState.activeBoss.maxVectorGuard > 0 && (
+                <span className={hudState.activeBoss.isStunned
+                  ? 'px-2 py-0.5 rounded bg-yellow-500/20 border border-yellow-400/70 text-yellow-300 font-bold animate-pulse'
+                  : 'px-2 py-0.5 rounded bg-amber-950/60 border border-amber-600/50 text-amber-300 font-medium hidden sm:inline'}>
+                  {hudState.activeBoss.isStunned
+                    ? (isRu ? '⚡ СТОЙКА ПРОБИТА · 2X' : '⚡ GUARD BROKEN · 2X')
+                    : `${isRu ? 'СТОЙКА' : 'POSTURE'} ${Math.max(0, Math.round(hudState.activeBoss.vectorGuard || 0))}/${hudState.activeBoss.maxVectorGuard}`}
+                </span>
+              )}
               {hudState.activeBoss.maxShield && hudState.activeBoss.shield !== undefined && hudState.activeBoss.shield > 0 && (
                 <span className="px-2 py-0.5 rounded bg-cyan-950/70 border border-cyan-400/60 text-cyan-300 font-bold">
                   {isRu ? 'ЩИТ' : 'SHIELD'} {hudState.activeBoss.shield} / {hudState.activeBoss.maxShield}
@@ -758,19 +776,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
             />
           </div>
 
-          {/* Diclonius Boss Posture / Vector Guard Bar */}
+          {/* Posture bar. Its label and numbers live in the header chip above. */}
           {hudState.activeBoss.maxVectorGuard && hudState.activeBoss.maxVectorGuard > 0 && (
-            <div className="w-full max-w-2xl mt-1.5 flex flex-col">
-              <div className="flex justify-between items-center text-xs font-mono mb-0.5">
-                <span className={hudState.activeBoss.isStunned ? "text-yellow-400 font-bold animate-pulse" : "text-amber-300 font-medium"}>
-                  {hudState.activeBoss.isStunned
-                    ? (isRu ? '⚡ СТОЙКА ПРОБИТА! ОГЛУШЕНИЕ (2X УРОН)' : '⚡ GUARD BROKEN! STUNNED (2X DAMAGE)')
-                    : (isRu ? 'ВЕКТОРНЫЙ БЛОК / СТОЙКА БОССА' : 'BOSS VECTOR GUARD / POSTURE')}
-                </span>
-                <span className="text-gray-400 font-mono">
-                  {Math.max(0, Math.round(hudState.activeBoss.vectorGuard || 0))} / {hudState.activeBoss.maxVectorGuard}
-                </span>
-              </div>
+            <div className="w-full max-w-2xl mt-1 flex flex-col">
               <div className="w-full h-1.5 bg-zinc-950 rounded-full overflow-hidden border border-amber-600/40 relative">
                 <div
                   className={`h-full transition-all duration-100 ${
