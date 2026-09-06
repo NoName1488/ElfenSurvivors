@@ -462,7 +462,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
       {/* Top Telemetry Header Bar */}
       <div
         id="game-top-telemetry-hud"
-        className="relative z-10 w-full bg-[#0a0a0a]/90 backdrop-blur-md border-b border-red-900/30 px-4 md:px-8 py-2.5 flex items-center justify-between pointer-events-none"
+        className="relative z-10 w-full bg-[#0a0a0a]/90 backdrop-blur-md border-b border-red-900/30 px-4 md:px-8 py-2.5 flex items-center justify-between gap-3 flex-wrap pointer-events-none"
       >
         {/* Left: Subject Info, HP & Unique Character Resource */}
         <div className="flex items-center gap-3 md:gap-5">
@@ -626,8 +626,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           )}
         </div>
 
-        {/* Right: Kills & Minimal Pause Control */}
-        <div className="flex items-center gap-3 md:gap-4">
+        {/*
+          * Right: kills and the pause control.
+          *
+          * Measured at 1024x700: this group sat entirely past the right edge - the pause
+          * button began at x=1099 in a 1024px viewport, and the top bar clips instead of
+          * scrolling, so it was unreachable. Shrinking is allowed here because losing a few
+          * pixels off the kill counter is nothing next to losing the pause button.
+          */}
+        <div className="flex items-center gap-3 md:gap-4 shrink-0">
           <div className="flex flex-col text-right">
             <span className="text-2xs uppercase tracking-[0.2em] text-gray-500 font-bold">{t('neutralized')}</span>
             <span className="text-xs md:text-sm font-mono text-red-400 font-bold">{hudState.kills}</span>
@@ -1001,8 +1008,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
             </span>
           </div>
 
-          {/* Actions & Skills */}
-          <div className="pointer-events-auto flex items-center gap-2">
+          {/*
+            * Actions & Skills.
+            *
+            * The row is allowed to wrap and to shrink. Keeping both ability names permanently
+            * on screen - which is what stopped the buttons jittering while they cool down -
+            * made the row wider than a 1280px viewport, and the top bar clips rather than
+            * scrolls, so the ultimate button simply lost its right-hand 91 pixels.
+            */}
+          <div className="pointer-events-auto flex items-center gap-2 flex-wrap justify-end min-w-0">
             {/* Mobility / Dash Skill */}
             <button
               id="mobility-skill-btn"
@@ -1016,7 +1030,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               }`}
             >
               <Wind className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
-              <span className="whitespace-nowrap">[SHIFT] {hudState.mobilityName}</span>
+              <span className="whitespace-nowrap truncate max-w-[13rem] xl:max-w-none">[SHIFT] {hudState.mobilityName}</span>
               {/* Fixed-width slot: reserved whether or not there is a number in it. */}
               <span className="w-9 text-right tabular-nums text-cyan-200 shrink-0">
                 {hudState.mobilityCooldown > 0 ? `${hudState.mobilityCooldown.toFixed(1)}s` : ''}
@@ -1055,6 +1069,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               id="special-ability-btn"
               onClick={() => engine.triggerSpecialAbility()}
               disabled={hudState.specialCooldown > 0}
+              title={`${engine.state.character.specialAbilityName} - ${engine.state.character.specialAbilityDesc}`}
               className={`relative overflow-hidden px-4 py-1.5 rounded-lg border text-xs uppercase tracking-wider font-mono font-bold transition-all cursor-pointer flex items-center gap-2 ${
                 hudState.specialCooldown <= 0
                   ? 'border-red-500 bg-red-600 text-white shadow-[0_0_15px_rgba(220,38,38,0.6)] animate-vector-pulse hover:bg-red-500'
@@ -1062,7 +1077,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               }`}
             >
               <Zap className="w-3.5 h-3.5 shrink-0" />
-              <span className="whitespace-nowrap">
+              <span className="whitespace-nowrap truncate max-w-[13rem] xl:max-w-none">
                 [{isRu ? 'ПРОБЕЛ' : 'SPACE'}] {engine.state.character.specialAbilityName}
               </span>
               <span className="w-9 text-right tabular-nums text-red-200 shrink-0">

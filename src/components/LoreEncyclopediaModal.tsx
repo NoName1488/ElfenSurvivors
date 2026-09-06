@@ -104,6 +104,76 @@ export const LoreEncyclopediaModal: React.FC<LoreEncyclopediaModalProps> = ({ on
             </ul>
           </div>
 
+          {/*
+            * Vibration bands.
+            *
+            * The single least discoverable thing in the game. The HUD prints a frequency and
+            * a band name and nothing explains either, and since armour arrived the phase band
+            * is the answer to a problem the player will otherwise have no answer to.
+            */}
+          <div className="glass-panel p-4 rounded-xl border-purple-500/20 bg-purple-950/10">
+            <h3 className="font-cinzel font-bold text-sm text-purple-300 mb-1 flex items-center gap-1.5">
+              <Activity className="w-4 h-4" />
+              <span>{isRu ? 'Частота векторов' : 'Vector frequency'}</span>
+            </h3>
+            <p className="text-gray-400 mt-1">
+              {isRu
+                ? 'Молекулы вектора вибрируют, и частота решает, чем вектор вообще является. В HUD она показана рядом с их числом. Это не шкала «выше — лучше»: это четыре разных инструмента, и предметы, тянущие частоту вниз, стоят ровно столько же, сколько тянущие вверх.'
+                : 'A vector\'s molecules vibrate, and the frequency decides what the arm actually is. The HUD prints it beside the arm count. This is not a "higher is better" scale - it is four different tools, and items that pull the frequency down are worth exactly as much as items that push it up.'}
+            </p>
+            <ul className="list-disc list-inside space-y-1.5 text-gray-400 mt-2">
+              <li>
+                <strong className="text-sky-300">{isRu ? 'ФАЗА (до 400 Гц)' : 'PHASE (under 400 Hz)'}</strong>
+                {' — '}
+                {isRu
+                  ? 'вектор проходит сквозь материю, не взаимодействуя с ней. Игнорирует броню и щиты целиком. Единственный честный ответ бронетехнике и щитоносцам.'
+                  : 'the arm passes through matter without interacting with it. Ignores armour and shields outright. The only honest answer to armoured vehicles and shield bearers.'}
+              </li>
+              <li>
+                <strong className="text-emerald-300">{isRu ? 'КИНЕТИКА (400–700 Гц)' : 'KINETIC (400-700 Hz)'}</strong>
+                {' — '}
+                {isRu
+                  ? 'поднимает и рвёт изнутри. Часть ударов вызывает внутренний разрыв, который добивает цель сам.'
+                  : 'lifts and ruptures from the inside. Some strikes cause an internal bleed that finishes the target on its own.'}
+              </li>
+              <li>
+                <strong className="text-amber-300">{isRu ? 'РЕЗКА (700–900 Гц)' : 'SHEAR (700-900 Hz)'}</strong>
+                {' — '}
+                {isRu ? 'просто режет. Прибавка к урону по всему, что не бронировано.' : 'simply cuts. A flat damage bonus against anything unarmoured.'}
+              </li>
+              <li>
+                <strong className="text-red-300">{isRu ? 'КРИТИЧЕСКАЯ (900+ Гц)' : 'CRITICAL (900+ Hz)'}</strong>
+                {' — '}
+                {isRu
+                  ? 'вектор становится видимым и детонирует при касании. Взрыв растёт вместе с частотой. Сюда нельзя купить билд: в покое частота держится ниже порога, а верхний диапазон берётся боем — серией ударов. Частота, купленная сверх потолка, идёт в скорость разгона.'
+                  : 'the arm becomes visible and detonates on contact, and the blast grows with frequency. This band cannot be bought into: resting frequency is held below the threshold, and the top band is reached by fighting - a run of strikes drives it up. Frequency bought past the ceiling becomes climb rate.'}
+              </li>
+            </ul>
+          </div>
+
+          {/*
+            * The standing order.
+            *
+            * The HUD badge reads CONTAIN or TERMINATE and the soldiers behave completely
+            * differently under each, which the archive never mentioned.
+            */}
+          <div className="glass-panel p-4 rounded-xl border-sky-500/20 bg-sky-950/10">
+            <h3 className="font-cinzel font-bold text-sm text-sky-300 mb-1 flex items-center gap-1.5">
+              <Shield className="w-4 h-4" />
+              <span>{isRu ? 'Приказ SAT' : 'The SAT standing order'}</span>
+            </h3>
+            <p className="text-gray-400 mt-1">
+              {isRu
+                ? 'В HUD висит табличка с текущим приказом. Пока он читается СДЕРЖИВАНИЕ, институт всё ещё рассчитывает вернуть вас живой: солдаты берут в кольцо и держат дистанцию, одиночки отходят к своим, а огонь идёт на подавление и бьёт вполовину. Приказ меняется на ЛИКВИДАЦИЮ от того, что вы успели сделать — от трупов, убитых боссов и пройденных волн. После этого каждый выстрел стоит полную цену.'
+                : 'A badge in the HUD carries the current order. While it reads CONTAIN, the institute still expects to recover you alive: the soldiers cordon and hold, stragglers fall back to their group, and their fire is suppressive and lands for half. It flips to TERMINATE based on what you have done - bodies, bosses put down, waves survived. After that every shot is worth full value.'}
+            </p>
+            <p className="text-gray-400 mt-2">
+              {isRu
+                ? 'На высоких уровнях допуска они ещё и обучены: половина отряда двигается, пока вторая прикрывает — двигающаяся половина не стреляет. Не стреляют сквозь своих, поэтому скученный строй сам себе делает мёртвую зону. Щитоносец встаёт перед стрелком, а не гуляет сам по себе: убейте щит, потом пушку. И треть отряда уходит широкой дугой вам за спину.'
+                : 'At higher clearance they are also trained: half the element moves while half covers, and the moving half is not shooting. They will not fire through their own men, so a bunched formation makes its own dead ground. A shield bearer takes station in front of a gun rather than wandering alone - kill the shield, then the gun. And a third of the section walks wide to come in behind you.'}
+            </p>
+          </div>
+
           {/* Section 4: SAT capture squads */}
           <div className="glass-panel p-4 rounded-xl border-amber-500/20 bg-amber-950/10">
             <h3 className="font-cinzel font-bold text-sm text-amber-400 mb-1 flex items-center gap-1.5">
@@ -137,6 +207,7 @@ export const LoreEncyclopediaModal: React.FC<LoreEncyclopediaModalProps> = ({ on
                   <li><strong className="text-white">Синтез тиров:</strong> Два одинаковых оружия одного тира объединяются в тир выше (T1 &rarr; T2 &rarr; T3 &rarr; T4).</li>
                   <li><strong className="text-white">Каталитическая эволюция:</strong> Оружие Тир 4 плюс его катализатор-артефакт превращается в форму Тир 5 с новой геометрией атаки.</li>
                   <li><strong className="text-white">Ритм волны:</strong> Волна открывается фазой разведки (точки интереса, ресурсы), затем переходит в штурмовую фазу и бой с боссом.</li>
+                  <li><strong className="text-white">Уровень допуска:</strong> Пять ступеней протокола института. Открыты первые две; каждая следующая — за пройденную кампанию на предыдущей. Выше допуск — крепче и многочисленнее враг, лучше его выучка, и тем больше ДНК уходит в постоянные исследования НИИ.</li>
                 </>
               ) : (
                 <>
@@ -146,6 +217,7 @@ export const LoreEncyclopediaModal: React.FC<LoreEncyclopediaModalProps> = ({ on
                   <li><strong className="text-white">Tier fusion:</strong> Two identical weapons of the same tier merge into the next tier (T1 &rarr; T2 &rarr; T3 &rarr; T4).</li>
                   <li><strong className="text-white">Catalytic evolution:</strong> A Tier 4 weapon plus its catalyst artefact transforms into a Tier 5 form with new attack geometry.</li>
                   <li><strong className="text-white">Wave rhythm:</strong> A wave opens with a sweep phase (points of interest, resources), then hard-cuts into the assault phase and the boss encounter.</li>
+                  <li><strong className="text-white">Clearance level:</strong> Five steps of the institute's protocol. The first two are open; each one above is earned by finishing a campaign on the one below. Higher clearance means a tougher, denser and better-trained enemy, and proportionally more DNA banked into permanent research.</li>
                 </>
               )}
             </ul>
