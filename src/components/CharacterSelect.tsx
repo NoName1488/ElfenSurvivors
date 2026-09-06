@@ -199,26 +199,52 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
             <span className="text-2xs font-mono font-bold" style={{ color: activeDifficulty.color }}>
               {activeDifficulty.level}. {isRu ? activeDifficulty.ru : activeDifficulty.en}
             </span>
-            <span className="text-sm text-zinc-300">
-              {getClearedDifficulties().includes(difficulty)
-                ? (isRu ? 'Отметка допуска получена' : 'Clearance seal earned')
-                : (isRu ? 'Первая победа: оформление досье' : 'First clear: dossier decoration')}
-              {difficulty >= 2 && difficulty < 5 && !getClearedDifficulties().includes(difficulty) && (isRu ? ` и допуск ${difficulty + 1}` : ` and clearance ${difficulty + 1}`)}
-            </span>
-            {/* Asked in playtest what it does. It decorates the dossier and nothing else, so
-                the control says so rather than leaving the player to test it. */}
-            <label className="text-sm" style={{ color: seal?.color }} title={isRu
-              ? 'Оформление досье: рамка и заголовок в цвете пройденного допуска. На бой не влияет.'
-              : 'Dossier decoration: frame and header in the colour of a cleared clearance. No effect in combat.'}>
-              {isRu ? 'Отметка досье: ' : 'Dossier seal: '}
-              <select aria-label={isRu ? 'Оформление досье' : 'Dossier decoration'} value={seal?.level || 0} className="bg-zinc-950 border rounded p-1" onChange={e => { setDossierSeal(Number(e.target.value)); setSeal(getDossierSeal()); }}>
-                <option value={0}>{isRu ? 'Без отметки' : 'None'}</option>
-                {DIFFICULTY_LEVELS.filter(d => getClearedDifficulties().includes(d.level)).map(d => <option key={d.level} value={d.level}>{d.level} · {isRu ? d.ru : d.en}</option>)}
-              </select>
-              <span className="ml-2 text-2xs text-zinc-500">
-                {isRu ? 'только оформление' : 'decoration only'}
-              </span>
-            </label>
+            {/*
+              What a first clear pays, and the seal it pays in.
+              Asked twice in playtest - first what the seal does, then what it even is. The
+              answer had been a dropdown whose only entry on a fresh account was "None",
+              which asks a question instead of answering one. Nothing is earned yet: say
+              what the thing is and how it arrives, and show no control at all. The picker
+              appears on the run that produces something to pick.
+            */}
+            {(() => {
+              const cleared = getClearedDifficulties();
+              const clearedThis = cleared.includes(difficulty);
+              const opensNext = difficulty >= 2 && difficulty < 5 && !clearedThis;
+              return (
+                <>
+                  <span className="text-sm text-zinc-300">
+                    {clearedThis
+                      ? (isRu
+                        ? 'Допуск пройден: отметка для досье получена.'
+                        : 'Clearance completed: its dossier seal is yours.')
+                      : (isRu
+                        ? `За первую победу на этом допуске — отметка в досье${opensNext ? ` и допуск ${difficulty + 1}` : ''}.`
+                        : `A first clear here earns its dossier seal${opensNext ? ` and clearance ${difficulty + 1}` : ''}.`)}
+                  </span>
+                  {cleared.length === 0 ? (
+                    <span className="text-2xs text-zinc-500 leading-snug">
+                      {isRu
+                        ? 'Отметка — это оформление: досье субъекта получает рамку и заголовок в цвете пройденного допуска. На бой не влияет.'
+                        : 'A seal is decoration: the subject dossier takes the frame and header colour of a cleared clearance. No effect in combat.'}
+                    </span>
+                  ) : (
+                    <label className="text-sm" style={{ color: seal?.color }} title={isRu
+                      ? 'Рамка и заголовок досье в цвете пройденного допуска. На бой не влияет.'
+                      : 'Dossier frame and header in the colour of a cleared clearance. No effect in combat.'}>
+                      {isRu ? 'Отметка досье: ' : 'Dossier seal: '}
+                      <select aria-label={isRu ? 'Оформление досье' : 'Dossier decoration'} value={seal?.level || 0} className="bg-zinc-950 border rounded p-1" onChange={e => { setDossierSeal(Number(e.target.value)); setSeal(getDossierSeal()); }}>
+                        <option value={0}>{isRu ? 'Без отметки' : 'None'}</option>
+                        {DIFFICULTY_LEVELS.filter(d => cleared.includes(d.level)).map(d => <option key={d.level} value={d.level}>{d.level} · {isRu ? d.ru : d.en}</option>)}
+                      </select>
+                      <span className="ml-2 text-2xs text-zinc-500">
+                        {isRu ? 'только оформление' : 'decoration only'}
+                      </span>
+                    </label>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           {/* Lab Research & Meta-Progression Button */}
