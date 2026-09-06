@@ -24,6 +24,41 @@ const cloc = (ru: string, en: string) => (getLanguage() === 'ru' ? ru : en);
 let lastPlayerX = 0;
 let playerFacesLeft = false;
 
+/*
+ * Draw quality, chosen per frame from how much is on the field.
+ *
+ * shadowBlur drops canvas 2D onto a slow path, and the hostile vector arms each ask for up
+ * to three blurred passes. At wave 18 the arena holds 182 enemies carrying 230 arms, which
+ * is roughly six hundred blurred strokes in one frame - measured as the cause of the "one
+ * frame per second" reported from play, with the simulation itself averaging 1.3 ms.
+ *
+ * 0 = everything. 1 = decoration loses its glow, the focal points keep theirs. 2 = glow is
+ * gone. In a crowd the glows overlap into a wash, so this is close to invisible and it is
+ * the difference between playable and not.
+ */
+let drawTier = 0;
+
+function chooseDrawTier(enemyCount: number, armCount: number, particleCount: number) {
+  const load = enemyCount + armCount * 1.5 + particleCount * 0.25;
+  drawTier = load > 420 ? 2 : load > 190 ? 1 : 0;
+}
+
+/**
+ * Sets a glow, or does not, depending on the tier.
+ *
+ * `focal` marks the handful of things the player is actually reading - the boss, their own
+ * arms - which keep their glow one tier longer than scenery does.
+ */
+function setGlow(ctx: CanvasRenderingContext2D, color: string, blur: number, focal = false) {
+  const budget = focal ? 1 : 0;
+  if (drawTier > budget) {
+    ctx.shadowBlur = 0;
+    return;
+  }
+  ctx.shadowColor = color;
+  ctx.shadowBlur = blur;
+}
+
 /** One colour per vibration band, shared by the HUD readout. */
 const BAND_COLORS: Record<string, string> = {
   phase: '#38bdf8',
@@ -192,10 +227,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
 
     const render = (time: number) => {
       const dt = Math.min(0.1, (time - lastTime) / 1000);
+      // Real elapsed time between frames, before the clamp. The clamped dt is what the
+      // simulation steps by; this is what the player actually experienced, and it is the
+      // only honest source for the "worst frame" line in a run report.
+      const realFrameMs = time - lastTime;
       lastTime = time;
 
       if (!isPaused) {
         engine.update(dt);
+        if (realFrameMs > 0 && realFrameMs < 5000) engine.reportFrameTime(realFrameMs);
       }
 
       // Sync HUD state throttled to ~16 FPS to eliminate DOM reconciliation overhead
@@ -1496,6 +1536,13 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
    * Rounding to whole pixels keeps the floor texture and the 1px strokes from shimmering as
    * the camera eases toward the player.
    */
+  // Pick the draw quality for this frame before anything is drawn with it.
+  chooseDrawTier(
+    s.enemies.length,
+    s.enemies.reduce((acc, e) => acc + (e.vectorArms ? e.vectorArms.length : 0), 0) + s.vectorArms.length,
+    s.particles.length
+  );
+
   ctx.save();
   ctx.translate(-Math.round(s.cameraX), -Math.round(s.cameraY));
 
@@ -2106,8 +2153,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
     // Impact crater ring
     ctx.strokeStyle = `rgba(239, 68, 68, ${0.35 + proximity * 0.45})`;
     ctx.lineWidth = 2 + proximity * 1.5;
-    ctx.shadowColor = "#ef4444";
-    ctx.shadowBlur = 10 + proximity * 14;
+    setGlow(ctx, '#ef4444', 10 + proximity * 14);
     ctx.beginPath();
     ctx.arc(lx, ly, impactRadius * (0.55 + proximity * 0.45), 0, Math.PI * 2);
     ctx.stroke();
@@ -3019,8 +3065,8 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
         ctx.lineWidth = isStriking ? 5.5 : 3.5;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.shadowColor = glowColor;
-        ctx.shadowBlur = isStriking ? (isEnraged ? 28 : 22) : (isStunned ? 6 : 14);
+        // A boss is the thing the player is reading, so it keeps its glow a tier longer.
+        setGlow(ctx, glowColor, isStriking ? (isEnraged ? 28 : 22) : (isStunned ? 6 : 14), !!enemy.isBoss);
         ctx.globalAlpha = isStunned ? 0.45 : (isStriking ? 0.95 : 0.8);
 
         ctx.beginPath();
@@ -3041,8 +3087,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
         if (tip) {
           const tipSize = isStriking ? 6.5 : 4.5;
           ctx.fillStyle = '#ffffff';
-          ctx.shadowColor = glowColor;
-          ctx.shadowBlur = isStriking ? 18 : 10;
+          setGlow(ctx, glowColor, isStriking ? 18 : 10, !!enemy.isBoss);
           ctx.beginPath();
           ctx.arc(tip.x, tip.y, tipSize, 0, Math.PI * 2);
           ctx.fill();
@@ -3063,8 +3108,7 @@ function drawScene(ctx: CanvasRenderingContext2D, width: number, height: number,
               // Vector Parrying Spark Star Flare
               ctx.strokeStyle = '#ffffff';
               ctx.lineWidth = 2.5;
-              ctx.shadowColor = '#38bdf8';
-              ctx.shadowBlur = 16;
+              setGlow(ctx, '#38bdf8', 16, !!enemy.isBoss);
               ctx.beginPath();
               ctx.moveTo(tip.x - 10, tip.y - 10);
               ctx.lineTo(tip.x + 10, tip.y + 10);

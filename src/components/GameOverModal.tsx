@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GameEngine } from '../utils/engine';
 import { Character } from '../types';
-import { Trophy, Skull, RotateCcw, Dna, Swords, Flame, Clock, Sparkles, ArrowRight, Unlock, FlaskConical } from 'lucide-react';
+import { Trophy, Skull, RotateCcw, Dna, Swords, Flame, Clock, Sparkles, ArrowRight, Unlock, FlaskConical, ClipboardCopy } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { useLanguage } from '../utils/i18n';
 import { MetaProgressionModal } from './MetaProgressionModal';
@@ -27,6 +27,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   const s = engine.state;
   const { t, lang } = useLanguage();
   const isRu = lang === 'ru';
+  const [reportCopied, setReportCopied] = useState<boolean>(false);
   const [showMetaModal, setShowMetaModal] = useState(false);
 
   return (
@@ -122,7 +123,8 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
                 {isRu ? 'УНИЧТОЖЕНО ВРАГОВ' : 'ENEMIES KILLED'}
               </div>
               <div className="font-mono font-bold text-sm text-red-400">
-                {s.kills} {s.maxKillStreak > 5 ? `(Серия x${s.maxKillStreak})` : ''}
+                {s.kills}{' '}
+                {s.maxKillStreak > 5 ? `(${isRu ? 'Серия' : 'Streak'} x${s.maxKillStreak})` : ''}
               </div>
             </div>
           </div>
@@ -134,7 +136,18 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
                 {isRu ? 'СОБРАНО ДНК' : 'DNA EXTRACTED'}
               </div>
               <div className="font-mono font-bold text-sm text-red-400">
-                {s.totalDnaCollected} <span className="text-xs text-emerald-400 font-bold">(+{Math.round(s.totalDnaCollected * 0.15)} В НИИ)</span>
+                {s.totalDnaCollected}{' '}
+                <span className="text-xs text-emerald-400 font-bold">
+                  {/*
+                    * The real banked figure, which is not 15% flat.
+                    *
+                    * Clearance multiplies the reward by up to three, and this line was still
+                    * printing the pre-clearance formula - so a player on a high clearance was
+                    * told they had banked less than they actually had.
+                    */}
+                  (+{Math.round((s.totalDnaCollected * 0.15 + 50) * engine.difficulty.rewardMult)}{' '}
+                  {isRu ? 'В НИИ' : 'banked'})
+                </span>
               </div>
             </div>
           </div>
@@ -207,6 +220,43 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 
         {/* Buttons */}
         <div className="flex flex-col gap-2.5 w-full">
+          {/*
+            * Run report.
+            *
+            * A tester asked whether there were logs he could send. There were not, so every
+            * report arrived as prose and the numbers had to be reconstructed afterwards.
+            * This copies the run - clearance, build, per-wave cost, worst frame - as plain
+            * text, ready to paste into a chat.
+            */}
+          <button
+            id="copy-run-report-btn"
+            onClick={() => {
+              sound.playUiClick();
+              const report = engine.buildRunReport();
+              const done = () => {
+                setReportCopied(true);
+                window.setTimeout(() => setReportCopied(false), 2500);
+              };
+              // The clipboard API is unavailable in some contexts; fall back rather than
+              // leaving the button silently dead.
+              if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(report).then(done).catch(() => {
+                  window.prompt(isRu ? 'Скопируйте отчёт:' : 'Copy the report:', report);
+                });
+              } else {
+                window.prompt(isRu ? 'Скопируйте отчёт:' : 'Copy the report:', report);
+              }
+            }}
+            className="w-full py-2 px-4 rounded-xl bg-neutral-900/80 hover:bg-neutral-800 border border-white/15 hover:border-white/30 text-gray-300 hover:text-white font-mono font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+          >
+            <ClipboardCopy className="w-3.5 h-3.5 text-gray-400" />
+            <span>
+              {reportCopied
+                ? (isRu ? 'ОТЧЁТ СКОПИРОВАН' : 'REPORT COPIED')
+                : (isRu ? 'СКОПИРОВАТЬ ОТЧЁТ О ЗАБЕГЕ' : 'COPY RUN REPORT')}
+            </span>
+          </button>
+
           {/* Institute Research Quick Access */}
           <button
             id="game-over-institute-btn"

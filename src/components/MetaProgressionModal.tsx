@@ -262,7 +262,7 @@ export const MetaProgressionModal: React.FC<MetaProgressionModalProps> = ({ onCl
                         ) : (
                           <>
                             <Coins className="w-3.5 h-3.5 text-amber-400" />
-                            <span>{cost} ДНК</span>
+                            <span>{cost} {isRu ? 'ДНК' : 'DNA'}</span>
                           </>
                         )}
                       </button>

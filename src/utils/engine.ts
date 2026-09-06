@@ -30,6 +30,15 @@ import {
 import { sound } from './sound';
 import { getActiveDifficulty, recordDifficultyCleared, DifficultyLevel } from './difficulty';
 import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG, FINAL_CAMPAIGN_WAVE } from '../data/gameData';
+
+/**
+ * Version stamped onto a run report.
+ *
+ * Hand-maintained rather than imported from package.json, which the browser bundle does not
+ * carry. A report from an unknown build is far less useful than one that names it, so this
+ * is bumped with each release.
+ */
+export const RUN_REPORT_VERSION = '1.3.1';
 import { PSYCHIC_MUTATION_TREES, PsychicMutationNode } from '../data/psychicMutationsData';
 import { getLanguage } from './i18n';
 import { getAppliedMetaStats, recordRunCompleted, checkAchievements, recordAchievementProgress } from './metaProgression';
@@ -1330,6 +1339,31 @@ export class GameEngine {
   }
 
   public startWave(waveNum: number) {
+    /*
+     * Close the previous wave's line in the run report before the counters move on.
+     *
+     * One line per wave is the whole format: what it cost, what it killed, what it dealt.
+     * Enough for a tester to paste the shape of a run into a chat without anyone having to
+     * reconstruct it from prose afterwards.
+     */
+    if (this.state.wave > 0 && this.waveMark.hp > 0) {
+      const ruLog = getLanguage() === 'ru';
+      const cost = Math.max(0, this.waveMark.hp - this.state.player.hp);
+      this.runLog.push(
+        `  w${String(this.state.wave).padStart(2)}: ` +
+        `${ruLog ? 'убито' : 'kills'} ${this.state.kills - this.waveMark.kills}, ` +
+        `${ruLog ? 'потеряно ОЗ' : 'HP lost'} ${Math.round(cost)}, ` +
+        `${ruLog ? 'урона' : 'damage'} ${Math.round(this.state.damageDealt - this.waveMark.damage)}`
+      );
+    }
+    this.waveMark = {
+      // Health as the wave actually starts, not the maximum: a player entering a wave hurt
+      // should not have that shortfall counted as damage the wave did to them.
+      hp: this.state.player.hp,
+      kills: this.state.kills,
+      damage: this.state.damageDealt,
+    };
+
     this.resetInput();
     let duration = 35;
     const authoredWave = WAVES.find((w) => w.waveNumber === waveNum);
@@ -3070,6 +3104,69 @@ export class GameEngine {
 
   /** Seconds until the moving and covering halves of the SAT line swap roles. */
   private boundingTimer = 2.5;
+
+  /*
+   * Run log.
+   *
+   * A tester asked whether there were logs to send. There were not, and every report so far
+   * has arrived as prose - "everything dropped to one frame", "the boss one-shot me" - which
+   * says what happened but leaves the numbers to be reconstructed later. This records them
+   * as they happen, small enough to paste into a chat window.
+   */
+  readonly runLog: string[] = [];
+  private waveMark = { hp: 0, kills: 0, damage: 0 };
+  /** Worst single frame this run, in milliseconds, fed in by the renderer. */
+  worstFrameMs = 0;
+  private worstFrameWave = 0;
+
+  /** Called by the renderer once a frame with the real elapsed time. */
+  public reportFrameTime(ms: number) {
+    if (ms > this.worstFrameMs) {
+      this.worstFrameMs = ms;
+      this.worstFrameWave = this.state.wave;
+    }
+    if (ms > 120 && this.runLog.length < 400) {
+      this.runLog.push(
+        `  ! wave ${this.state.wave}: frame took ${Math.round(ms)}ms ` +
+        `(enemies ${this.state.enemies.length}, particles ${this.state.particles.length})`
+      );
+    }
+  }
+
+  /** Notes something worth explaining later. Kept short; the log is read by a person. */
+  public logEvent(text: string) {
+    if (this.runLog.length < 400) this.runLog.push(`  * wave ${this.state.wave}: ${text}`);
+  }
+
+  /**
+   * The report itself, as plain text.
+   *
+   * Written in the player's language because the person pasting it reads it too, and a
+   * report nobody understands does not get sent.
+   */
+  public buildRunReport(): string {
+    const ru = getLanguage() === 'ru';
+    const d = this.difficulty;
+    const head = [
+      ru ? '=== ОТЧЁТ О ЗАБЕГЕ ===' : '=== RUN REPORT ===',
+      `${ru ? 'Версия' : 'Version'}: ${RUN_REPORT_VERSION}`,
+      `${ru ? 'Персонаж' : 'Subject'}: ${this.state.character.name}`,
+      `${ru ? 'Допуск' : 'Clearance'}: ${d.level} (${ru ? d.ru : d.en})`,
+      `${ru ? 'Дошёл до волны' : 'Reached wave'}: ${this.state.wave} / ${FINAL_CAMPAIGN_WAVE}`,
+      `${ru ? 'Убито' : 'Kills'}: ${this.state.kills}`,
+      `${ru ? 'Уровень' : 'Level'}: ${this.state.player.level}`,
+      `${ru ? 'Худший кадр' : 'Worst frame'}: ${Math.round(this.worstFrameMs)}ms ` +
+        `(${ru ? 'волна' : 'wave'} ${this.worstFrameWave})`,
+      `${ru ? 'Оружие' : 'Weapons'}: ` +
+        `${this.state.weapons.map((w) => `${ru ? w.russianName || w.name : w.name} T${w.tier}`).join(', ') || '-'}`,
+      `${ru ? 'Аугменты' : 'Augments'}: ${this.state.passiveItems.length}/${MAX_PASSIVE_ITEMS}`,
+      `${ru ? 'Мутации' : 'Mutations'}: ${this.state.mutationState.unlockedNodeIds.length} ` +
+        `(${ru ? 'очков осталось' : 'points left'}: ${this.state.mutationState.mutationPoints})`,
+      '',
+      ru ? '--- по волнам ---' : '--- per wave ---',
+    ];
+    return head.concat(this.runLog).join('\n');
+  }
 
   /**
    * The clearance level this run is played at.
@@ -7304,8 +7401,25 @@ export class GameEngine {
       : 0;
 
     // Populate Boss Vector Arms (with staggered cadence so all vectors actively duel)
-    const bossSpawnX = this.state.arenaWidth / 2;
-    const bossSpawnY = 70;
+    /*
+     * The boss arrives from one of the four edges, not always the top.
+     *
+     * Every boss in the game entered at the top edge, dead centre, which made the most
+     * dramatic moment of a wave the most predictable one. The edge is drawn from the wave
+     * number and the boss type rather than at random, so a given fight is still consistent
+     * for a player learning it, but the campaign no longer plays the same entrance twenty
+     * times.
+     */
+    const bossEdge = (this.state.wave * 3 + type.length) % 4;
+    const bossMargin = 90;
+    const bossSpawnX =
+      bossEdge === 2 ? bossMargin
+      : bossEdge === 3 ? this.state.arenaWidth - bossMargin
+      : this.state.arenaWidth / 2;
+    const bossSpawnY =
+      bossEdge === 0 ? bossMargin
+      : bossEdge === 1 ? this.state.arenaHeight - bossMargin
+      : this.state.arenaHeight / 2;
     const vectorArms: BossVectorArm[] = [];
     for (let i = 0; i < spec.vectorCount; i++) {
       const angle = (i / Math.max(1, spec.vectorCount)) * Math.PI * 2;
@@ -10289,7 +10403,18 @@ export class GameEngine {
     const stanceArmor =
       this.state.character.id === 'nana' && this.state.characterResource.isActive ? 8 : 0;
     const armorReduction = 100 / (100 + (this.state.stats.armor + stanceArmor) * 5);
-    const finalDamage = Math.max(1, Math.round(amount * armorReduction));
+    let finalDamage = Math.max(1, Math.round(amount * armorReduction));
+
+    /*
+     * A ceiling on one blow.
+     *
+     * Boss damage scales with the wave; the player's health roughly doubles across a run.
+     * By wave 19 that gap is wide enough for a single connection to exceed the entire bar,
+     * which is what "the boss one-shot me" was. Capping a hit at 45% of maximum keeps a
+     * boss frightening - two in a row still kills - without ending a twenty-minute run on
+     * one frame the player never saw coming.
+     */
+    finalDamage = Math.min(finalDamage, Math.ceil(this.state.player.maxHp * 0.45));
 
     this.state.player.hp -= finalDamage;
 
@@ -10578,6 +10703,26 @@ export class GameEngine {
       if (num.opacity <= 0) {
         this.state.damageNumbers.splice(i, 1);
       }
+    }
+
+    /*
+     * Ceilings on the two lists nothing else bounds.
+     *
+     * Reported from play: pressing the ultimate on a late wave froze the game and the run
+     * ended there. Every kill throws twelve blood particles, an ultimate kills dozens of
+     * enemies on one frame, and neither list had any limit - so a single button press could
+     * put well over a thousand particles on screen, each of them then drawn with a shadow.
+     *
+     * Dropping the oldest is the right end to trim: the newest particles are the ones
+     * explaining what just happened.
+     */
+    const MAX_PARTICLES = 900;
+    if (this.state.particles.length > MAX_PARTICLES) {
+      this.state.particles.splice(0, this.state.particles.length - MAX_PARTICLES);
+    }
+    const MAX_DAMAGE_NUMBERS = 120;
+    if (this.state.damageNumbers.length > MAX_DAMAGE_NUMBERS) {
+      this.state.damageNumbers.splice(0, this.state.damageNumbers.length - MAX_DAMAGE_NUMBERS);
     }
 
     // Particles
