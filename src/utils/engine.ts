@@ -3878,6 +3878,20 @@ export class GameEngine {
                   vy: -35,
                 });
 
+                /*
+                 * A man killed through his own shield is still killed.
+                 *
+                 * This path subtracts health directly and returns, so it never reached the
+                 * death handler: a shield trooper finished off by bleed-through sat in the
+                 * enemy list at negative health, counted as no kill, dropped no DNA and
+                 * advanced no achievement until something else happened to hit him. Caught
+                 * by the invariant probe as "dead enemy still in the list".
+                 */
+                if (bestTarget.hp <= 0) {
+                  this.killEnemy(bestTarget);
+                  return;
+                }
+
                 if (bestTarget.shield <= 0) {
                   sound.playGuardBreak();
                   bestTarget.isStunned = true;

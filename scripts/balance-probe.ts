@@ -174,6 +174,15 @@ for (let wave = 1; wave <= LAST_WAVE; wave++) {
   const maxHp = engine.state.player.maxHp;
   const killsBefore = engine.state.kills;
 
+  /*
+   * Note on the loop below.
+   *
+   * It is bounded by wave duration, so with no WAVE_CAP it stops on the frame the boss
+   * spawns and the boss fight is never simulated. That is deliberate for balance work -
+   * comparing wave pressure without a variable-length boss fight in the middle - but it
+   * means nothing here measures the duel, posture or guard-break systems. Use
+   * scripts/invariant-probe.ts for anything that involves a boss.
+   */
   let elapsed = 0;
   let damageTaken = 0;
   let lowestHp = engine.state.player.hp;
