@@ -18,6 +18,7 @@ win-unpacked/
 CLAUDE.md
 .agents/
 AGENTS.md
+.codex/
 
 # Local agent bridge: the path points at this machine, so it is not shared.
 .mcp.json
