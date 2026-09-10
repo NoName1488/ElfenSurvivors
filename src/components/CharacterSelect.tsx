@@ -3,6 +3,7 @@ import { Character } from '../types';
 import { CHARACTERS, WEAPONS_DATABASE } from '../data/gameData';
 import { sound } from '../utils/sound';
 import { getTotalWins, isCharacterUnlocked, CHARACTER_UNLOCK_REQUIREMENTS, trialDescription, trialProgressLabel } from '../utils/progression';
+import { characterName, specialAbilityName, specialAbilityDesc } from '../utils/characterText';
 import {
   DIFFICULTY_LEVELS,
   getSelectedDifficulty,
@@ -336,7 +337,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                   className="w-12 h-12 rounded-lg flex items-center justify-center font-cinzel font-black text-xl text-white shadow-lg border border-white/10 shrink-0 relative overflow-hidden"
                   style={{ backgroundColor: char.avatarColor }}
                 >
-                  <span>{char.name[0]}</span>
+                  <span>{characterName(char, isRu)[0]}</span>
                   {!isUnlocked && (
                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-20">
                       <Lock className="w-5 h-5 text-amber-400" />
@@ -449,11 +450,11 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
               <div className="text-xs uppercase tracking-[0.2em] text-amber-400 font-bold flex items-center gap-1.5">
                 <Zap className="w-3.5 h-3.5 text-amber-400" />
                 <span>
-                  {t('specialAbility')}: {selectedChar.specialAbilityName}
+                  {t('specialAbility')}: {specialAbilityName(selectedChar, isRu)}
                 </span>
               </div>
               <div className="text-xs text-gray-300 font-mono leading-relaxed mt-1">
-                {selectedChar.specialAbilityDesc}
+                {specialAbilityDesc(selectedChar, isRu)}
               </div>
             </div>
           </div>

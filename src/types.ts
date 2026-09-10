@@ -198,6 +198,8 @@ export interface PlayerStats {
 export interface CharacterMechanic {
   type: 'bloodlust' | 'split_psyche' | 'vector_shield' | 'swarm_26' | 'sat_adrenaline' | 'restrained_fury' | 'kurama_penance' | 'gravitational_core';
   resourceName: string;
+  /* English name for the gauge. Without it the HUD printed the Russian one. */
+  resourceNameEn?: string;
   resourceMax: number;
   description: string;
   passiveBonusText: string;
@@ -222,9 +224,14 @@ export interface Character {
   unlocked: boolean;
   specialAbilityName: string;
   specialAbilityDesc: string;
+  /* English siblings. The plain fields above hold Russian; see utils/characterText.ts. */
+  specialAbilityNameEn?: string;
+  specialAbilityDescEn?: string;
   specialAbilityCooldown: number; // seconds
   mobilitySkillName?: string;
   mobilitySkillDesc?: string;
+  mobilitySkillNameEn?: string;
+  mobilitySkillDescEn?: string;
   mobilitySkillCooldown?: number;
   mechanic: CharacterMechanic;
   isSecret?: boolean;

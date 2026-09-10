@@ -30,6 +30,7 @@ import {
 import { sound } from './sound';
 import { getActiveDifficulty, recordDifficultyCleared, getClearedDifficulties, DifficultyLevel } from './difficulty';
 import { recordCharacterTrials } from './progression';
+import { characterName } from './characterText';
 import { recordRunStats } from './stats';
 import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG, FINAL_CAMPAIGN_WAVE } from '../data/gameData';
 
@@ -764,7 +765,8 @@ export class GameEngine {
       crisisWarningTimer: 0,
       crisisTriggeredInWave: false,
       characterResource: {
-        name: character.mechanic.resourceName,
+        name: loc(character.mechanic.resourceName,
+          character.mechanic.resourceNameEn || character.mechanic.resourceName),
         current: 0,
         max: character.mechanic.resourceMax,
         isActive: false,
@@ -3318,7 +3320,7 @@ export class GameEngine {
     const head = [
       ru ? '=== ОТЧЁТ О ЗАБЕГЕ ===' : '=== RUN REPORT ===',
       `${ru ? 'Версия' : 'Version'}: ${RUN_REPORT_VERSION}`,
-      `${ru ? 'Персонаж' : 'Subject'}: ${this.state.character.name}`,
+      `${ru ? 'Персонаж' : 'Subject'}: ${characterName(this.state.character, ru)}`,
       `${ru ? 'Допуск' : 'Clearance'}: ${d.level} (${ru ? d.ru : d.en})`,
       `${ru ? 'Дошёл до волны' : 'Reached wave'}: ${this.state.wave} / ${FINAL_CAMPAIGN_WAVE}`,
       `${ru ? 'Убито' : 'Kills'}: ${this.state.kills}`,

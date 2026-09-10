@@ -7,7 +7,7 @@ import { useLanguage } from '../utils/i18n';
 import { MetaProgressionModal } from './MetaProgressionModal';
 import { FINAL_CAMPAIGN_WAVE } from '../data/gameData';
 import { getDifficulty } from '../utils/difficulty';
-import { characterDisplayName } from '../utils/progression';
+import { characterName } from '../utils/characterText';
 
 interface GameOverModalProps {
   engine: GameEngine;
@@ -38,7 +38,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         isVictory ? 'border-amber-500/80 shadow-[0_0_40px_rgba(245,158,11,0.2)]' : 'border-red-600/60 shadow-[0_0_30px_rgba(220,38,38,0.2)]'
       }`}>
         {engine.trialUnlocks.length > 0 && <p className="text-amber-300 text-base" role="status">
-          {isRu ? 'Открыты персонажи: ' : 'Characters unlocked: '}{engine.trialUnlocks.map(c => characterDisplayName(c, isRu)).join(', ')}
+          {isRu ? 'Открыты персонажи: ' : 'Characters unlocked: '}{engine.trialUnlocks.map(c => characterName(c, isRu)).join(', ')}
         </p>}
         {engine.firstClearSeal !== null && <p className="text-base" style={{ color: getDifficulty(engine.firstClearSeal).color }}>
           {isRu ? 'Первая победа! Открыто оформление досье: ' : 'First clear! Dossier decoration unlocked: '}
@@ -86,7 +86,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
               }`}
               style={{ backgroundColor: newlyUnlockedCharacter.avatarColor }}
             >
-              {newlyUnlockedCharacter.name[0]}
+              {characterName(newlyUnlockedCharacter, isRu)[0]}
             </div>
             <div className="flex-1">
               <div className={`text-xs font-mono uppercase tracking-[0.2em] font-bold flex items-center gap-1.5 ${

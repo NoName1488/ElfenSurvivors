@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GameEngine } from '../utils/engine';
+import { characterName, specialAbilityName, specialAbilityDesc, mobilitySkillName, mobilitySkillDesc } from '../utils/characterText';
 import { Shield, Zap, Sparkles, Heart, Clock, Dna, Swords, Pause, Play, Crosshair, Flame, Activity, Sparkle, AlertTriangle, Music, Skull, MapPin, Wind } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { ItemSynergy, ArenaType, WeaponEvolution, PassiveItem } from '../types';
@@ -276,8 +277,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         dashCharges: s.player.dashChargesLeft ?? 1,
         maxDashCharges: 1 + (s.stats.dashCharges || 0),
         maxMobilityCooldown: s.character.mobilitySkillCooldown || 2.8,
-        mobilityName: s.character.mobilitySkillName || (isRu ? 'Рывок' : 'Dash'),
-        mobilityDesc: s.character.mobilitySkillDesc || '',
+        mobilityName: mobilitySkillName(s.character, isRu) || (isRu ? 'Рывок' : 'Dash'),
+        mobilityDesc: mobilitySkillDesc(s.character, isRu),
         activeBoss: s.activeBoss ? {
           name: s.activeBoss.name,
           hp: Math.max(0, Math.round(s.activeBoss.hp)),
@@ -512,7 +513,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           <div className="flex flex-col">
             <span className="text-2xs uppercase tracking-[0.2em] text-red-500 font-bold">{isRu ? 'СУБЪЕКТ' : 'SUBJECT'}</span>
             <div className="text-xs md:text-sm font-cinzel font-bold text-white tracking-wider flex items-center gap-1.5">
-              <span>{engine.state.character.name}</span>
+              <span>{characterName(engine.state.character, isRu)}</span>
               <span className="text-2xs font-mono text-red-500 font-bold">
                 [{
                   engine.state.character.kind === 'human_cyborg' ? (isRu ? 'КИБОРГ SAT' : 'SAT CYBORG')
@@ -1117,7 +1118,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               id="special-ability-btn"
               onClick={() => engine.triggerSpecialAbility()}
               disabled={hudState.specialCooldown > 0}
-              title={`${engine.state.character.specialAbilityName} - ${engine.state.character.specialAbilityDesc}`}
+              title={`${specialAbilityName(engine.state.character, isRu)} - ${specialAbilityDesc(engine.state.character, isRu)}`}
               className={`relative overflow-hidden px-4 py-1.5 rounded-lg border text-xs uppercase tracking-wider font-mono font-bold transition-all cursor-pointer flex items-center gap-2 ${
                 hudState.specialCooldown <= 0
                   ? 'border-red-500 bg-red-600 text-white shadow-[0_0_15px_rgba(220,38,38,0.6)] animate-vector-pulse hover:bg-red-500'
@@ -1126,7 +1127,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
             >
               <Zap className="w-3.5 h-3.5 shrink-0" />
               <span className="whitespace-nowrap truncate max-w-[13rem] xl:max-w-none">
-                [{isRu ? 'ПРОБЕЛ' : 'SPACE'}] {engine.state.character.specialAbilityName}
+                [{isRu ? 'ПРОБЕЛ' : 'SPACE'}] {specialAbilityName(engine.state.character, isRu)}
               </span>
               <span className="w-9 text-right tabular-nums text-red-200 shrink-0">
                 {hudState.specialCooldown > 0 ? `${Math.ceil(hudState.specialCooldown)}s` : ''}

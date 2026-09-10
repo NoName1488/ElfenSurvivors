@@ -9,7 +9,7 @@ import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
 import { ItemIcon } from './ItemIcon';
 import { exchange, tradeQuote, lostTradeBonuses, saleValue } from '../utils/shopTrade';
-import { characterDisplayName } from '../utils/progression';
+import { characterName } from '../utils/characterText';
 import {
   Dna,
   RefreshCw,
@@ -790,7 +790,7 @@ export const LabShop: React.FC<LabShopProps> = ({
   return (
     <div id="lab-shop-screen" className="w-full h-full p-4 md:p-6 flex flex-col justify-between overflow-y-auto z-10 select-none">
       {announcedUnlocks.length > 0 && <p role="status" className="p-3 rounded-lg border border-amber-500 text-amber-300 text-base">
-        {isRu ? 'Открыты персонажи: ' : 'Characters unlocked: '}{announcedUnlocks.map(c => characterDisplayName(c, isRu)).join(', ')}
+        {isRu ? 'Открыты персонажи: ' : 'Characters unlocked: '}{announcedUnlocks.map(c => characterName(c, isRu)).join(', ')}
       </p>}
       {tradeOffer && (() => {
         const incoming = tradeOffer.type === 'weapon'
@@ -1024,7 +1024,7 @@ export const LabShop: React.FC<LabShopProps> = ({
               className="w-12 h-12 rounded-lg flex items-center justify-center font-cinzel font-black text-xl text-white shadow-lg border border-white/10 shrink-0"
               style={{ backgroundColor: engine.state.character.avatarColor }}
             >
-              {engine.state.character.name[0]}
+              {characterName(engine.state.character, isRu)[0]}
             </div>
             <div>
               <div className="font-cinzel font-bold text-white text-base">

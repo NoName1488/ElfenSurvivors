@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { specialAbilityName, specialAbilityDesc, mobilitySkillName, mobilitySkillDesc } from '../utils/characterText';
 import { Character } from '../types';
 import { useLanguage } from '../utils/i18n';
 import { sound } from '../utils/sound';
@@ -77,15 +78,15 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ character, onC
     {
       icon: <Wind className="w-5 h-5 text-sky-400" />,
       key: 'SHIFT',
-      title: character.mobilitySkillName || (isRu ? 'Рывок' : 'Dash'),
-      body: character.mobilitySkillDesc || (isRu ? 'Быстрый уход с линии удара.' : 'A fast step off the line of attack.'),
+      title: mobilitySkillName(character, isRu) || (isRu ? 'Рывок' : 'Dash'),
+      body: mobilitySkillDesc(character, isRu) || (isRu ? 'Быстрый уход с линии удара.' : 'A fast step off the line of attack.'),
       accent: 'border-sky-500/40 bg-sky-950/20',
     },
     {
       icon: <Zap className="w-5 h-5 text-amber-400" />,
       key: isRu ? 'ПРОБЕЛ' : 'SPACE',
-      title: character.specialAbilityName,
-      body: character.specialAbilityDesc,
+      title: specialAbilityName(character, isRu),
+      body: specialAbilityDesc(character, isRu),
       accent: 'border-amber-500/40 bg-amber-950/20',
     },
     {
