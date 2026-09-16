@@ -76,6 +76,8 @@ export interface Weapon {
   rarity: WeaponRarity;
   tier: number; // 1 to 4 (Common, Rare, Epic, Legendary fusion), 5 for Catalytic Evolution
   description: string;
+  /* English text; `description` holds the Russian. Read through itemDescription(). */
+  descriptionEn?: string;
   damage: number;
   cooldown: number; // in seconds
   range: number; // in pixels
@@ -102,6 +104,7 @@ export interface PassiveItem {
   rarity: WeaponRarity;
   tier?: number; // 1 to 4
   description: string;
+  descriptionEn?: string;
   cost: number;
   icon: string;
   stats: Partial<PlayerStats>;
@@ -140,6 +143,7 @@ export interface ItemSynergy {
   name: string;
   russianName: string;
   description: string;
+  descriptionEn?: string;
   icon: string;
   color: string;
   requiredItems?: string[];
@@ -202,7 +206,10 @@ export interface CharacterMechanic {
   resourceNameEn?: string;
   resourceMax: number;
   description: string;
+  /* English mechanic text. Without these the English build printed the Russian description. */
+  descriptionEn?: string;
   passiveBonusText: string;
+  passiveBonusTextEn?: string;
 }
 
 export interface Character {
@@ -219,6 +226,8 @@ export interface Character {
   hornColor?: string; // Diclonius only
   accentColor: string;
   lore: string;
+  /* The dossier paragraph in English; `lore` itself holds the Russian. */
+  loreEn?: string;
   baseStats: PlayerStats;
   startingWeaponId: WeaponType;
   unlocked: boolean;

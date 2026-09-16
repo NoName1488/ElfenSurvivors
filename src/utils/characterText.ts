@@ -38,3 +38,39 @@ export function mobilitySkillName(char: Character, isRu: boolean): string {
 export function mobilitySkillDesc(char: Character, isRu: boolean): string {
   return pick(char.mobilitySkillDesc, char.mobilitySkillDescEn, isRu);
 }
+
+/**
+ * The dossier paragraph. `lore` holds the Russian, `loreEn` the English.
+ *
+ * The roster stores one language per field and the panel branched on isRu with nothing to
+ * branch to, so an English player read Lucy's biography in Russian.
+ */
+export function characterLore(char: Character, isRu: boolean): string {
+  return pick(char.lore, char.loreEn, isRu);
+}
+
+export function mechanicName(char: Character, isRu: boolean): string {
+  return pick(char.mechanic.resourceName, char.mechanic.resourceNameEn, isRu);
+}
+
+export function mechanicDesc(char: Character, isRu: boolean): string {
+  return pick(char.mechanic.description, char.mechanic.descriptionEn, isRu);
+}
+
+export function mechanicBonus(char: Character, isRu: boolean): string {
+  return pick(char.mechanic.passiveBonusText, char.mechanic.passiveBonusTextEn, isRu);
+}
+
+/**
+ * The description of a weapon, augment or synergy.
+ *
+ * Same split as everywhere else in the roster: `description` is the Russian, `descriptionEn`
+ * the English. The shop and the tooltips printed the raw field, so an English player read
+ * every item in Russian.
+ */
+export function itemDescription(
+  item: { description?: string; descriptionEn?: string },
+  isRu: boolean
+): string {
+  return pick(item.description, item.descriptionEn, isRu);
+}

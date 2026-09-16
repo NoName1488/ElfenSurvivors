@@ -3,7 +3,16 @@ import { Character } from '../types';
 import { CHARACTERS, WEAPONS_DATABASE } from '../data/gameData';
 import { sound } from '../utils/sound';
 import { getTotalWins, isCharacterUnlocked, CHARACTER_UNLOCK_REQUIREMENTS, trialDescription, trialProgressLabel } from '../utils/progression';
-import { characterName, specialAbilityName, specialAbilityDesc } from '../utils/characterText';
+import {
+  characterName,
+  characterLore,
+  mechanicName,
+  mechanicDesc,
+  mechanicBonus,
+  specialAbilityName,
+  specialAbilityDesc,
+  itemDescription,
+} from '../utils/characterText';
 import {
   DIFFICULTY_LEVELS,
   getSelectedDifficulty,
@@ -11,7 +20,7 @@ import {
   getMaxUnlockedDifficulty,
   getClearedDifficulties, getDossierSeal, setDossierSeal,
 } from '../utils/difficulty';
-import { useLanguage } from '../utils/i18n';
+import { useLanguage, pluralRu, pluralEn } from '../utils/i18n';
 import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
 import {
@@ -298,7 +307,10 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
               {isRu ? 'СПИСОК ОБЪЕКТОВ' : 'SUBJECT DIRECTORY'}
             </span>
             <span className="text-xs font-mono text-gray-500">
-              {CHARACTERS.length} {isRu ? 'ОБЪЕКТА ДОСТУПНО' : 'SUBJECTS REGISTERED'}
+              {CHARACTERS.length}{' '}
+              {isRu
+                ? pluralRu(CHARACTERS.length, 'ОБЪЕКТ ДОСТУПЕН', 'ОБЪЕКТА ДОСТУПНЫ', 'ОБЪЕКТОВ ДОСТУПНО')
+                : pluralEn(CHARACTERS.length, 'SUBJECT REGISTERED', 'SUBJECTS REGISTERED')}
             </span>
           </div>
 
@@ -379,7 +391,10 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                       </span>
                     ) : (
                       <span className="text-rose-400 flex items-center gap-1">
-                        <Layers className="w-3 h-3" /> {char.baseStats.vectorCount} {isRu ? 'векторов' : 'vectors'}
+                        <Layers className="w-3 h-3" /> {char.baseStats.vectorCount}{' '}
+                        {isRu
+                          ? pluralRu(char.baseStats.vectorCount, 'вектор', 'вектора', 'векторов')
+                          : pluralEn(char.baseStats.vectorCount, 'vector', 'vectors')}
                       </span>
                     )}
                     <span className="text-gray-600">•</span>
@@ -422,7 +437,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                 {isRu && selectedChar.russianName ? selectedChar.russianName : selectedChar.name}
               </h2>
               <p className="text-xs text-gray-300 font-mono mt-2 leading-relaxed">
-                {isRu && selectedChar.russianLore ? selectedChar.russianLore : selectedChar.lore}
+                {characterLore(selectedChar, isRu)}
               </p>
             </div>
           </div>
@@ -434,14 +449,14 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
               <div className="text-xs uppercase tracking-[0.2em] text-sky-400 font-bold flex items-center gap-1.5">
                 <Activity className="w-3.5 h-3.5" />
                 <span>
-                  {t('uniqueMechanic')}: {selectedChar.mechanic.resourceName}
+                  {t('uniqueMechanic')}: {mechanicName(selectedChar, isRu)}
                 </span>
               </div>
               <div className="text-xs text-gray-300 font-mono leading-relaxed mt-1">
-                {selectedChar.mechanic.description}
+                {mechanicDesc(selectedChar, isRu)}
               </div>
               <div className="text-xs font-mono text-emerald-400 mt-1">
-                {selectedChar.mechanic.passiveBonusText}
+                {mechanicBonus(selectedChar, isRu)}
               </div>
             </div>
 
@@ -483,7 +498,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                   {isRu ? starterWeapon.russianName : starterWeapon.name}
                 </div>
                 <div className="text-xs font-mono text-gray-400 mt-0.5">
-                  {starterWeapon.description}
+                  {itemDescription(starterWeapon, isRu)}
                 </div>
               </div>
             </div>
@@ -510,7 +525,9 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
                   {selectedChar.kind === 'human_cyborg' ? (isRu ? 'ТИП ОРУЖИЯ' : 'WEAPON TYPE') : t('vectors')}
                 </div>
                 <div className="text-sky-300 font-bold text-sm mt-0.5">
-                  {selectedChar.kind === 'human_cyborg' ? (isRu ? 'Огнестрел' : 'Firearms') : `${selectedChar.baseStats.vectorCount} pcs`}
+                  {selectedChar.kind === 'human_cyborg'
+                    ? (isRu ? 'Огнестрел' : 'Firearms')
+                    : `${selectedChar.baseStats.vectorCount} ${isRu ? 'шт' : 'pcs'}`}
                 </div>
               </div>
               <div className="glass-panel p-2.5 rounded-lg border-white/5">

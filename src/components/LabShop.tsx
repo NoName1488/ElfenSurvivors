@@ -9,7 +9,7 @@ import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
 import { ItemIcon } from './ItemIcon';
 import { exchange, tradeQuote, lostTradeBonuses, saleValue } from '../utils/shopTrade';
-import { characterName } from '../utils/characterText';
+import { characterName, itemDescription } from '../utils/characterText';
 import {
   Dna,
   RefreshCw,
@@ -1188,7 +1188,7 @@ export const LabShop: React.FC<LabShopProps> = ({
                     {/* Evolution Status Badge */}
                     {isEvo && (
                       <div className="text-xs font-sans text-amber-200 bg-black/40 p-1.5 rounded border border-amber-500/20 leading-tight">
-                        ✨ {isRu ? (w.description || 'Ультимативная качественная трансформация атаки!') : w.description}
+                        ✨ {itemDescription(w, isRu) || (isRu ? 'Ультимативная качественная трансформация атаки!' : 'The ultimate qualitative transformation of the attack.')}
                       </div>
                     )}
 
@@ -1229,7 +1229,7 @@ export const LabShop: React.FC<LabShopProps> = ({
                   <div
                     key={idx}
                     className="px-2 py-1 rounded text-xs font-mono bg-neutral-900/90 border border-white/10 text-gray-300 flex items-center gap-1.5 hover:border-white/30 transition-all cursor-default"
-                    title={`${isRu ? p.russianName : p.name} (T${p.tier || 1})\n${isRu && p.description ? p.description : p.description}`}
+                    title={`${isRu ? p.russianName : p.name} (T${p.tier || 1})\n${itemDescription(p, isRu)}`}
                   >
                     <ItemIcon
                       iconName={p.icon}
@@ -1388,8 +1388,8 @@ export const LabShop: React.FC<LabShopProps> = ({
                 : (isRu ? item.passiveData!.russianName : item.passiveData!.name);
 
               const desc = isWeapon
-                ? WEAPONS_DATABASE[item.weaponKey!].description
-                : item.passiveData!.description;
+                ? itemDescription(WEAPONS_DATABASE[item.weaponKey!], isRu)
+                : itemDescription(item.passiveData!, isRu);
 
               const relatedSynergies = ITEM_SYNERGIES.filter((s) => {
                 if (!item.passiveData) return false;
@@ -1624,7 +1624,7 @@ export const LabShop: React.FC<LabShopProps> = ({
                       <div className="font-cinzel font-bold text-gray-200">
                         {isRu ? syn.russianName : syn.name}
                       </div>
-                      <div className="text-xs text-gray-400 mt-0.5">{syn.description}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">{itemDescription(syn, isRu)}</div>
                     </div>
                     <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${isActive ? 'bg-amber-500 text-black' : 'text-gray-600'}`}>
                       {isActive ? t('active') : t('incomplete')}

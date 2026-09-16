@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Activity, Clock, Skull, Crosshair, Dna, Trophy, Shield, Flame } from 'lucide-react';
 import { CHARACTERS } from '../data/gameData';
-import { useLanguage } from '../utils/i18n';
+import { useLanguage, pluralRu, pluralEn } from '../utils/i18n';
 import { sound } from '../utils/sound';
 import { getLifetimeStats, formatPlaytime, favouriteCharacterId } from '../utils/stats';
 
@@ -44,7 +44,9 @@ export const StatsModal: React.FC<StatsModalProps> = ({ onClose }) => {
       icon: <Activity className="w-5 h-5 text-amber-400" />,
       label: isRu ? 'ЗАБЕГОВ' : 'RUNS',
       value: num(stats.runs),
-      note: isRu ? `${num(stats.wins)} побед · ${winRate}%` : `${num(stats.wins)} wins · ${winRate}%`,
+      note: isRu
+        ? `${num(stats.wins)} ${pluralRu(stats.wins, 'победа', 'победы', 'побед')} · ${winRate}%`
+        : `${num(stats.wins)} ${pluralEn(stats.wins, 'win', 'wins')} · ${winRate}%`,
     },
     {
       icon: <Trophy className="w-5 h-5 text-yellow-400" />,
@@ -142,7 +144,9 @@ export const StatsModal: React.FC<StatsModalProps> = ({ onClose }) => {
                   <div className="font-cinzel font-bold text-white">
                     {isRu && favourite.russianName ? favourite.russianName : favourite.name}
                     <span className="ml-2 font-mono text-xs font-normal text-gray-400">
-                      {isRu ? `${num(favouriteRuns)} забегов` : `${num(favouriteRuns)} runs`}
+                      {isRu
+                        ? `${num(favouriteRuns)} ${pluralRu(favouriteRuns, 'забег', 'забега', 'забегов')}`
+                        : `${num(favouriteRuns)} ${pluralEn(favouriteRuns, 'run', 'runs')}`}
                     </span>
                   </div>
                 </div>

@@ -141,7 +141,7 @@ export const MetaProgressionModal: React.FC<MetaProgressionModalProps> = ({ onCl
               }`}
             >
               <Layers className="w-4 h-4" />
-              <span>{isRu ? 'Постоянные Исследования (Cap 5)' : 'Permanent Research (Cap 5)'}</span>
+              <span>{isRu ? 'Постоянные Исследования (Потолок 5)' : 'Permanent Research (Cap 5)'}</span>
             </button>
 
             <button
@@ -181,7 +181,7 @@ export const MetaProgressionModal: React.FC<MetaProgressionModalProps> = ({ onCl
               <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
               <span>
                 {isRu
-                  ? 'Системный баланс: Все базовые характеристики ограничены жестким потолком (Cap 5), чтобы победа на высоких волнах достигалась за счет синергий и оптимизации билда, а не бесконечного гринда.'
+                  ? 'Системный баланс: Все базовые характеристики ограничены жёстким потолком (5 уровней), чтобы победа на высоких волнах достигалась за счет синергий и оптимизации билда, а не бесконечного гринда.'
                   : 'System Balance: All core upgrades have a strict hard cap (Cap 5). Victory on late waves relies on tactical builds and synergies rather than endless stat-grinding.'}
               </span>
             </div>

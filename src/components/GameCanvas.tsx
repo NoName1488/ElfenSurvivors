@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GameEngine } from '../utils/engine';
-import { characterName, specialAbilityName, specialAbilityDesc, mobilitySkillName, mobilitySkillDesc } from '../utils/characterText';
+import { characterName, specialAbilityName, specialAbilityDesc, mobilitySkillName, mobilitySkillDesc, itemDescription } from '../utils/characterText';
 import { Shield, Zap, Sparkles, Heart, Clock, Dna, Swords, Pause, Play, Crosshair, Flame, Activity, Sparkle, AlertTriangle, Music, Skull, MapPin, Wind } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { ItemSynergy, ArenaType, WeaponEvolution, PassiveItem } from '../types';
@@ -1018,7 +1018,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
               {hudState.passiveItems.slice(0, 6).map((p, idx) => (
                 <div
                   key={idx}
-                  title={`${isRu ? p.russianName : p.name} (T${p.tier || 1})\n${p.description}`}
+                  title={`${isRu ? p.russianName : p.name} (T${p.tier || 1})\n${itemDescription(p, isRu)}`}
                 >
                   <ItemIcon
                     iconName={p.icon}

@@ -430,6 +430,31 @@ export const TRANSLATIONS = {
 
 export type TranslationKey = keyof typeof TRANSLATIONS.ru;
 
+/**
+ * Picks the Russian form of a counted noun.
+ *
+ * Russian agrees the noun with the number in three ways: one vector, two to four vectors in
+ * the genitive singular, five or more in the genitive plural - and the teens take the last
+ * form whatever their final digit is, so 11 and 111 are not treated like 1. A string that
+ * hardcodes one form is wrong for the other two, which is why the subject list read
+ * "3 векторов" and "8 ОБЪЕКТА ДОСТУПНО".
+ *
+ * The forms are passed in rather than derived: Russian declension is not something a
+ * hundred-line helper gets right, and the call site already knows the word.
+ */
+export function pluralRu(n: number, one: string, few: string, many: string): string {
+  const mod10 = Math.abs(n) % 10;
+  const mod100 = Math.abs(n) % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
+/** The English counterpart, so a count of one does not read "1 runs". */
+export function pluralEn(n: number, one: string, many: string): string {
+  return Math.abs(n) === 1 ? one : many;
+}
+
 export function translate(
   key: TranslationKey,
   params?: Record<string, string | number>,

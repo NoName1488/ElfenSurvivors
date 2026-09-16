@@ -50,6 +50,7 @@ const CHECKS = [
   { name: 'behaviour unchanged', ...tsx('scripts/fingerprint.ts', '--check'), fast: true },
   { name: 'text against data', cmd: 'python', args: ['scripts/text-audit.py'], fast: true, audit: true },
   { name: 'language leaks', cmd: 'python', args: ['scripts/lang-leak-audit.py'], fast: true, audit: true },
+  { name: 'menu speaks one language', ...tsx('scripts/ui-language-probe.tsx'), fast: true },
   {
     name: 'invariants (4 waves)',
     ...tsx('scripts/invariant-probe.ts'),
