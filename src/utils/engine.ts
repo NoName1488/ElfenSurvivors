@@ -43,6 +43,7 @@ import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_
  */
 export const RUN_REPORT_VERSION = '1.4.1';
 import { PSYCHIC_MUTATION_TREES, PsychicMutationNode } from '../data/psychicMutationsData';
+import { BOSS_SPECS } from '../data/bossSpecs';
 import { getLanguage } from './i18n';
 import { getAppliedMetaStats, recordRunCompleted, checkAchievements, recordAchievementProgress } from './metaProgression';
 
@@ -7330,263 +7331,7 @@ export class GameEngine {
       waveScaling = 20.08 + (this.state.wave - 20) * 1.6;
     }
 
-    interface BossSpec {
-      name: string;
-      color: string;
-      baseHp: number;
-      baseShield: number;
-      baseDamage: number;
-      speed: number;
-      radius: number;
-      vectorCount: number;
-      vectorReach: number;
-      specialAbility: 'phase_dash' | 'needle_barrage' | 'shockwave' | 'heavy_arsenal';
-      shootCooldown?: number;
-    }
 
-    const BOSS_SPECS: Record<string, BossSpec> = {
-      boss_silpelit_14: {
-        name: 'Силпелит №14 (Беглец)',
-        color: '#f43f5e',
-        baseHp: 2400,
-        baseShield: 800,
-        baseDamage: 22,
-        speed: 105,
-        radius: 26,
-        vectorCount: 4,
-        vectorReach: 150,
-        specialAbility: 'phase_dash',
-      },
-      boss_silpelit_19: {
-        name: 'Силпелит №19 (Охотник)',
-        color: '#ec4899',
-        baseHp: 3200,
-        baseShield: 1100,
-        baseDamage: 25,
-        speed: 108,
-        radius: 26,
-        vectorCount: 6,
-        vectorReach: 165,
-        specialAbility: 'shockwave',
-      },
-      boss_silpelit_22: {
-        name: 'Силпелит №22 (Палач)',
-        color: '#e11d48',
-        baseHp: 4200,
-        baseShield: 1500,
-        baseDamage: 28,
-        speed: 102,
-        radius: 28,
-        vectorCount: 8,
-        vectorReach: 180,
-        specialAbility: 'needle_barrage',
-      },
-      boss_silpelit_27: {
-        name: 'Силпелит №27 (Призрак)',
-        color: '#d946ef',
-        baseHp: 5400,
-        baseShield: 2000,
-        baseDamage: 32,
-        speed: 115,
-        radius: 26,
-        vectorCount: 8,
-        vectorReach: 195,
-        specialAbility: 'phase_dash',
-      },
-      boss_bando: {
-        name: 'Киборг Бандо (Командир SAT)',
-        color: '#0284c7',
-        baseHp: 9200,
-        baseShield: 3400,
-        baseDamage: 44,
-        speed: 95,
-        radius: 32,
-        vectorCount: 0,
-        vectorReach: 0,
-        specialAbility: 'heavy_arsenal',
-        shootCooldown: 1.5,
-      },
-      boss_silpelit_31: {
-        name: 'Силпелит №31 (Игломет)',
-        color: '#c084fc',
-        baseHp: 8200,
-        baseShield: 3200,
-        baseDamage: 40,
-        speed: 102,
-        radius: 28,
-        vectorCount: 12,
-        vectorReach: 215,
-        specialAbility: 'needle_barrage',
-      },
-      boss_arakhaki: {
-        name: 'Тяжёлый мутант вивария',
-        color: '#9a3412',
-        baseHp: 9800,
-        baseShield: 4000,
-        baseDamage: 45,
-        speed: 85,
-        radius: 35,
-        vectorCount: 12,
-        vectorReach: 230,
-        specialAbility: 'shockwave',
-      },
-      boss_silpelit_33: {
-        name: 'Силпелит №33 (Жнец)',
-        color: '#be123c',
-        baseHp: 11800,
-        baseShield: 4800,
-        baseDamage: 48,
-        speed: 112,
-        radius: 28,
-        vectorCount: 14,
-        vectorReach: 250,
-        specialAbility: 'phase_dash',
-      },
-      boss_nana_duty: {
-        name: 'Нана (Протокол Защиты)',
-        color: '#a855f7',
-        baseHp: 13800,
-        baseShield: 5600,
-        baseDamage: 50,
-        speed: 100,
-        radius: 27,
-        vectorCount: 12,
-        vectorReach: 265,
-        specialAbility: 'shockwave',
-      },
-      boss_silpelit_34: {
-        name: 'Силпелит №34 (Златовласка)',
-        color: '#f59e0b',
-        baseHp: 16000,
-        baseShield: 6500,
-        baseDamage: 54,
-        speed: 108,
-        radius: 28,
-        vectorCount: 16,
-        vectorReach: 285,
-        specialAbility: 'needle_barrage',
-      },
-      boss_chimera_apocalypse: {
-        name: 'Химера-Апокалипсис',
-        color: '#881337',
-        baseHp: 19000,
-        baseShield: 7800,
-        baseDamage: 60,
-        speed: 120,
-        radius: 38,
-        vectorCount: 18,
-        vectorReach: 300,
-        specialAbility: 'shockwave',
-      },
-      boss_mariko_unbound: {
-        name: 'Марико №35 (Пробуждение)',
-        color: '#eab308',
-        baseHp: 22500,
-        baseShield: 9000,
-        baseDamage: 66,
-        speed: 135,
-        radius: 28,
-        vectorCount: 26,
-        vectorReach: 330,
-        specialAbility: 'needle_barrage',
-      },
-      boss_lucy_clone_alpha: {
-        name: 'Клон Люси: Альфа',
-        color: '#e11d48',
-        baseHp: 26500,
-        baseShield: 10500,
-        baseDamage: 72,
-        speed: 160,
-        radius: 27,
-        vectorCount: 22,
-        vectorReach: 350,
-        specialAbility: 'phase_dash',
-      },
-      boss_mariko_berserk: {
-        name: 'Марико №35 (Абсолютный Берсерк)',
-        color: '#f59e0b',
-        baseHp: 31000,
-        baseShield: 12500,
-        baseDamage: 80,
-        speed: 145,
-        radius: 30,
-        vectorCount: 26,
-        vectorReach: 370,
-        specialAbility: 'needle_barrage',
-      },
-      boss_kakuzawa: {
-        name: 'Шеф Какудзава: Создатель Расы',
-        color: '#7f1d1d',
-        baseHp: 38000,
-        baseShield: 15000,
-        baseDamage: 90,
-        speed: 135,
-        radius: 35,
-        vectorCount: 34,
-        vectorReach: 400,
-        specialAbility: 'heavy_arsenal',
-      },
-      boss_goliath_mech: {
-        name: 'Штурмовая машина разграждения SAT',
-        color: '#0284c7',
-        baseHp: 44000,
-        baseShield: 18000,
-        baseDamage: 95,
-        speed: 125,
-        radius: 40,
-        vectorCount: 16,
-        vectorReach: 360,
-        specialAbility: 'heavy_arsenal',
-      },
-      boss_silpelit_archon: {
-        name: 'Силпелит №42',
-        color: '#a855f7',
-        baseHp: 52000,
-        baseShield: 22000,
-        baseDamage: 105,
-        speed: 145,
-        radius: 28,
-        vectorCount: 24,
-        vectorReach: 390,
-        specialAbility: 'shockwave',
-      },
-      boss_dual_silpelit_prime: {
-        name: 'Высший Двойной Прайм (Резонанс ДНК)',
-        color: '#f59e0b',
-        baseHp: 62000,
-        baseShield: 26000,
-        baseDamage: 115,
-        speed: 150,
-        radius: 32,
-        vectorCount: 30,
-        vectorReach: 420,
-        specialAbility: 'needle_barrage',
-      },
-      boss_leviathan_gunship: {
-        name: 'Ударный вертолёт SAT',
-        color: '#ef4444',
-        baseHp: 74000,
-        baseShield: 30000,
-        baseDamage: 125,
-        speed: 130,
-        radius: 45,
-        vectorCount: 20,
-        vectorReach: 380,
-        specialAbility: 'heavy_arsenal',
-      },
-      boss_primordial_singularity: {
-        name: 'Первородная Сингулярность Диклониусов',
-        color: '#991b1b',
-        baseHp: 92000,
-        baseShield: 38000,
-        baseDamage: 140,
-        speed: 155,
-        radius: 36,
-        vectorCount: 36,
-        vectorReach: 460,
-        specialAbility: 'heavy_arsenal',
-      },
-    };
 
     const spec = BOSS_SPECS[type] || BOSS_SPECS['boss_silpelit_14'];
     // Clearance applies to the boss on the same terms as everything else it fights beside.
@@ -7701,6 +7446,93 @@ export class GameEngine {
     this.triggerScreenShake(14, 0.6);
   }
 
+  /**
+   * Cooldowns and the reactive projectile parry, for one enemy.
+   *
+   * Lifted out of updateEnemies, which had grown past sixteen hundred lines. It reads
+   * and writes only this enemy and its timers: every continue and break inside belongs
+   * to the projectile or arm loop, never to the loop over enemies, so it cannot change
+   * which units get their turn.
+   */
+  private updateEnemyParry(e: Enemy, dt: number) {
+    // Rate limiter for the boss projectile parry, so a boss swats individual shots
+    // instead of erasing sustained fire.
+    if (e.deflectionCooldown !== undefined && e.deflectionCooldown > 0) {
+      e.deflectionCooldown = Math.max(0, e.deflectionCooldown - dt);
+    }
+    /*
+     * Reactive projectile parry.
+     *
+     * A Diclonius deflects bullets in the source material as a matter of course, and the
+     * player's arms already did it continuously and autonomously. The enemies did not:
+     * their only way to touch a projectile was inside the 'cyclone' attack, which they
+     * pick roughly one time in five, no more than once every few seconds, and which lasts
+     * 1.7s. In practice that meant bosses and hostile Diclonii walked into gunfire without
+     * ever raising an arm, which is what made them read as brainless.
+     *
+     * They now intercept the way the player does - within reach, on a cooldown that
+     * scales with how many arms they have - so shooting one from range is answered rather
+     * than ignored, and a flank or a broken horn is what opens them up.
+     */
+    const parryable =
+      e.vectorArms &&
+      e.vectorArms.length > 0 &&
+      !e.isStunned &&
+      !(e.vectorsDisabledTimer && e.vectorsDisabledTimer > 0);
+
+    if (parryable && (e.parryCooldownTimer || 0) <= 0) {
+      const parryReach = (e.vectorReach || 120) * 1.05;
+      for (const proj of this.state.projectiles) {
+        if (!proj || !proj.isPlayer || proj.isDeflected) continue;
+        // Anti-vector ordnance is not swatted. That is the entire product.
+        if (proj.antiVector) continue;
+        const pd = Math.hypot(proj.x - e.x, proj.y - e.y);
+        if (pd > parryReach) continue;
+
+        // An arm has to be facing the incoming line, so a shot from behind gets through.
+        const incoming = Math.atan2(e.y - proj.y, e.x - proj.x);
+        let covered = false;
+        for (const bArm of e.vectorArms) {
+          let diff = Math.abs(bArm.currentAngle - (incoming + Math.PI));
+          while (diff > Math.PI) diff = Math.PI * 2 - diff;
+          if (diff < Math.PI * 0.42 && !bArm.striking) { covered = true; break; }
+        }
+        if (!covered) continue;
+
+        /*
+         * The parry knocks the shot aside; it does not return it.
+         *
+         * Sending it back at the player measured at 31 bot deaths a campaign against 3
+         * before - every ranged build was shooting itself, and being punished twice for
+         * one mistake. Batting the round away costs the player the shot and nothing else,
+         * which is the read we want: "that one did not land, go round it or break a horn".
+         */
+        proj.isDeflected = true;
+        proj.isPlayer = false;
+        const aside = Math.atan2(proj.vy, proj.vx) + (Math.random() < 0.5 ? -1 : 1) * (Math.PI * 0.55);
+        const speed = Math.hypot(proj.vx, proj.vy) * 0.55;
+        proj.vx = Math.cos(aside) * speed;
+        proj.vy = Math.sin(aside) * speed;
+        proj.color = e.color || '#ef4444';
+        proj.damage = 0;
+        proj.life = Math.min(proj.life, 0.35);
+        // Twice the recovery of a vector-on-vector parry: it should thin incoming fire,
+        // not create an immunity bubble around anything with arms.
+        e.parryCooldownTimer = bossParryCooldown(e.vectorArms.length) * 2.0;
+        sound.playVectorClash();
+        this.spawnVectorClash(proj.x, proj.y, Math.atan2(proj.vy, proj.vx), e.color || '#ef4444');
+        break;
+      }
+    }
+
+    if (e.parryCooldownTimer !== undefined && e.parryCooldownTimer > 0) {
+      e.parryCooldownTimer = Math.max(0, e.parryCooldownTimer - dt);
+    }
+    if (e.hitstopCooldown !== undefined && e.hitstopCooldown > 0) {
+      e.hitstopCooldown = Math.max(0, e.hitstopCooldown - dt);
+    }
+  }
+
   private updateEnemies(dt: number) {
     const pX = this.state.player.x;
     const pY = this.state.player.y;
@@ -7750,82 +7582,7 @@ export class GameEngine {
         continue;
       }
 
-      // Rate limiter for the boss projectile parry, so a boss swats individual shots
-      // instead of erasing sustained fire.
-      if (e.deflectionCooldown !== undefined && e.deflectionCooldown > 0) {
-        e.deflectionCooldown = Math.max(0, e.deflectionCooldown - dt);
-      }
-      /*
-       * Reactive projectile parry.
-       *
-       * A Diclonius deflects bullets in the source material as a matter of course, and the
-       * player's arms already did it continuously and autonomously. The enemies did not:
-       * their only way to touch a projectile was inside the 'cyclone' attack, which they
-       * pick roughly one time in five, no more than once every few seconds, and which lasts
-       * 1.7s. In practice that meant bosses and hostile Diclonii walked into gunfire without
-       * ever raising an arm, which is what made them read as brainless.
-       *
-       * They now intercept the way the player does - within reach, on a cooldown that
-       * scales with how many arms they have - so shooting one from range is answered rather
-       * than ignored, and a flank or a broken horn is what opens them up.
-       */
-      const parryable =
-        e.vectorArms &&
-        e.vectorArms.length > 0 &&
-        !e.isStunned &&
-        !(e.vectorsDisabledTimer && e.vectorsDisabledTimer > 0);
-
-      if (parryable && (e.parryCooldownTimer || 0) <= 0) {
-        const parryReach = (e.vectorReach || 120) * 1.05;
-        for (const proj of this.state.projectiles) {
-          if (!proj || !proj.isPlayer || proj.isDeflected) continue;
-          // Anti-vector ordnance is not swatted. That is the entire product.
-          if (proj.antiVector) continue;
-          const pd = Math.hypot(proj.x - e.x, proj.y - e.y);
-          if (pd > parryReach) continue;
-
-          // An arm has to be facing the incoming line, so a shot from behind gets through.
-          const incoming = Math.atan2(e.y - proj.y, e.x - proj.x);
-          let covered = false;
-          for (const bArm of e.vectorArms) {
-            let diff = Math.abs(bArm.currentAngle - (incoming + Math.PI));
-            while (diff > Math.PI) diff = Math.PI * 2 - diff;
-            if (diff < Math.PI * 0.42 && !bArm.striking) { covered = true; break; }
-          }
-          if (!covered) continue;
-
-          /*
-           * The parry knocks the shot aside; it does not return it.
-           *
-           * Sending it back at the player measured at 31 bot deaths a campaign against 3
-           * before - every ranged build was shooting itself, and being punished twice for
-           * one mistake. Batting the round away costs the player the shot and nothing else,
-           * which is the read we want: "that one did not land, go round it or break a horn".
-           */
-          proj.isDeflected = true;
-          proj.isPlayer = false;
-          const aside = Math.atan2(proj.vy, proj.vx) + (Math.random() < 0.5 ? -1 : 1) * (Math.PI * 0.55);
-          const speed = Math.hypot(proj.vx, proj.vy) * 0.55;
-          proj.vx = Math.cos(aside) * speed;
-          proj.vy = Math.sin(aside) * speed;
-          proj.color = e.color || '#ef4444';
-          proj.damage = 0;
-          proj.life = Math.min(proj.life, 0.35);
-          // Twice the recovery of a vector-on-vector parry: it should thin incoming fire,
-          // not create an immunity bubble around anything with arms.
-          e.parryCooldownTimer = bossParryCooldown(e.vectorArms.length) * 2.0;
-          sound.playVectorClash();
-          this.spawnVectorClash(proj.x, proj.y, Math.atan2(proj.vy, proj.vx), e.color || '#ef4444');
-          break;
-        }
-      }
-
-      if (e.parryCooldownTimer !== undefined && e.parryCooldownTimer > 0) {
-        e.parryCooldownTimer = Math.max(0, e.parryCooldownTimer - dt);
-      }
-      if (e.hitstopCooldown !== undefined && e.hitstopCooldown > 0) {
-        e.hitstopCooldown = Math.max(0, e.hitstopCooldown - dt);
-      }
+      this.updateEnemyParry(e, dt);
 
       // A braced shield cannot snap around instantly. Turning it at a limited rate is what
       // makes flanking a shield trooper a real option rather than a decorative stat.

@@ -33,7 +33,7 @@ const TSC = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
 const TSX = path.join(ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
 /** Runs a TypeScript file through the local tsx. */
-const tsx = (file) => ({ cmd: NODE, args: [TSX, file] });
+const tsx = (file, ...flags) => ({ cmd: NODE, args: [TSX, file, ...flags] });
 
 /** One check: a label, the command, and whether it belongs to the fast tier. */
 const CHECKS = [
@@ -42,6 +42,12 @@ const CHECKS = [
   { name: 'progression and trades', ...tsx('scripts/progression-trade-test.ts'), fast: true },
   { name: 'engine resilience', ...tsx('scripts/resilience-test.ts'), fast: true },
   { name: 'crash screen', ...tsx('scripts/boundary-test.tsx'), fast: true },
+  /*
+   * The behavioural fingerprint belongs in the fast tier despite what it does, because it
+   * takes five seconds and it is the only check that can tell a refactor apart from a
+   * behaviour change. Without it, restructuring an eleven-thousand-line engine is guesswork.
+   */
+  { name: 'behaviour unchanged', ...tsx('scripts/fingerprint.ts', '--check'), fast: true },
   { name: 'text against data', cmd: 'python', args: ['scripts/text-audit.py'], fast: true, audit: true },
   { name: 'language leaks', cmd: 'python', args: ['scripts/lang-leak-audit.py'], fast: true, audit: true },
   {
