@@ -99,7 +99,15 @@ const q = (n: number) => (Number.isFinite(n) ? Math.round(n * 1000) / 1000 : 'Na
 /** Everything about the world worth noticing, as a compact string. */
 function snapshot(s: any): string {
   const enemies = s.enemies
-    .map((e: any) => `${e.type}:${q(e.x)},${q(e.y)},${q(e.hp)},${e.isStunned ? 1 : 0},${q(e.vectorGuard ?? -1)}`)
+    .map((e: any) => {
+      // Enemy arms matter as much as the player's: a Diclonius boss does most of its work
+      // through them, and without this the snapshot could not tell a swinging boss from a
+      // stationary one.
+      const ea = (e.vectorArms || [])
+        .map((a: any) => `${q(a.currentAngle)},${q(a.length ?? 0)},${a.striking ? 1 : 0}`)
+        .join(';');
+      return `${e.type}:${q(e.x)},${q(e.y)},${q(e.hp)},${e.isStunned ? 1 : 0},${q(e.vectorGuard ?? -1)},${e.phase ?? 0}{${ea}}`;
+    })
     .join('|');
   const arms = s.vectorArms
     .map((a: any) => `${q(a.currentAngle)},${q(a.length ?? 0)},${q(a.vibrationHz ?? 0)},${a.striking ? 1 : 0}`)
@@ -127,6 +135,14 @@ interface Scenario {
   waves: number;
   /** Frames to run per wave. Fixed rather than "until the wave ends", so the trace aligns. */
   frames: number;
+  /** First wave to play. Defaults to 1, or 6 for the clearance-5 lucy run. */
+  startWave?: number;
+  /**
+   * Drops the wave timer to nearly zero as the wave starts, so the boss arrives immediately.
+   * Without this a scenario would have to run forty to seventy seconds of ordinary wave
+   * before reaching the encounter, and the boss code would never be reached at all.
+   */
+  bossRush?: boolean;
 }
 
 const SCENARIOS: Scenario[] = [
@@ -135,6 +151,13 @@ const SCENARIOS: Scenario[] = [
   { name: 'nana, clearance 3, waves 1-3', char: 'nana', seed: 3, diff: 3, waves: 3, frames: 1400 },
   { name: 'mariko, clearance 4, waves 1-2', char: 'mariko', seed: 5, diff: 4, waves: 2, frames: 1200 },
   { name: 'bando, clearance 3, waves 1-2', char: 'bando', seed: 9, diff: 3, waves: 2, frames: 1200 },
+
+  // Boss encounters. Three different shapes of opponent: a Diclonius that fights with
+  // vectors, a human with an arsenal, and a late-campaign boss with phases. Without these the
+  // fingerprint covered none of the six hundred lines of boss behaviour.
+  { name: 'boss: silpelit 14 (wave 1)', char: 'lucy', seed: 11, diff: 3, waves: 1, frames: 2600, startWave: 1, bossRush: true },
+  { name: 'boss: bando (wave 5)', char: 'lucy', seed: 13, diff: 4, waves: 1, frames: 2600, startWave: 5, bossRush: true },
+  { name: 'boss: kakuzawa (wave 15)', char: 'lucy', seed: 17, diff: 5, waves: 1, frames: 2600, startWave: 15, bossRush: true },
 ];
 
 function runScenario(sc: Scenario): string {
@@ -150,10 +173,12 @@ function runScenario(sc: Scenario): string {
   engine.onLevelUpCallback = () => { pending++; };
 
   const hash = createHash('sha256');
-  const startWave = sc.char === 'lucy' && sc.diff === 5 ? 6 : 1;
+  let sawBoss = false;
+  const startWave = sc.startWave ?? (sc.char === 'lucy' && sc.diff === 5 ? 6 : 1);
 
   for (let w = startWave; w < startWave + sc.waves; w++) {
     engine.startWave(w);
+    if (sc.bossRush) engine.state.waveTimer = 0.2;
     for (let f = 0; f < sc.frames; f++) {
       const t = f * DT * 1.1;
       engine.handleJoystickMove(Math.cos(t), Math.sin(t));
@@ -163,6 +188,7 @@ function runScenario(sc: Scenario): string {
       // Sample rather than hash every frame: a hundred samples per wave is plenty to catch a
       // divergence, and hashing every frame would make the run several times slower.
       if (f % 14 === 0) hash.update(snapshot(engine.state) + '\n');
+      if (!sawBoss && engine.state.enemies.some((en: any) => en.isBoss)) sawBoss = true;
       if (engine.state.player.hp <= 0) {
         engine.state.player.hp = engine.state.player.maxHp;
         engine.state.isWaveActive = true;
@@ -189,6 +215,11 @@ function runScenario(sc: Scenario): string {
     }
     engine.state.player.hp = engine.state.player.maxHp;
     hash.update(`endwave ${w} ${snapshot(engine.state)}\n`);
+  }
+
+  // A boss scenario that never met a boss is not a passing check, it is a blind one.
+  if (sc.bossRush && !sawBoss) {
+    throw new Error(`scenario "${sc.name}" was supposed to fight a boss and never saw one`);
   }
 
   return hash.digest('hex').slice(0, 16);

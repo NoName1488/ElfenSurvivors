@@ -7533,6 +7533,708 @@ export class GameEngine {
     }
   }
 
+  /**
+   * Everything a boss does on its own turn: stun, shields, phases and its arsenal.
+   *
+   * This was the largest single region of updateEnemies, and it applies to at most one
+   * unit on the field, so every read of the ordinary enemy code had to scroll past it.
+   * It reads the enemy, the timestep and the four values the loop has already computed,
+   * and touches neither the enemy array nor the loop index.
+   *
+   * Returns true when the caller must skip the rest of this enemy - the stunned boss
+   * case, which used to be a bare continue inside the loop.
+   */
+  private updateBossMechanics(e: Enemy, dt: number, pX: number, pY: number, dist: number, angle: number): boolean {
+    if (!e.isBoss) return false;
+    // Stunned check: boss cannot move, rotate vectors, or act while posture is broken.
+    // The countdown itself lives at the top of the loop so hitstop cannot freeze it.
+    if (e.isStunned) {
+      if (Math.random() < 0.35) {
+        this.state.particles.push({
+          x: e.x + (Math.random() - 0.5) * e.radius * 2,
+          y: e.y - e.radius - 12 + (Math.random() - 0.5) * 8,
+          vx: (Math.random() - 0.5) * 20,
+          vy: -25,
+          life: 0.35,
+          maxLife: 0.35,
+          size: 4,
+          color: '#facc15',
+          alpha: 0.85,
+          type: 'spark',
+        });
+      }
+      return true;
+    }
+
+    // (Vector guard regeneration is handled with the other status timers at the top of
+    // the loop, so it keeps running through hitstop.)
+
+    // 1. Kinetic Shield Regeneration if not damaged for 6.0s
+    if (e.maxShield && e.shield !== undefined && e.shield < e.maxShield) {
+      e.lastDamageTaken = (e.lastDamageTaken || 0) + dt;
+      if (e.lastDamageTaken >= 6.0) {
+        e.shield = Math.min(e.maxShield, e.shield + dt * 140);
+        if (Math.random() < 0.15) {
+          this.state.particles.push({
+            x: e.x + (Math.random() - 0.5) * e.radius * 2,
+            y: e.y + (Math.random() - 0.5) * e.radius * 2,
+            vx: 0,
+            vy: -30,
+            life: 0.3,
+            maxLife: 0.3,
+            size: 3,
+            color: '#38bdf8',
+            alpha: 0.8,
+            type: 'spark',
+          });
+        }
+      }
+    }
+
+    // 2. Enrage / Berserk Phase Trigger (HP < 50%)
+    if (!e.isEnraged && e.hp < e.maxHp * 0.5) {
+      e.isEnraged = true;
+      e.speed = Math.round((e.baseSpeed !== undefined ? e.baseSpeed : e.speed) * 1.35);
+      e.baseSpeed = e.speed;
+      sound.playDropshipAlarm();
+      this.triggerScreenShake(15, 0.7);
+      // The health bar grows its own berserk chip when isEnraged flips; a banner on top
+      // of it would be the same news twice.
+      
+      this.state.particles.push({
+        x: e.x,
+        y: e.y,
+        vx: 0,
+        vy: 0,
+        life: 0.8,
+        maxLife: 0.8,
+        size: 160,
+        color: '#ef4444',
+        alpha: 0.95,
+        type: 'psychic_ring',
+      });
+    }
+
+    // 3. Boss & Diclonius Vector Arms Dynamics & Cinematic Combat System
+    if (e.vectorArms && e.vectorArms.length > 0) {
+      // Kurama's inhibitor field collapses hostile vector reach by 40%, as his card states.
+      let vReach = e.vectorReach || 160;
+      if (this.state.character.id === 'kurama') {
+        const distToKurama = Math.hypot(e.x - this.state.player.x, e.y - this.state.player.y);
+        if (distToKurama < 220) vReach *= 0.6;
+      }
+      const isEnraged = e.isEnraged || false;
+      const isStunned = e.isStunned || false;
+      const angleToPlayer = Math.atan2(pY - e.y, pX - e.x);
+
+      // Rotation speed around boss body
+      let rotSpeed = isEnraged ? 3.2 : 2.0;
+      if (e.vectorAttackState === 'cyclone') {
+        rotSpeed = 16.0; // Hyper-spin during vector cyclone
+      } else if (isStunned) {
+        rotSpeed = 0.3; // Limp droop while stunned
+      }
+      e.vectorRotation = (e.vectorRotation || 0) + dt * rotSpeed;
+
+      // Handle Vector Telegraph countdown
+      if (e.vectorTelegraph) {
+        e.vectorTelegraph.timer -= dt;
+        if (e.vectorTelegraph.timer <= 0) {
+          e.vectorTelegraph = null;
+        }
+      }
+
+      // Attack State Machine
+      const armsDown = !!e.vectorsDisabledTimer && e.vectorsDisabledTimer > 0;
+      if (!isStunned && !armsDown) {
+        e.vectorAttackTimer = (e.vectorAttackTimer || 0) + dt;
+        const attackInterval = isEnraged ? 2.6 : (e.isBoss ? 3.6 : 4.2);
+
+        if (e.vectorAttackState === 'idle' || !e.vectorAttackState) {
+          if (e.vectorAttackTimer >= attackInterval && dist < vReach * 1.6) {
+            e.vectorAttackTimer = 0;
+            const rand = Math.random();
+            if (e.vectorCount && e.vectorCount >= 10 && rand < 0.28) {
+              // Hundred-blade barrage for supreme bosses
+              e.vectorAttackState = 'barrage';
+              e.vectorAttackTimer = 0;
+              sound.playVectorSlash();
+              this.triggerScreenShake(6, 0.2);
+            } else if (rand < 0.55 || dist > vReach * 0.85) {
+              // Piercing Vector Thrust with clear glowing telegraph
+              e.vectorAttackState = 'charging';
+              e.vectorAttackTimer = 0;
+              e.vectorTelegraph = {
+                x1: e.x,
+                y1: e.y,
+                x2: pX,
+                y2: pY,
+                width: 44,
+                timer: isEnraged ? 0.95 : 1.25,
+                maxTimer: isEnraged ? 0.95 : 1.25,
+                color: e.color || '#ef4444',
+                type: 'line',
+              };
+              sound.playSpecialAbility();
+            } else if (rand < 0.82) {
+              // Vector Guillotine Slam (ground crush) with clear circular telegraph
+              e.vectorAttackState = 'charging';
+              e.vectorAttackTimer = 0;
+              e.vectorTelegraph = {
+                x1: pX,
+                y1: pY,
+                x2: pX,
+                y2: pY,
+                width: 0,
+                radius: 95,
+                timer: isEnraged ? 1.05 : 1.35,
+                maxTimer: isEnraged ? 1.05 : 1.35,
+                color: '#ef4444',
+                type: 'circle',
+              };
+              sound.playSpecialAbility();
+            } else {
+              // Vector Cyclone Deflection Aegis
+              e.vectorAttackState = 'cyclone';
+              e.vectorAttackTimer = 0;
+              sound.playBossShockwave();
+              this.triggerScreenShake(6, 0.25);
+            }
+          }
+        } else if (e.vectorAttackState === 'charging') {
+          if (!e.vectorTelegraph || e.vectorTelegraph.timer <= 0) {
+            if (e.vectorTelegraph?.type === 'circle') {
+              // Plunge slam: vectors pound the circular blast radius
+              e.vectorAttackState = 'slam';
+              e.vectorAttackTimer = 0;
+              sound.playBossShockwave();
+              this.triggerScreenShake(14, 0.45);
+
+              const targetX = e.vectorTelegraph.x1;
+              const targetY = e.vectorTelegraph.y1;
+              for (let a = 0; a < e.vectorArms.length; a++) {
+                const arm = e.vectorArms[a];
+                const slamAngle = (a / e.vectorArms.length) * Math.PI * 2;
+                const slamDist = Math.random() * 65;
+                arm.striking = true;
+                arm.strikeProgress = 0;
+                arm.strikeType = 'slam';
+                arm.targetX = targetX + Math.cos(slamAngle) * slamDist;
+                arm.targetY = targetY + Math.sin(slamAngle) * slamDist;
+              }
+
+              const slamDist = Math.hypot(pX - targetX, pY - targetY);
+              if (slamDist < 95) {
+                this.damagePlayerFromVector(Math.round(e.damage * 0.8), e);
+              }
+
+              this.state.particles.push({
+                x: targetX,
+                y: targetY,
+                vx: 0,
+                vy: 0,
+                life: 0.55,
+                maxLife: 0.55,
+                size: 190,
+                color: e.color || '#ef4444',
+                alpha: 0.95,
+                type: 'psychic_ring',
+              });
+            } else {
+              // Thrust strike: spear forward with tactical lateral spread
+              e.vectorAttackState = 'thrust';
+              e.vectorAttackTimer = 0;
+              sound.playVectorSlash();
+              this.triggerScreenShake(8, 0.25);
+
+              const thrustAngle = Math.atan2(pY - e.y, pX - e.x);
+              for (let a = 0; a < e.vectorArms.length; a++) {
+                const arm = e.vectorArms[a];
+                const perpOffset = (a - (e.vectorArms.length - 1) / 2) * (70 / Math.max(1, e.vectorArms.length));
+                const perpX = -Math.sin(thrustAngle) * perpOffset;
+                const perpY = Math.cos(thrustAngle) * perpOffset;
+
+                arm.striking = true;
+                arm.strikeProgress = 0;
+                arm.strikeType = 'thrust';
+                arm.targetX = pX + perpX;
+                arm.targetY = pY + perpY;
+              }
+
+              const thrustDist = Math.hypot(pX - e.x, pY - e.y);
+              if (thrustDist < vReach * 1.35) {
+                const thrustDmg = Math.round(e.damage * (isEnraged ? 0.75 : 0.6));
+                this.damagePlayerFromVector(thrustDmg, e);
+                this.spawnVectorImpact(pX, pY, thrustAngle, true, 'pierce');
+              }
+            }
+          }
+        } else if (e.vectorAttackState === 'thrust' || e.vectorAttackState === 'slam') {
+          if (e.vectorAttackTimer > 0.45) {
+            e.vectorAttackState = 'idle';
+            e.vectorAttackTimer = 0;
+            for (const arm of e.vectorArms) {
+              arm.striking = false;
+              arm.strikeProgress = 0;
+            }
+          }
+        } else if (e.vectorAttackState === 'barrage') {
+          // Rapid multi-arm barrage: launch vectors in staggered fans
+          const barrageBatch = Math.min(3, Math.max(1, Math.floor(e.vectorArms.length / 6)));
+          for (let b = 0; b < barrageBatch; b++) {
+            const barrageIndex = (Math.floor(e.vectorAttackTimer * 12) + b * 2) % e.vectorArms.length;
+            const arm = e.vectorArms[barrageIndex];
+            if (arm && !arm.striking) {
+              arm.striking = true;
+              arm.strikeProgress = 0;
+              arm.strikeType = 'slash';
+              const sweepAngle = (arm.currentAngle || 0);
+              const sweepDist = 50 + Math.random() * 50;
+              arm.targetX = pX + Math.cos(sweepAngle) * sweepDist;
+              arm.targetY = pY + Math.sin(sweepAngle) * sweepDist;
+              if (Math.random() < 0.25) sound.playVectorSlash();
+              if (dist < vReach) {
+                this.damagePlayerFromVector(Math.round(e.damage * 0.16), e);
+              }
+            }
+          }
+          if (e.vectorAttackTimer > 1.6) {
+            e.vectorAttackState = 'idle';
+            e.vectorAttackTimer = 0;
+            for (const arm of e.vectorArms) {
+              arm.striking = false;
+            }
+          }
+        } else if (e.vectorAttackState === 'cyclone') {
+          for (const proj of this.state.projectiles) {
+            if (!proj) continue;
+            if (proj.isPlayer && !proj.isDeflected) {
+              const dToBoss = Math.hypot(proj.x - e.x, proj.y - e.y);
+              if (dToBoss < vReach * 0.85) {
+                proj.vx = -proj.vx * 1.25;
+                proj.vy = -proj.vy * 1.25;
+                proj.isPlayer = false;
+                proj.isDeflected = true;
+                proj.color = e.color || '#ef4444';
+                sound.playVectorClash();
+                this.spawnVectorClash(proj.x, proj.y, Math.atan2(proj.vy, proj.vx), e.color);
+              }
+            }
+          }
+
+          if (dist < vReach * 0.75) {
+            const pushAng = Math.atan2(pY - e.y, pX - e.x);
+            this.state.player.x += Math.cos(pushAng) * 60 * dt;
+            this.state.player.y += Math.sin(pushAng) * 60 * dt;
+            this.damagePlayerFromVector(Math.round(e.damage * 0.2 * dt * 8), e);
+          }
+          if (e.vectorAttackTimer > 1.7) {
+            e.vectorAttackState = 'idle';
+            e.vectorAttackTimer = 0;
+          }
+        }
+      }
+
+      // Advance individual vector kinematics, autonomous attacks & PvP clash responses
+      for (let v = 0; v < e.vectorArms.length; v++) {
+        const arm = e.vectorArms[v];
+        arm.attackCooldown = (arm.attackCooldown || 0) - dt;
+        arm.length = vReach;
+        arm.vibrationPhase = (arm.vibrationPhase || 0) + dt * (isEnraged ? 75 : 45);
+
+        if (arm.clashing && arm.clashTimer !== undefined) {
+          arm.clashTimer -= dt;
+          if (arm.clashTimer <= 0) {
+            arm.clashing = false;
+          }
+        }
+
+        // 1. Autonomous Vector Strike Triggering (PvP duel parity with player)
+        // Tactical spread: Vectors facing player strike from their respective quadrants, not all in one spot
+        const armAngleToPlayer = Math.atan2(pY - e.y, pX - e.x);
+        let facingDiff = Math.abs(arm.currentAngle - armAngleToPlayer);
+        if (facingDiff > Math.PI) facingDiff = Math.PI * 2 - facingDiff;
+
+        if (
+          !arm.striking &&
+          arm.attackCooldown <= 0 &&
+          !isStunned &&
+          e.vectorAttackState !== 'cyclone' &&
+          dist <= vReach * 1.35 &&
+          facingDiff < Math.PI * 0.65
+        ) {
+          arm.striking = true;
+          arm.strikeProgress = 0;
+          arm.hasHit = false;
+          // Dispersed impact points: offset along the normal of the attack angle
+          const lateralSpread = (Math.random() - 0.5) * 44;
+          const perpAngle = armAngleToPlayer + Math.PI / 2;
+          arm.targetX = pX + Math.cos(perpAngle) * lateralSpread;
+          arm.targetY = pY + Math.sin(perpAngle) * lateralSpread;
+          arm.strikeType = Math.random() < 0.45 ? 'pierce' : 'slash';
+          if (Math.random() < 0.25) {
+            sound.playVectorSlash();
+          }
+
+          const count = e.vectorArms.length;
+          const baseCadence = (count > 16 ? 0.95 : (count > 8 ? 0.75 : 0.55)) * (isEnraged ? 0.75 : 1.0);
+          arm.attackCooldown = baseCadence * (0.8 + Math.random() * 0.5);
+        }
+
+        // 2. Advance strike animation & process midair clash with player vectors
+        if (arm.striking) {
+          const strikeSpeed = (arm.strikeType === 'pierce' ? 7.5 : 6.0);
+          arm.strikeProgress = (arm.strikeProgress || 0) + dt * strikeSpeed;
+
+          if (arm.strikeProgress >= 0.45 && !arm.hasHit) {
+            arm.hasHit = true;
+            const p = this.state.player;
+            const playerHasVectors = this.state.character.kind !== 'human_cyborg' && this.state.vectorArms.length > 0;
+            const canPlayerDefend = playerHasVectors && !p.isStunned && p.vectorGuard > 0;
+
+            // Incoming vector attack angle arriving at player from boss
+            const incomingAngleAtPlayer = Math.atan2(e.y - pY, e.x - pX);
+
+            let isGuarded = false;
+            let interceptingPlayerArm: VectorArmVisual | null = null;
+
+            if (canPlayerDefend) {
+              // Check if any player vector arm is positioned within the defensive arc
+              let minDiff = Infinity;
+              for (const pArm of this.state.vectorArms) {
+                let diff = Math.abs(pArm.currentAngle - incomingAngleAtPlayer);
+                if (diff > Math.PI) diff = Math.PI * 2 - diff;
+                if (diff < minDiff) {
+                  minDiff = diff;
+                  interceptingPlayerArm = pArm;
+                }
+              }
+
+              // Defensive guard arc: ~95° (Math.PI * 0.53) or if player is targeting the incoming threat
+              let aimDiff = Infinity;
+              if (this.state.laserSightTarget) {
+                const aimAngle = Math.atan2(this.state.laserSightTarget.y - pY, this.state.laserSightTarget.x - pX);
+                aimDiff = Math.abs(aimAngle - incomingAngleAtPlayer);
+                if (aimDiff > Math.PI) aimDiff = Math.PI * 2 - aimDiff;
+              }
+
+              if (minDiff <= Math.PI * 0.53 || (aimDiff !== Infinity && aimDiff <= Math.PI * 0.52)) {
+                isGuarded = true;
+              }
+            }
+
+            if (canPlayerDefend && isGuarded && interceptingPlayerArm) {
+              // PvP Vector Duel Parity: Player's vector intercepts boss vector in midair!
+              const clashRatio = 0.52 + (Math.random() - 0.5) * 0.1;
+              const clashX = pX * (1 - clashRatio) + e.x * clashRatio + (Math.random() - 0.5) * 16;
+              const clashY = pY * (1 - clashRatio) + e.y * clashRatio + (Math.random() - 0.5) * 16;
+              const strikeAng = Math.atan2(pY - e.y, pX - e.x);
+
+              interceptingPlayerArm.striking = true;
+              interceptingPlayerArm.strikeProgress = 0.5;
+              interceptingPlayerArm.strikeType = 'deflect';
+              interceptingPlayerArm.targetX = clashX;
+              interceptingPlayerArm.targetY = clashY;
+              interceptingPlayerArm.clashing = true;
+              interceptingPlayerArm.clashTimer = 0.22;
+
+              arm.clashing = true;
+              arm.clashTimer = 0.22;
+              arm.targetX = clashX;
+              arm.targetY = clashY;
+
+              sound.playVectorClash();
+              this.spawnVectorClash(clashX, clashY, strikeAng, '#38bdf8');
+              this.triggerScreenShake(5, 0.12);
+
+              // 100% of damage to Player HP is BLOCKED; posture (vectorGuard) is depleted
+              const guardCost = Math.max(8, Math.round(e.damage * (isEnraged ? 0.55 : 0.38)));
+              p.vectorGuard = Math.max(0, p.vectorGuard - guardCost);
+              p.guardRecoverTimer = 2.4;
+
+              this.state.damageNumbers.push({
+                id: ++this.dmgNumIdCounter,
+                x: clashX,
+                y: clashY - 14,
+                text: `${loc('БЛОК!', 'BLOCK!')} -${guardCost}`,
+                color: '#38bdf8',
+                opacity: 1,
+                isCrit: false,
+                vy: -35,
+              });
+
+              if (p.vectorGuard <= 0) {
+                p.isStunned = true;
+                p.stunTimer = 1.6;
+                sound.playGuardBreak();
+                this.triggerScreenShake(14, 0.45);
+
+                this.state.damageNumbers.push({
+                  id: ++this.dmgNumIdCounter,
+                  x: p.x,
+                  y: p.y - 32,
+                  text: getLanguage() === 'ru' ? 'ПРОБИТИЕ ЗАЩИТЫ!' : 'GUARD BREAK!',
+                  color: '#ef4444',
+                  opacity: 1,
+                  isCrit: true,
+                  vy: -60,
+                });
+
+                this.state.particles.push({
+                  x: p.x,
+                  y: p.y,
+                  vx: 0,
+                  vy: 0,
+                  life: 0.5,
+                  maxLife: 0.5,
+                  size: p.radius * 3.5,
+                  color: '#ef4444',
+                  alpha: 0.95,
+                  type: 'psychic_ring',
+                });
+              }
+            } else if (canPlayerDefend && !isGuarded) {
+              // FLANK / REAR ATTACK ON PLAYER: Hit from an uncovered blind spot!
+              const flankDmg = Math.round(e.damage * (isEnraged ? 0.75 : 0.55));
+              this.damagePlayer(flankDmg);
+              const strikeAng = Math.atan2(pY - e.y, pX - e.x);
+              const impactType = arm.strikeType === 'pierce' ? 'pierce' : 'slash';
+              this.spawnVectorImpact(pX, pY, strikeAng, true, impactType);
+              sound.playVectorSlash();
+
+              this.state.damageNumbers.push({
+                id: ++this.dmgNumIdCounter,
+                x: p.x + (Math.random() - 0.5) * 20,
+                y: p.y - 32,
+                text: getLanguage() === 'ru' ? `УДАР С ФЛАНГА! -${flankDmg}` : `FLANK STRIKE! -${flankDmg}`,
+                color: '#ef4444',
+                opacity: 1,
+                isCrit: true,
+                vy: -40,
+              });
+            } else {
+              // Direct hit onto player (cyborg or stunned / broken guard)
+              const hitDmg = Math.round(e.damage * (isEnraged ? 0.6 : 0.45));
+              this.damagePlayer(hitDmg);
+              const strikeAng = Math.atan2(pY - e.y, pX - e.x);
+              const impactType = arm.strikeType === 'pierce' ? 'pierce' : 'slash';
+              this.spawnVectorImpact(pX, pY, strikeAng, false, impactType);
+            }
+          }
+
+          if (arm.strikeProgress >= 1.0) {
+            arm.striking = false;
+            arm.strikeProgress = 0;
+          }
+        }
+
+        // 3. Segment kinematics & stance orientation (shared with non-boss vector units).
+        this.updateEnemyArmKinematics(e, arm, v, dt, vReach, angleToPlayer, isStunned);
+      }
+    }
+
+    // 4. Boss Special Abilities
+    if (e.specialAbility) {
+      e.specialAbilityTimer = (e.specialAbilityTimer || 0) + dt;
+      const abilityCooldown = e.isEnraged ? 2.5 : 3.8;
+
+      if (e.specialAbilityTimer >= abilityCooldown) {
+        e.specialAbilityTimer = 0;
+
+        if (e.specialAbility === 'shockwave') {
+          sound.playBossShockwave();
+          this.triggerScreenShake(14, 0.45);
+          this.state.particles.push({
+            x: e.x,
+            y: e.y,
+            vx: 0,
+            vy: 0,
+            life: 0.6,
+            maxLife: 0.6,
+            size: 260,
+            color: e.color,
+            alpha: 0.9,
+            type: 'psychic_ring',
+          });
+          if (dist < 260) {
+            this.damagePlayer(Math.round(e.damage * 0.5));
+            const pushAng = Math.atan2(pY - e.y, pX - e.x);
+            this.state.player.x += Math.cos(pushAng) * 90;
+            this.state.player.y += Math.sin(pushAng) * 90;
+          }
+        } else if (e.specialAbility === 'needle_barrage') {
+          sound.playVectorSlash();
+          const count = e.isEnraged ? 16 : 12;
+          for (let n = 0; n < count; n++) {
+            const nAngle = (n / count) * Math.PI * 2 + Math.random() * 0.1;
+            this.state.projectiles.push({
+              id: ++this.projectileIdCounter,
+              x: e.x,
+              y: e.y,
+              vx: Math.cos(nAngle) * 360,
+              vy: Math.sin(nAngle) * 360,
+              radius: 3.5,
+              damage: Math.round(e.damage * 0.35),
+              isPlayer: false,
+              color: e.color,
+              life: 1.6,
+              maxLife: 1.6,
+              penetration: 1,
+              isBullet: true,
+            });
+          }
+        } else if (e.specialAbility === 'phase_dash') {
+          sound.playSpecialAbility();
+          const dashAng = Math.atan2(pY - e.y, pX - e.x);
+          const dashDist = Math.min(180, dist * 0.8);
+          for (let a = 0; a < 3; a++) {
+            this.state.particles.push({
+              x: e.x + Math.cos(dashAng) * (dashDist * (a / 3)),
+              y: e.y + Math.sin(dashAng) * (dashDist * (a / 3)),
+              vx: 0,
+              vy: 0,
+              life: 0.35,
+              maxLife: 0.35,
+              size: e.radius,
+              color: e.color,
+              alpha: 0.6,
+              type: 'slash_cut',
+            });
+          }
+          e.x += Math.cos(dashAng) * dashDist;
+          e.y += Math.sin(dashAng) * dashDist;
+          this.triggerScreenShake(7, 0.2);
+          if (dist < 100) {
+            this.damagePlayer(Math.round(e.damage * 0.4));
+            sound.playVectorSlash();
+          }
+        } else if (e.type === 'boss_bando') {
+          /*
+           * Bando's arsenal.
+           *
+           * He was firing the same two rockets as a helicopter gunship, which made the
+           * one human boss in the game the least interesting fight in it. He is a man
+           * rebuilt specifically to take a Diclonius alive, and he should read that way:
+           * a rotating loadout with a restraint half and a killing half.
+           *
+           * Which half he uses is the doctrine again. While the institute still wants
+           * the specimen recovered he leads with nets and gas - things that hold. Once
+           * the recovery order is rescinded he stops trying to catch her.
+           */
+          const lethal = this.state.threatLevel >= 0.62 || e.isEnraged;
+          e.bandoSalvo = ((e.bandoSalvo || 0) + 1) % 4;
+          const shot = e.bandoSalvo;
+
+          if (shot === 0 || (shot === 2 && lethal)) {
+            // Micro-missile salvo from the shoulder block. Five, fanned.
+            sound.playHelicopterMinigun();
+            this.triggerScreenShake(10, 0.35);
+            for (let r = -2; r <= 2; r++) {
+              const rAngle = angle + r * 0.16;
+              this.state.projectiles.push({
+                id: ++this.projectileIdCounter,
+                x: e.x, y: e.y,
+                vx: Math.cos(rAngle) * 300,
+                vy: Math.sin(rAngle) * 300,
+                radius: 6,
+                damage: Math.round(e.damage * (lethal ? 0.55 : 0.35)),
+                isPlayer: false,
+                color: '#f97316',
+                life: 2.4, maxLife: 2.4,
+                penetration: 1,
+                isRocket: true,
+                explosionRadius: 52,
+              });
+            }
+          } else if (shot === 1) {
+            // Taser net. The restraint tool: it binds an arm rather than doing damage,
+            // which is the whole point of the man.
+            sound.playLaser();
+            this.state.projectiles.push({
+              id: ++this.projectileIdCounter,
+              x: e.x, y: e.y,
+              vx: Math.cos(angle) * 420,
+              vy: Math.sin(angle) * 420,
+              radius: 11,
+              damage: Math.round(e.damage * 0.2),
+              isPlayer: false,
+              color: '#22d3ee',
+              life: 2.0, maxLife: 2.0,
+              penetration: 1,
+              isNetTrap: true,
+            });
+          } else if (shot === 2) {
+            // Shotgun rush: he closes the distance and empties a barrel into the gap.
+            sound.playShotgun();
+            this.triggerScreenShake(9, 0.3);
+            const rush = Math.min(210, dist * 0.65);
+            e.x += Math.cos(angle) * rush;
+            e.y += Math.sin(angle) * rush;
+            for (let pel = 0; pel < 9; pel++) {
+              const pa = angle + (Math.random() - 0.5) * 0.55;
+              this.state.projectiles.push({
+                id: ++this.projectileIdCounter,
+                x: e.x, y: e.y,
+                vx: Math.cos(pa) * 520,
+                vy: Math.sin(pa) * 520,
+                radius: 4,
+                damage: Math.round(e.damage * 0.22),
+                isPlayer: false,
+                color: '#fbbf24',
+                life: 0.55, maxLife: 0.55,
+                penetration: 1,
+                isBullet: true,
+              });
+            }
+          } else {
+            // Ultrasonic emitter. Straight out of the counter-Diclonius kit: it does not
+            // hurt, it takes the vectors away, and it is the scariest thing he owns.
+            sound.playLaser();
+            this.triggerScreenShake(6, 0.25);
+            this.state.particles.push({
+              x: e.x, y: e.y, vx: 0, vy: 0,
+              life: 0.55, maxLife: 0.55, size: 300,
+              color: '#06b6d4', alpha: 0.85, type: 'psychic_ring',
+            });
+            if (dist <= 300) {
+              this.state.player.vectorSuppressedTimer = lethal ? 3.4 : 2.2;
+              this.state.player.vectorSuppressedMax = this.state.player.vectorSuppressedTimer;
+              this.state.damageNumbers.push({
+                id: ++this.dmgNumIdCounter,
+                x: pX, y: pY - 30,
+                text: loc('УЛЬТРАЗВУК: ВЕКТОРЫ СБИТЫ', 'ULTRASOUND: VECTORS DISRUPTED'),
+                color: '#06b6d4', opacity: 1, isCrit: true, vy: -46,
+              });
+            }
+          }
+        } else if (e.specialAbility === 'heavy_arsenal') {
+          sound.playHelicopterMinigun();
+          this.triggerScreenShake(8, 0.3);
+          for (let r = 0; r < 2; r++) {
+            const rAngle = angle + (r === 0 ? -0.25 : 0.25);
+            this.state.projectiles.push({
+              id: ++this.projectileIdCounter,
+              x: e.x,
+              y: e.y,
+              vx: Math.cos(rAngle) * 280,
+              vy: Math.sin(rAngle) * 280,
+              radius: 6,
+              damage: Math.round(e.damage * 0.55),
+              isPlayer: false,
+              color: '#f97316',
+              life: 2.2,
+              maxLife: 2.2,
+              penetration: 1,
+              isRocket: true,
+              explosionRadius: 55,
+            });
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   private updateEnemies(dt: number) {
     const pX = this.state.player.x;
     const pY = this.state.player.y;
@@ -7802,695 +8504,10 @@ export class GameEngine {
       const dist = Math.hypot(pX - e.x, pY - e.y);
       const angle = Math.atan2(pY - e.y, pX - e.x);
 
-      // BOSS SPECIFIC MECHANICS
-      if (e.isBoss) {
-        // Stunned check: boss cannot move, rotate vectors, or act while posture is broken.
-        // The countdown itself lives at the top of the loop so hitstop cannot freeze it.
-        if (e.isStunned) {
-          if (Math.random() < 0.35) {
-            this.state.particles.push({
-              x: e.x + (Math.random() - 0.5) * e.radius * 2,
-              y: e.y - e.radius - 12 + (Math.random() - 0.5) * 8,
-              vx: (Math.random() - 0.5) * 20,
-              vy: -25,
-              life: 0.35,
-              maxLife: 0.35,
-              size: 4,
-              color: '#facc15',
-              alpha: 0.85,
-              type: 'spark',
-            });
-          }
-          continue;
-        }
+      // Boss behaviour is its own method; it reports back when the boss is stunned and
+      // the rest of this iteration must be skipped.
+      if (e.isBoss && this.updateBossMechanics(e, dt, pX, pY, dist, angle)) continue;
 
-        // (Vector guard regeneration is handled with the other status timers at the top of
-        // the loop, so it keeps running through hitstop.)
-
-        // 1. Kinetic Shield Regeneration if not damaged for 6.0s
-        if (e.maxShield && e.shield !== undefined && e.shield < e.maxShield) {
-          e.lastDamageTaken = (e.lastDamageTaken || 0) + dt;
-          if (e.lastDamageTaken >= 6.0) {
-            e.shield = Math.min(e.maxShield, e.shield + dt * 140);
-            if (Math.random() < 0.15) {
-              this.state.particles.push({
-                x: e.x + (Math.random() - 0.5) * e.radius * 2,
-                y: e.y + (Math.random() - 0.5) * e.radius * 2,
-                vx: 0,
-                vy: -30,
-                life: 0.3,
-                maxLife: 0.3,
-                size: 3,
-                color: '#38bdf8',
-                alpha: 0.8,
-                type: 'spark',
-              });
-            }
-          }
-        }
-
-        // 2. Enrage / Berserk Phase Trigger (HP < 50%)
-        if (!e.isEnraged && e.hp < e.maxHp * 0.5) {
-          e.isEnraged = true;
-          e.speed = Math.round((e.baseSpeed !== undefined ? e.baseSpeed : e.speed) * 1.35);
-          e.baseSpeed = e.speed;
-          sound.playDropshipAlarm();
-          this.triggerScreenShake(15, 0.7);
-          // The health bar grows its own berserk chip when isEnraged flips; a banner on top
-          // of it would be the same news twice.
-          
-          this.state.particles.push({
-            x: e.x,
-            y: e.y,
-            vx: 0,
-            vy: 0,
-            life: 0.8,
-            maxLife: 0.8,
-            size: 160,
-            color: '#ef4444',
-            alpha: 0.95,
-            type: 'psychic_ring',
-          });
-        }
-
-        // 3. Boss & Diclonius Vector Arms Dynamics & Cinematic Combat System
-        if (e.vectorArms && e.vectorArms.length > 0) {
-          // Kurama's inhibitor field collapses hostile vector reach by 40%, as his card states.
-          let vReach = e.vectorReach || 160;
-          if (this.state.character.id === 'kurama') {
-            const distToKurama = Math.hypot(e.x - this.state.player.x, e.y - this.state.player.y);
-            if (distToKurama < 220) vReach *= 0.6;
-          }
-          const isEnraged = e.isEnraged || false;
-          const isStunned = e.isStunned || false;
-          const angleToPlayer = Math.atan2(pY - e.y, pX - e.x);
-
-          // Rotation speed around boss body
-          let rotSpeed = isEnraged ? 3.2 : 2.0;
-          if (e.vectorAttackState === 'cyclone') {
-            rotSpeed = 16.0; // Hyper-spin during vector cyclone
-          } else if (isStunned) {
-            rotSpeed = 0.3; // Limp droop while stunned
-          }
-          e.vectorRotation = (e.vectorRotation || 0) + dt * rotSpeed;
-
-          // Handle Vector Telegraph countdown
-          if (e.vectorTelegraph) {
-            e.vectorTelegraph.timer -= dt;
-            if (e.vectorTelegraph.timer <= 0) {
-              e.vectorTelegraph = null;
-            }
-          }
-
-          // Attack State Machine
-          const armsDown = !!e.vectorsDisabledTimer && e.vectorsDisabledTimer > 0;
-          if (!isStunned && !armsDown) {
-            e.vectorAttackTimer = (e.vectorAttackTimer || 0) + dt;
-            const attackInterval = isEnraged ? 2.6 : (e.isBoss ? 3.6 : 4.2);
-
-            if (e.vectorAttackState === 'idle' || !e.vectorAttackState) {
-              if (e.vectorAttackTimer >= attackInterval && dist < vReach * 1.6) {
-                e.vectorAttackTimer = 0;
-                const rand = Math.random();
-                if (e.vectorCount && e.vectorCount >= 10 && rand < 0.28) {
-                  // Hundred-blade barrage for supreme bosses
-                  e.vectorAttackState = 'barrage';
-                  e.vectorAttackTimer = 0;
-                  sound.playVectorSlash();
-                  this.triggerScreenShake(6, 0.2);
-                } else if (rand < 0.55 || dist > vReach * 0.85) {
-                  // Piercing Vector Thrust with clear glowing telegraph
-                  e.vectorAttackState = 'charging';
-                  e.vectorAttackTimer = 0;
-                  e.vectorTelegraph = {
-                    x1: e.x,
-                    y1: e.y,
-                    x2: pX,
-                    y2: pY,
-                    width: 44,
-                    timer: isEnraged ? 0.95 : 1.25,
-                    maxTimer: isEnraged ? 0.95 : 1.25,
-                    color: e.color || '#ef4444',
-                    type: 'line',
-                  };
-                  sound.playSpecialAbility();
-                } else if (rand < 0.82) {
-                  // Vector Guillotine Slam (ground crush) with clear circular telegraph
-                  e.vectorAttackState = 'charging';
-                  e.vectorAttackTimer = 0;
-                  e.vectorTelegraph = {
-                    x1: pX,
-                    y1: pY,
-                    x2: pX,
-                    y2: pY,
-                    width: 0,
-                    radius: 95,
-                    timer: isEnraged ? 1.05 : 1.35,
-                    maxTimer: isEnraged ? 1.05 : 1.35,
-                    color: '#ef4444',
-                    type: 'circle',
-                  };
-                  sound.playSpecialAbility();
-                } else {
-                  // Vector Cyclone Deflection Aegis
-                  e.vectorAttackState = 'cyclone';
-                  e.vectorAttackTimer = 0;
-                  sound.playBossShockwave();
-                  this.triggerScreenShake(6, 0.25);
-                }
-              }
-            } else if (e.vectorAttackState === 'charging') {
-              if (!e.vectorTelegraph || e.vectorTelegraph.timer <= 0) {
-                if (e.vectorTelegraph?.type === 'circle') {
-                  // Plunge slam: vectors pound the circular blast radius
-                  e.vectorAttackState = 'slam';
-                  e.vectorAttackTimer = 0;
-                  sound.playBossShockwave();
-                  this.triggerScreenShake(14, 0.45);
-
-                  const targetX = e.vectorTelegraph.x1;
-                  const targetY = e.vectorTelegraph.y1;
-                  for (let a = 0; a < e.vectorArms.length; a++) {
-                    const arm = e.vectorArms[a];
-                    const slamAngle = (a / e.vectorArms.length) * Math.PI * 2;
-                    const slamDist = Math.random() * 65;
-                    arm.striking = true;
-                    arm.strikeProgress = 0;
-                    arm.strikeType = 'slam';
-                    arm.targetX = targetX + Math.cos(slamAngle) * slamDist;
-                    arm.targetY = targetY + Math.sin(slamAngle) * slamDist;
-                  }
-
-                  const slamDist = Math.hypot(pX - targetX, pY - targetY);
-                  if (slamDist < 95) {
-                    this.damagePlayerFromVector(Math.round(e.damage * 0.8), e);
-                  }
-
-                  this.state.particles.push({
-                    x: targetX,
-                    y: targetY,
-                    vx: 0,
-                    vy: 0,
-                    life: 0.55,
-                    maxLife: 0.55,
-                    size: 190,
-                    color: e.color || '#ef4444',
-                    alpha: 0.95,
-                    type: 'psychic_ring',
-                  });
-                } else {
-                  // Thrust strike: spear forward with tactical lateral spread
-                  e.vectorAttackState = 'thrust';
-                  e.vectorAttackTimer = 0;
-                  sound.playVectorSlash();
-                  this.triggerScreenShake(8, 0.25);
-
-                  const thrustAngle = Math.atan2(pY - e.y, pX - e.x);
-                  for (let a = 0; a < e.vectorArms.length; a++) {
-                    const arm = e.vectorArms[a];
-                    const perpOffset = (a - (e.vectorArms.length - 1) / 2) * (70 / Math.max(1, e.vectorArms.length));
-                    const perpX = -Math.sin(thrustAngle) * perpOffset;
-                    const perpY = Math.cos(thrustAngle) * perpOffset;
-
-                    arm.striking = true;
-                    arm.strikeProgress = 0;
-                    arm.strikeType = 'thrust';
-                    arm.targetX = pX + perpX;
-                    arm.targetY = pY + perpY;
-                  }
-
-                  const thrustDist = Math.hypot(pX - e.x, pY - e.y);
-                  if (thrustDist < vReach * 1.35) {
-                    const thrustDmg = Math.round(e.damage * (isEnraged ? 0.75 : 0.6));
-                    this.damagePlayerFromVector(thrustDmg, e);
-                    this.spawnVectorImpact(pX, pY, thrustAngle, true, 'pierce');
-                  }
-                }
-              }
-            } else if (e.vectorAttackState === 'thrust' || e.vectorAttackState === 'slam') {
-              if (e.vectorAttackTimer > 0.45) {
-                e.vectorAttackState = 'idle';
-                e.vectorAttackTimer = 0;
-                for (const arm of e.vectorArms) {
-                  arm.striking = false;
-                  arm.strikeProgress = 0;
-                }
-              }
-            } else if (e.vectorAttackState === 'barrage') {
-              // Rapid multi-arm barrage: launch vectors in staggered fans
-              const barrageBatch = Math.min(3, Math.max(1, Math.floor(e.vectorArms.length / 6)));
-              for (let b = 0; b < barrageBatch; b++) {
-                const barrageIndex = (Math.floor(e.vectorAttackTimer * 12) + b * 2) % e.vectorArms.length;
-                const arm = e.vectorArms[barrageIndex];
-                if (arm && !arm.striking) {
-                  arm.striking = true;
-                  arm.strikeProgress = 0;
-                  arm.strikeType = 'slash';
-                  const sweepAngle = (arm.currentAngle || 0);
-                  const sweepDist = 50 + Math.random() * 50;
-                  arm.targetX = pX + Math.cos(sweepAngle) * sweepDist;
-                  arm.targetY = pY + Math.sin(sweepAngle) * sweepDist;
-                  if (Math.random() < 0.25) sound.playVectorSlash();
-                  if (dist < vReach) {
-                    this.damagePlayerFromVector(Math.round(e.damage * 0.16), e);
-                  }
-                }
-              }
-              if (e.vectorAttackTimer > 1.6) {
-                e.vectorAttackState = 'idle';
-                e.vectorAttackTimer = 0;
-                for (const arm of e.vectorArms) {
-                  arm.striking = false;
-                }
-              }
-            } else if (e.vectorAttackState === 'cyclone') {
-              for (const proj of this.state.projectiles) {
-                if (!proj) continue;
-                if (proj.isPlayer && !proj.isDeflected) {
-                  const dToBoss = Math.hypot(proj.x - e.x, proj.y - e.y);
-                  if (dToBoss < vReach * 0.85) {
-                    proj.vx = -proj.vx * 1.25;
-                    proj.vy = -proj.vy * 1.25;
-                    proj.isPlayer = false;
-                    proj.isDeflected = true;
-                    proj.color = e.color || '#ef4444';
-                    sound.playVectorClash();
-                    this.spawnVectorClash(proj.x, proj.y, Math.atan2(proj.vy, proj.vx), e.color);
-                  }
-                }
-              }
-
-              if (dist < vReach * 0.75) {
-                const pushAng = Math.atan2(pY - e.y, pX - e.x);
-                this.state.player.x += Math.cos(pushAng) * 60 * dt;
-                this.state.player.y += Math.sin(pushAng) * 60 * dt;
-                this.damagePlayerFromVector(Math.round(e.damage * 0.2 * dt * 8), e);
-              }
-              if (e.vectorAttackTimer > 1.7) {
-                e.vectorAttackState = 'idle';
-                e.vectorAttackTimer = 0;
-              }
-            }
-          }
-
-          // Advance individual vector kinematics, autonomous attacks & PvP clash responses
-          for (let v = 0; v < e.vectorArms.length; v++) {
-            const arm = e.vectorArms[v];
-            arm.attackCooldown = (arm.attackCooldown || 0) - dt;
-            arm.length = vReach;
-            arm.vibrationPhase = (arm.vibrationPhase || 0) + dt * (isEnraged ? 75 : 45);
-
-            if (arm.clashing && arm.clashTimer !== undefined) {
-              arm.clashTimer -= dt;
-              if (arm.clashTimer <= 0) {
-                arm.clashing = false;
-              }
-            }
-
-            // 1. Autonomous Vector Strike Triggering (PvP duel parity with player)
-            // Tactical spread: Vectors facing player strike from their respective quadrants, not all in one spot
-            const armAngleToPlayer = Math.atan2(pY - e.y, pX - e.x);
-            let facingDiff = Math.abs(arm.currentAngle - armAngleToPlayer);
-            if (facingDiff > Math.PI) facingDiff = Math.PI * 2 - facingDiff;
-
-            if (
-              !arm.striking &&
-              arm.attackCooldown <= 0 &&
-              !isStunned &&
-              e.vectorAttackState !== 'cyclone' &&
-              dist <= vReach * 1.35 &&
-              facingDiff < Math.PI * 0.65
-            ) {
-              arm.striking = true;
-              arm.strikeProgress = 0;
-              arm.hasHit = false;
-              // Dispersed impact points: offset along the normal of the attack angle
-              const lateralSpread = (Math.random() - 0.5) * 44;
-              const perpAngle = armAngleToPlayer + Math.PI / 2;
-              arm.targetX = pX + Math.cos(perpAngle) * lateralSpread;
-              arm.targetY = pY + Math.sin(perpAngle) * lateralSpread;
-              arm.strikeType = Math.random() < 0.45 ? 'pierce' : 'slash';
-              if (Math.random() < 0.25) {
-                sound.playVectorSlash();
-              }
-
-              const count = e.vectorArms.length;
-              const baseCadence = (count > 16 ? 0.95 : (count > 8 ? 0.75 : 0.55)) * (isEnraged ? 0.75 : 1.0);
-              arm.attackCooldown = baseCadence * (0.8 + Math.random() * 0.5);
-            }
-
-            // 2. Advance strike animation & process midair clash with player vectors
-            if (arm.striking) {
-              const strikeSpeed = (arm.strikeType === 'pierce' ? 7.5 : 6.0);
-              arm.strikeProgress = (arm.strikeProgress || 0) + dt * strikeSpeed;
-
-              if (arm.strikeProgress >= 0.45 && !arm.hasHit) {
-                arm.hasHit = true;
-                const p = this.state.player;
-                const playerHasVectors = this.state.character.kind !== 'human_cyborg' && this.state.vectorArms.length > 0;
-                const canPlayerDefend = playerHasVectors && !p.isStunned && p.vectorGuard > 0;
-
-                // Incoming vector attack angle arriving at player from boss
-                const incomingAngleAtPlayer = Math.atan2(e.y - pY, e.x - pX);
-
-                let isGuarded = false;
-                let interceptingPlayerArm: VectorArmVisual | null = null;
-
-                if (canPlayerDefend) {
-                  // Check if any player vector arm is positioned within the defensive arc
-                  let minDiff = Infinity;
-                  for (const pArm of this.state.vectorArms) {
-                    let diff = Math.abs(pArm.currentAngle - incomingAngleAtPlayer);
-                    if (diff > Math.PI) diff = Math.PI * 2 - diff;
-                    if (diff < minDiff) {
-                      minDiff = diff;
-                      interceptingPlayerArm = pArm;
-                    }
-                  }
-
-                  // Defensive guard arc: ~95° (Math.PI * 0.53) or if player is targeting the incoming threat
-                  let aimDiff = Infinity;
-                  if (this.state.laserSightTarget) {
-                    const aimAngle = Math.atan2(this.state.laserSightTarget.y - pY, this.state.laserSightTarget.x - pX);
-                    aimDiff = Math.abs(aimAngle - incomingAngleAtPlayer);
-                    if (aimDiff > Math.PI) aimDiff = Math.PI * 2 - aimDiff;
-                  }
-
-                  if (minDiff <= Math.PI * 0.53 || (aimDiff !== Infinity && aimDiff <= Math.PI * 0.52)) {
-                    isGuarded = true;
-                  }
-                }
-
-                if (canPlayerDefend && isGuarded && interceptingPlayerArm) {
-                  // PvP Vector Duel Parity: Player's vector intercepts boss vector in midair!
-                  const clashRatio = 0.52 + (Math.random() - 0.5) * 0.1;
-                  const clashX = pX * (1 - clashRatio) + e.x * clashRatio + (Math.random() - 0.5) * 16;
-                  const clashY = pY * (1 - clashRatio) + e.y * clashRatio + (Math.random() - 0.5) * 16;
-                  const strikeAng = Math.atan2(pY - e.y, pX - e.x);
-
-                  interceptingPlayerArm.striking = true;
-                  interceptingPlayerArm.strikeProgress = 0.5;
-                  interceptingPlayerArm.strikeType = 'deflect';
-                  interceptingPlayerArm.targetX = clashX;
-                  interceptingPlayerArm.targetY = clashY;
-                  interceptingPlayerArm.clashing = true;
-                  interceptingPlayerArm.clashTimer = 0.22;
-
-                  arm.clashing = true;
-                  arm.clashTimer = 0.22;
-                  arm.targetX = clashX;
-                  arm.targetY = clashY;
-
-                  sound.playVectorClash();
-                  this.spawnVectorClash(clashX, clashY, strikeAng, '#38bdf8');
-                  this.triggerScreenShake(5, 0.12);
-
-                  // 100% of damage to Player HP is BLOCKED; posture (vectorGuard) is depleted
-                  const guardCost = Math.max(8, Math.round(e.damage * (isEnraged ? 0.55 : 0.38)));
-                  p.vectorGuard = Math.max(0, p.vectorGuard - guardCost);
-                  p.guardRecoverTimer = 2.4;
-
-                  this.state.damageNumbers.push({
-                    id: ++this.dmgNumIdCounter,
-                    x: clashX,
-                    y: clashY - 14,
-                    text: `${loc('БЛОК!', 'BLOCK!')} -${guardCost}`,
-                    color: '#38bdf8',
-                    opacity: 1,
-                    isCrit: false,
-                    vy: -35,
-                  });
-
-                  if (p.vectorGuard <= 0) {
-                    p.isStunned = true;
-                    p.stunTimer = 1.6;
-                    sound.playGuardBreak();
-                    this.triggerScreenShake(14, 0.45);
-
-                    this.state.damageNumbers.push({
-                      id: ++this.dmgNumIdCounter,
-                      x: p.x,
-                      y: p.y - 32,
-                      text: getLanguage() === 'ru' ? 'ПРОБИТИЕ ЗАЩИТЫ!' : 'GUARD BREAK!',
-                      color: '#ef4444',
-                      opacity: 1,
-                      isCrit: true,
-                      vy: -60,
-                    });
-
-                    this.state.particles.push({
-                      x: p.x,
-                      y: p.y,
-                      vx: 0,
-                      vy: 0,
-                      life: 0.5,
-                      maxLife: 0.5,
-                      size: p.radius * 3.5,
-                      color: '#ef4444',
-                      alpha: 0.95,
-                      type: 'psychic_ring',
-                    });
-                  }
-                } else if (canPlayerDefend && !isGuarded) {
-                  // FLANK / REAR ATTACK ON PLAYER: Hit from an uncovered blind spot!
-                  const flankDmg = Math.round(e.damage * (isEnraged ? 0.75 : 0.55));
-                  this.damagePlayer(flankDmg);
-                  const strikeAng = Math.atan2(pY - e.y, pX - e.x);
-                  const impactType = arm.strikeType === 'pierce' ? 'pierce' : 'slash';
-                  this.spawnVectorImpact(pX, pY, strikeAng, true, impactType);
-                  sound.playVectorSlash();
-
-                  this.state.damageNumbers.push({
-                    id: ++this.dmgNumIdCounter,
-                    x: p.x + (Math.random() - 0.5) * 20,
-                    y: p.y - 32,
-                    text: getLanguage() === 'ru' ? `УДАР С ФЛАНГА! -${flankDmg}` : `FLANK STRIKE! -${flankDmg}`,
-                    color: '#ef4444',
-                    opacity: 1,
-                    isCrit: true,
-                    vy: -40,
-                  });
-                } else {
-                  // Direct hit onto player (cyborg or stunned / broken guard)
-                  const hitDmg = Math.round(e.damage * (isEnraged ? 0.6 : 0.45));
-                  this.damagePlayer(hitDmg);
-                  const strikeAng = Math.atan2(pY - e.y, pX - e.x);
-                  const impactType = arm.strikeType === 'pierce' ? 'pierce' : 'slash';
-                  this.spawnVectorImpact(pX, pY, strikeAng, false, impactType);
-                }
-              }
-
-              if (arm.strikeProgress >= 1.0) {
-                arm.striking = false;
-                arm.strikeProgress = 0;
-              }
-            }
-
-            // 3. Segment kinematics & stance orientation (shared with non-boss vector units).
-            this.updateEnemyArmKinematics(e, arm, v, dt, vReach, angleToPlayer, isStunned);
-          }
-        }
-
-        // 4. Boss Special Abilities
-        if (e.specialAbility) {
-          e.specialAbilityTimer = (e.specialAbilityTimer || 0) + dt;
-          const abilityCooldown = e.isEnraged ? 2.5 : 3.8;
-
-          if (e.specialAbilityTimer >= abilityCooldown) {
-            e.specialAbilityTimer = 0;
-
-            if (e.specialAbility === 'shockwave') {
-              sound.playBossShockwave();
-              this.triggerScreenShake(14, 0.45);
-              this.state.particles.push({
-                x: e.x,
-                y: e.y,
-                vx: 0,
-                vy: 0,
-                life: 0.6,
-                maxLife: 0.6,
-                size: 260,
-                color: e.color,
-                alpha: 0.9,
-                type: 'psychic_ring',
-              });
-              if (dist < 260) {
-                this.damagePlayer(Math.round(e.damage * 0.5));
-                const pushAng = Math.atan2(pY - e.y, pX - e.x);
-                this.state.player.x += Math.cos(pushAng) * 90;
-                this.state.player.y += Math.sin(pushAng) * 90;
-              }
-            } else if (e.specialAbility === 'needle_barrage') {
-              sound.playVectorSlash();
-              const count = e.isEnraged ? 16 : 12;
-              for (let n = 0; n < count; n++) {
-                const nAngle = (n / count) * Math.PI * 2 + Math.random() * 0.1;
-                this.state.projectiles.push({
-                  id: ++this.projectileIdCounter,
-                  x: e.x,
-                  y: e.y,
-                  vx: Math.cos(nAngle) * 360,
-                  vy: Math.sin(nAngle) * 360,
-                  radius: 3.5,
-                  damage: Math.round(e.damage * 0.35),
-                  isPlayer: false,
-                  color: e.color,
-                  life: 1.6,
-                  maxLife: 1.6,
-                  penetration: 1,
-                  isBullet: true,
-                });
-              }
-            } else if (e.specialAbility === 'phase_dash') {
-              sound.playSpecialAbility();
-              const dashAng = Math.atan2(pY - e.y, pX - e.x);
-              const dashDist = Math.min(180, dist * 0.8);
-              for (let a = 0; a < 3; a++) {
-                this.state.particles.push({
-                  x: e.x + Math.cos(dashAng) * (dashDist * (a / 3)),
-                  y: e.y + Math.sin(dashAng) * (dashDist * (a / 3)),
-                  vx: 0,
-                  vy: 0,
-                  life: 0.35,
-                  maxLife: 0.35,
-                  size: e.radius,
-                  color: e.color,
-                  alpha: 0.6,
-                  type: 'slash_cut',
-                });
-              }
-              e.x += Math.cos(dashAng) * dashDist;
-              e.y += Math.sin(dashAng) * dashDist;
-              this.triggerScreenShake(7, 0.2);
-              if (dist < 100) {
-                this.damagePlayer(Math.round(e.damage * 0.4));
-                sound.playVectorSlash();
-              }
-            } else if (e.type === 'boss_bando') {
-              /*
-               * Bando's arsenal.
-               *
-               * He was firing the same two rockets as a helicopter gunship, which made the
-               * one human boss in the game the least interesting fight in it. He is a man
-               * rebuilt specifically to take a Diclonius alive, and he should read that way:
-               * a rotating loadout with a restraint half and a killing half.
-               *
-               * Which half he uses is the doctrine again. While the institute still wants
-               * the specimen recovered he leads with nets and gas - things that hold. Once
-               * the recovery order is rescinded he stops trying to catch her.
-               */
-              const lethal = this.state.threatLevel >= 0.62 || e.isEnraged;
-              e.bandoSalvo = ((e.bandoSalvo || 0) + 1) % 4;
-              const shot = e.bandoSalvo;
-
-              if (shot === 0 || (shot === 2 && lethal)) {
-                // Micro-missile salvo from the shoulder block. Five, fanned.
-                sound.playHelicopterMinigun();
-                this.triggerScreenShake(10, 0.35);
-                for (let r = -2; r <= 2; r++) {
-                  const rAngle = angle + r * 0.16;
-                  this.state.projectiles.push({
-                    id: ++this.projectileIdCounter,
-                    x: e.x, y: e.y,
-                    vx: Math.cos(rAngle) * 300,
-                    vy: Math.sin(rAngle) * 300,
-                    radius: 6,
-                    damage: Math.round(e.damage * (lethal ? 0.55 : 0.35)),
-                    isPlayer: false,
-                    color: '#f97316',
-                    life: 2.4, maxLife: 2.4,
-                    penetration: 1,
-                    isRocket: true,
-                    explosionRadius: 52,
-                  });
-                }
-              } else if (shot === 1) {
-                // Taser net. The restraint tool: it binds an arm rather than doing damage,
-                // which is the whole point of the man.
-                sound.playLaser();
-                this.state.projectiles.push({
-                  id: ++this.projectileIdCounter,
-                  x: e.x, y: e.y,
-                  vx: Math.cos(angle) * 420,
-                  vy: Math.sin(angle) * 420,
-                  radius: 11,
-                  damage: Math.round(e.damage * 0.2),
-                  isPlayer: false,
-                  color: '#22d3ee',
-                  life: 2.0, maxLife: 2.0,
-                  penetration: 1,
-                  isNetTrap: true,
-                });
-              } else if (shot === 2) {
-                // Shotgun rush: he closes the distance and empties a barrel into the gap.
-                sound.playShotgun();
-                this.triggerScreenShake(9, 0.3);
-                const rush = Math.min(210, dist * 0.65);
-                e.x += Math.cos(angle) * rush;
-                e.y += Math.sin(angle) * rush;
-                for (let pel = 0; pel < 9; pel++) {
-                  const pa = angle + (Math.random() - 0.5) * 0.55;
-                  this.state.projectiles.push({
-                    id: ++this.projectileIdCounter,
-                    x: e.x, y: e.y,
-                    vx: Math.cos(pa) * 520,
-                    vy: Math.sin(pa) * 520,
-                    radius: 4,
-                    damage: Math.round(e.damage * 0.22),
-                    isPlayer: false,
-                    color: '#fbbf24',
-                    life: 0.55, maxLife: 0.55,
-                    penetration: 1,
-                    isBullet: true,
-                  });
-                }
-              } else {
-                // Ultrasonic emitter. Straight out of the counter-Diclonius kit: it does not
-                // hurt, it takes the vectors away, and it is the scariest thing he owns.
-                sound.playLaser();
-                this.triggerScreenShake(6, 0.25);
-                this.state.particles.push({
-                  x: e.x, y: e.y, vx: 0, vy: 0,
-                  life: 0.55, maxLife: 0.55, size: 300,
-                  color: '#06b6d4', alpha: 0.85, type: 'psychic_ring',
-                });
-                if (dist <= 300) {
-                  this.state.player.vectorSuppressedTimer = lethal ? 3.4 : 2.2;
-                  this.state.player.vectorSuppressedMax = this.state.player.vectorSuppressedTimer;
-                  this.state.damageNumbers.push({
-                    id: ++this.dmgNumIdCounter,
-                    x: pX, y: pY - 30,
-                    text: loc('УЛЬТРАЗВУК: ВЕКТОРЫ СБИТЫ', 'ULTRASOUND: VECTORS DISRUPTED'),
-                    color: '#06b6d4', opacity: 1, isCrit: true, vy: -46,
-                  });
-                }
-              }
-            } else if (e.specialAbility === 'heavy_arsenal') {
-              sound.playHelicopterMinigun();
-              this.triggerScreenShake(8, 0.3);
-              for (let r = 0; r < 2; r++) {
-                const rAngle = angle + (r === 0 ? -0.25 : 0.25);
-                this.state.projectiles.push({
-                  id: ++this.projectileIdCounter,
-                  x: e.x,
-                  y: e.y,
-                  vx: Math.cos(rAngle) * 280,
-                  vy: Math.sin(rAngle) * 280,
-                  radius: 6,
-                  damage: Math.round(e.damage * 0.55),
-                  isPlayer: false,
-                  color: '#f97316',
-                  life: 2.2,
-                  maxLife: 2.2,
-                  penetration: 1,
-                  isRocket: true,
-                  explosionRadius: 55,
-                });
-              }
-            }
-          }
-        }
-      }
 
       // Reloading timer and completion
       if (e.isReloading && e.reloadTimer !== undefined) {
