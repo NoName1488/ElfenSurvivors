@@ -621,6 +621,28 @@ export function bossParryCooldown(armCount: number): number {
 
 export const BAGGED_PAYOUT_FRACTION = 0.12;
 
+/**
+ * What the arm pass has already worked out for this frame.
+ *
+ * Every arm needs the same eight values and they are the same for all of them, so they
+ * are computed once per frame and handed over together rather than as eight parameters.
+ * targetedEnemyCounts is deliberately shared and mutated: it is how the arms avoid all
+ * piling onto the same target.
+ */
+interface ArmFrameContext {
+  pX: number;
+  pY: number;
+  baseReach: number;
+  maxEngageDistance: number;
+  restingHz: number;
+  atkSpeedMod: number;
+  psiMultiplier: number;
+  nearbyEnemies: Enemy[];
+  nearbyDropships: HelicopterDropship[];
+  totalArmCount: number;
+  targetedEnemyCounts: Map<number, number>;
+}
+
 export class GameEngine {
   public state: GameEngineState;
   public readonly WORLD_WIDTH = 2600;
@@ -3355,6 +3377,862 @@ export class GameEngine {
    */
   antiVectorRounds = false;
 
+  /**
+   * How an idle vector arm chooses a target and commits to a strike.
+   *
+   * Eight hundred lines of updateVectorArms, sitting between the strike animation and the
+   * kinematic chain. It reads the frame context and this one arm.
+   *
+   * Returns true when the caller must skip the rest of this arm for this frame - its
+   * kinematics included. Three paths through the shield logic did exactly that with a bare
+   * return while they were still inside the callback, and the behaviour is kept.
+   */
+  private updateArmCombatAI(arm: VectorArmVisual, i: number, ctx: ArmFrameContext): boolean {
+    if (arm.striking || arm.attackCooldown > 0 || !this.state.isWaveActive) return false;
+
+    const { pX, pY, baseReach, maxEngageDistance, restingHz, atkSpeedMod, psiMultiplier, nearbyEnemies, nearbyDropships, totalArmCount, targetedEnemyCounts } = ctx;
+
+    let bestTarget: Enemy | null = null;
+    let bestDropship: HelicopterDropship | null = null;
+    let bestScore = -Infinity;
+
+    // Check if a nearby dropship can be engaged by vectors
+    for (const d of nearbyDropships) {
+      const dist = Math.hypot(d.x - pX, d.y - pY);
+      const dropshipAngle = Math.atan2(d.y - pY, d.x - pX);
+      let angleDiff = Math.abs(arm.baseAngle - dropshipAngle);
+      if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+
+      const targetLoad = targetedEnemyCounts.get(d.id) || 0;
+      const maxLoadOnDropship = Math.max(2, Math.min(8, Math.ceil(totalArmCount * 0.65)));
+      if (targetLoad < maxLoadOnDropship) {
+        const angleScore = Math.max(0, 1 - angleDiff / Math.PI) * 45;
+        const distScore = (1 - dist / (maxEngageDistance + d.radius)) * 40;
+        const score = angleScore + distScore + 35 - targetLoad * 12;
+        if (score > bestScore) {
+          bestScore = score;
+          bestDropship = d;
+          bestTarget = null;
+        }
+      }
+    }
+
+    for (const enemy of nearbyEnemies) {
+      const dist = Math.hypot(enemy.x - pX, enemy.y - pY);
+      const enemyAngle = Math.atan2(enemy.y - pY, enemy.x - pX);
+      let angleDiff = Math.abs(arm.baseAngle - enemyAngle);
+      if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+
+      const targetLoad = targetedEnemyCounts.get(enemy.id) || 0;
+      // Dynamic tactical allocation: For BOSSES, ALL available player vectors engage simultaneously!
+      let maxLoadPerEnemy = enemy.isBoss
+        ? totalArmCount
+        : (totalArmCount > 10
+            ? Math.max(3, Math.min(8, Math.ceil(totalArmCount / Math.max(1, nearbyEnemies.length))))
+            : (enemy.isElite ? 2 : 1));
+      if (this.hasMutation('lucy_dual_target') && !enemy.isBoss) maxLoadPerEnemy = Math.min(maxLoadPerEnemy, 2);
+      // Vector convergence: the apex promises four arms on one target in concert.
+      if (this.hasMutation('lucy_omni_slaughter') && !enemy.isBoss) maxLoadPerEnemy = Math.max(maxLoadPerEnemy, 4);
+      if (this.hasMutation('mariko_swarm_distrib') && !enemy.isBoss) maxLoadPerEnemy = Math.max(1, Math.floor(totalArmCount / Math.max(1, nearbyEnemies.length)));
+      // Multi-capture synchronisation: the swarm spreads across six separate targets
+      // rather than piling onto whichever one is nearest.
+      if (this.hasMutation('mariko_omni_matrix') && !enemy.isBoss) maxLoadPerEnemy = Math.max(maxLoadPerEnemy, Math.ceil(totalArmCount / 6));
+
+      // Prevent dogpiling on normal grunts, but allow all vectors against bosses
+      if (targetLoad >= maxLoadPerEnemy) {
+        continue;
+      }
+
+      const angleScore = Math.max(0, 1 - angleDiff / Math.PI) * 45;
+      const distScore = (1 - dist / maxEngageDistance) * 35;
+      const bossBonus = enemy.isBoss ? 40 : 0;
+      const loadPenalty = enemy.isBoss ? 0 : targetLoad * 25;
+
+      const score = angleScore + distScore + bossBonus - loadPenalty;
+      if (score > bestScore) {
+        bestScore = score;
+        bestTarget = enemy;
+        bestDropship = null;
+      }
+    }
+
+    if (bestDropship) {
+      targetedEnemyCounts.set(bestDropship.id, (targetedEnemyCounts.get(bestDropship.id) || 0) + 1);
+      arm.striking = true;
+      arm.strikeProgress = 0;
+      arm.targetX = bestDropship.x + (Math.random() - 0.5) * 40;
+      arm.targetY = bestDropship.y + (Math.random() - 0.5) * 20;
+      arm.targetEnemyId = bestDropship.id;
+      arm.strikeType = 'slash';
+
+      // Base independent vector unit damage. Uses the same soft-capped PSI law as every
+      // other damage path - this branch used to scale uncapped and quadratically.
+      const psiEffAir = effectivePsi(this.state.stats.psiPower);
+      const charBonusAir = psiMultiplier / Math.max(0.1, 1 + this.state.stats.psiPower / 100);
+      const baseDmg = (16 + psiEffAir * 0.4) * (1 + psiEffAir / 100) * charBonusAir;
+      const isCrit = Math.random() < (this.state.stats.critChance / 100);
+      const finalDmg = Math.round((isCrit ? baseDmg * this.state.stats.critDamage : baseDmg) * 1.35);
+
+      bestDropship.hp -= finalDmg;
+      sound.playMetalClank();
+      sound.playVectorSlash();
+      const strikeAngle = Math.atan2(bestDropship.y - pY, bestDropship.x - pX);
+      this.spawnVectorImpact(bestDropship.x, bestDropship.y, strikeAngle, isCrit, 'slash');
+
+      for (let sp = 0; sp < 4; sp++) {
+        this.state.particles.push({
+          x: arm.targetX,
+          y: arm.targetY,
+          vx: (Math.random() - 0.5) * 180,
+          vy: (Math.random() - 0.5) * 180,
+          life: 0.22,
+          maxLife: 0.22,
+          size: 4,
+          color: '#f59e0b',
+          alpha: 1,
+          type: 'spark',
+        });
+      }
+
+      this.state.damageNumbers.push({
+        id: ++this.dmgNumIdCounter,
+        x: bestDropship.x + (Math.random() - 0.5) * 30,
+        y: bestDropship.y - 15,
+        text: `-${finalDmg}`,
+        color: isCrit ? '#facc15' : '#f97316',
+        opacity: 1,
+        isCrit,
+        vy: -45,
+      });
+
+      if (bestDropship.hp <= 0 && bestDropship.phase !== 'crashing') {
+        bestDropship.phase = 'crashing';
+        bestDropship.crashTimer = 2.4;
+        bestDropship.crashVx = (Math.random() - 0.5) * 140;
+        bestDropship.crashVy = 180;
+        bestDropship.crashRot = (Math.random() > 0.5 ? 1 : -1) * 8;
+        sound.playHelicopterCrash();
+        this.triggerScreenShake(14, 0.7);
+        this.state.dropshipWarningText = getLanguage() === 'ru'
+          ? 'КРУШЕНИЕ: БОЕВОЙ ВЕРТОЛЕТ SAT СБИТ И ПАДАЕТ!'
+          : 'CRASH: SAT ATTACK HELICOPTER SHOT DOWN!';
+        this.state.dropshipWarningTimer = 3.0;
+      }
+    } else if (bestTarget) {
+      targetedEnemyCounts.set(bestTarget.id, (targetedEnemyCounts.get(bestTarget.id) || 0) + 1);
+
+      arm.striking = true;
+      arm.strikeProgress = 0;
+      if (bestTarget.isBoss) {
+        // Disperse strike positions across the perimeter and approach angle of the boss!
+        const strikeOffsetAngle = arm.baseAngle + (Math.random() - 0.5) * 0.5;
+        const strikeRadius = (bestTarget.radius || 28) * (0.55 + Math.random() * 0.5);
+        arm.targetX = bestTarget.x + Math.cos(strikeOffsetAngle) * strikeRadius;
+        arm.targetY = bestTarget.y + Math.sin(strikeOffsetAngle) * strikeRadius;
+      } else {
+        arm.targetX = bestTarget.x;
+        arm.targetY = bestTarget.y;
+      }
+      arm.targetEnemyId = bestTarget.id;
+      arm.strikeType = Math.random() < 0.45 ? 'pierce' : 'slash';
+
+      // Base independent vector unit damage (scaled cleanly by psi power with soft cap and character state)
+      const psiEff = effectivePsi(this.state.stats.psiPower);
+      const charBonus = psiMultiplier / Math.max(0.1, 1 + this.state.stats.psiPower / 100);
+      /*
+       * Vectors are a scalpel, not a lawnmower.
+       *
+       * Measured: standing perfectly still at level 1, Lucy took her first damage at 41
+       * seconds and killed 79 enemies without an input; by wave 3 she finished a minute
+       * untouched with 156 kills. Bando, who has no vectors, was hit at 8 seconds and
+       * dead at 23. The vectors were playing the game on the player's behalf.
+       *
+       * In the source her power is precision and lethality against a person, and she has
+       * the SHORTEST reach of any Diclonius with the best control. So the arms keep their
+       * ability to kill what they touch and lose their ability to hold a perimeter alone;
+       * clearing a crowd is what the weapons you buy are for.
+       */
+      const baseDmg = (9 + psiEff * 0.15) * (1 + psiEff / 100) * charBonus;
+      const isCrit = Math.random() < (this.state.stats.critChance / 100);
+      let finalDmg = isCrit ? baseDmg * this.state.stats.critDamage : baseDmg;
+
+      /*
+       * Control falls away at the edge of the radius.
+       *
+       * Reach bought area and full power with it, so a long-reach build killed
+       * everything before it arrived and was never in danger - reported as "reach is
+       * immortality". In the source the trade runs the other way: Lucy has the shortest
+       * reach of any Diclonius and the finest control, Mariko reaches eleven metres and
+       * cannot stand. Inside 60% of the radius nothing changes; past that a strike
+       * loses up to 40% of its force by the fingertips. Reach still decides what you
+       * can touch. It no longer decides how hard.
+       */
+      const strikeDist = Math.hypot(bestTarget.x - pX, bestTarget.y - pY);
+      const controlEdge = baseReach * 0.6;
+      if (strikeDist > controlEdge) {
+        const past = Math.min(1, (strikeDist - controlEdge) / Math.max(1, baseReach - controlEdge));
+        // Zone expansion: its card promises more damage at distance, which is exactly
+        // the counterweight to this falloff. With it, the fingertips lose a tenth
+        // instead of two fifths - so stacking reach becomes a plan rather than a trap.
+        finalDmg *= 1 - past * (this.hasMutation('lucy_dimensional_reach') ? 0.1 : 0.4);
+      }
+
+      // Special Mutation: Lucy Queen Execution
+      if (this.hasMutation('lucy_queen_blades') && !bestTarget.isBoss && bestTarget.hp <= bestTarget.maxHp * 0.25) {
+        finalDmg = bestTarget.hp + 100; // Instant execution
+      }
+
+      const strikeAngle = Math.atan2(bestTarget.y - pY, bestTarget.x - pX);
+      const vectorsDown = !!bestTarget.vectorsDisabledTimer && bestTarget.vectorsDisabledTimer > 0;
+      const isVectorDuel =
+        (bestTarget.vectorCount || 0) > 0 &&
+        !bestTarget.isStunned &&
+        !vectorsDown &&
+        (bestTarget.vectorGuard || 0) > 0;
+
+      if (isVectorDuel) {
+        // Direction from enemy to player (angle from which attack arrives at enemy)
+        const incomingAngleAtTarget = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
+
+        // Vector Duel: a parry needs an arm that covers the angle AND is free AND the
+        // boss must be off its parry cooldown. Previously any arm within the arc
+        // parried, every frame, so no strike ever landed while guard held.
+        let interceptingArm: BossVectorArm | null = null;
+        let isUnguardedAngle = false;
+        if (bestTarget.vectorArms && bestTarget.vectorArms.length > 0) {
+          let minAngleDiff = Infinity;
+          let candidate: BossVectorArm | null = null;
+          for (const bArm of bestTarget.vectorArms) {
+            let diff = Math.abs(bArm.currentAngle - incomingAngleAtTarget);
+            if (diff > Math.PI) diff = Math.PI * 2 - diff;
+            // An arm already committed to its own attack cannot also parry.
+            const armFree = !bArm.striking && !bArm.clashing;
+            if (diff < minAngleDiff && armFree) {
+              minAngleDiff = diff;
+              candidate = bArm;
+            }
+          }
+          // Guarding arc: coverage of ~85 degrees (Math.PI * 0.48).
+          isUnguardedAngle = minAngleDiff > Math.PI * 0.48;
+          const parryReady = (bestTarget.parryCooldownTimer || 0) <= 0;
+          if (!isUnguardedAngle && parryReady && candidate) {
+            interceptingArm = candidate;
+            bestTarget.parryCooldownTimer = bossParryCooldown(bestTarget.vectorArms.length);
+          }
+        } else {
+          isUnguardedAngle = true;
+        }
+
+        if (interceptingArm) {
+          // Diclonius Vector Duel: Target vector intercepts and clashes midair in 2D space!
+          arm.clashing = true;
+          arm.clashTimer = 0.22;
+          sound.playVectorClash();
+
+          const clashRatio = 0.48 + (Math.random() - 0.5) * 0.12;
+          const clashX = pX * (1 - clashRatio) + bestTarget.x * clashRatio + (Math.random() - 0.5) * 16;
+          const clashY = pY * (1 - clashRatio) + bestTarget.y * clashRatio + (Math.random() - 0.5) * 16;
+          arm.targetX = clashX;
+          arm.targetY = clashY;
+
+          interceptingArm.striking = true;
+          interceptingArm.strikeProgress = 0.5;
+          interceptingArm.strikeType = 'deflect';
+          interceptingArm.targetX = clashX;
+          interceptingArm.targetY = clashY;
+          interceptingArm.clashing = true;
+          interceptingArm.clashTimer = 0.22;
+
+          this.spawnVectorClash(clashX, clashY, strikeAngle, bestTarget.color || '#38bdf8');
+          this.triggerScreenShake(5, 0.12);
+
+          // 100% of damage to HP is BLOCKED; posture (vectorGuard) is depleted instead
+          const guardDmg = Math.round((GUARD_DAMAGE_BASE + this.state.stats.psiPower * GUARD_DAMAGE_PSI_SCALE) * (isCrit ? 1.5 : 1.0));
+          bestTarget.vectorGuard = Math.max(0, (bestTarget.vectorGuard || 0) - guardDmg);
+          bestTarget.guardBreakRecoverTimer = 2.5;
+
+          this.state.damageNumbers.push({
+            id: ++this.dmgNumIdCounter,
+            x: clashX,
+            y: clashY - 10,
+            text: getLanguage() === 'ru' ? `ОТРАЖЕНИЕ! -${guardDmg}` : `DEFLECTED! -${guardDmg}`,
+            color: '#38bdf8',
+            opacity: 1,
+            isCrit: false,
+            vy: -40,
+          });
+
+          if (bestTarget.vectorGuard <= 0) {
+            /*
+             * POSTURE BREAK.
+             *
+             * Against anything with horns this takes one, rather than handing out yet
+             * another interchangeable stun. Canon: the horns carry the vectors, losing
+             * one costs them, losing both ends them. That turns a duel from a stun
+             * treadmill into a fight with two milestones and a conclusion.
+             */
+            bestTarget.isStunned = true;
+            bestTarget.stunTimer = 2.4;
+            sound.playGuardBreak();
+            this.triggerScreenShake(14, 0.45);
+
+            let breakText = getLanguage() === 'ru' ? 'ПРОБИТИЕ ЗАЩИТЫ!' : 'GUARD BREAK!';
+            let breakColor = '#facc15';
+
+            if (bestTarget.hornsRemaining && bestTarget.hornsRemaining > 0) {
+              bestTarget.hornsRemaining--;
+              if (bestTarget.hornsRemaining <= 0) {
+                if (bestTarget.isBoss) {
+                  /*
+                   * A boss comes back maimed rather than finished: a long opening, then
+                   * half the vectors it had. Permanent removal read as the fight ending
+                   * while the health bar carried on.
+                   */
+                  this.disableVectors(bestTarget, BOSS_BOTH_HORNS_SHUTDOWN);
+                  bestTarget.vectorCount = Math.max(1, Math.floor((bestTarget.vectorCount || 2) / 2));
+                  bestTarget.vectorArms = (bestTarget.vectorArms || []).slice(0, bestTarget.vectorCount);
+                  bestTarget.stunTimer = 3.2;
+                  breakText = loc('ОБА РОГА СЛОМАНЫ — ПОЛОВИНА ВЕКТОРОВ ОТКАЗАЛА', 'BOTH HORNS BROKEN - HALF THE VECTORS GONE');
+                } else {
+                  // An ordinary unit with both horns gone is a body, and stays one.
+                  bestTarget.vectorsDisabledTimer = Number.POSITIVE_INFINITY;
+                  bestTarget.vectorArms = [];
+                  bestTarget.vectorCount = 0;
+                  bestTarget.stunTimer = 3.2;
+                  breakText = loc('ОБА РОГА СЛОМАНЫ — ВЕКТОРОВ БОЛЬШЕ НЕТ', 'BOTH HORNS BROKEN - VECTORS GONE');
+                }
+                breakColor = '#f87171';
+              } else {
+                // One horn: the vectors go quiet for a while and the guard cannot hold.
+                this.disableVectors(bestTarget, 4.5);
+                breakText = loc('РОГ СЛОМАН — ВЕКТОРЫ ОТКАЗАЛИ', 'HORN BROKEN - VECTORS DOWN');
+                breakColor = '#fb923c';
+              }
+              this.triggerScreenShake(11, 0.3);
+            }
+
+            this.state.damageNumbers.push({
+              id: ++this.dmgNumIdCounter,
+              x: bestTarget.x,
+              y: bestTarget.y - 28,
+              text: breakText,
+              color: breakColor,
+              opacity: 1,
+              isCrit: true,
+              vy: -60,
+            });
+
+            this.state.particles.push({
+              x: bestTarget.x,
+              y: bestTarget.y,
+              vx: 0,
+              vy: 0,
+              life: 0.5,
+              maxLife: 0.5,
+              size: bestTarget.radius * 3.5,
+              color: '#facc15',
+              alpha: 0.95,
+              type: 'psychic_ring',
+            });
+          }
+        } else if (isUnguardedAngle) {
+          // FLANK / REAR STRIKE! Enemy vectors were facing away or occupied!
+          const flankDmg = Math.round(finalDmg * 1.4);
+          this.damageEnemy(bestTarget, flankDmg, true);
+          sound.playVectorSlash();
+          this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, true, arm.strikeType);
+
+          this.state.damageNumbers.push({
+            id: ++this.dmgNumIdCounter,
+            x: bestTarget.x + (Math.random() - 0.5) * 20,
+            y: bestTarget.y - 28,
+            text: getLanguage() === 'ru' ? `УДАР В ТЫЛ! -${flankDmg}` : `REAR STRIKE! -${flankDmg}`,
+            color: '#f59e0b',
+            opacity: 1,
+            isCrit: true,
+            vy: -45,
+          });
+        } else {
+          // Guard covers the angle but every arm is busy or the parry is on cooldown:
+          // the strike lands clean. This is the pressure valve that lets a duel
+          // actually progress instead of every hit pinging off the guard.
+          this.damageEnemy(bestTarget, finalDmg, isCrit);
+          sound.playVectorSlash();
+          this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
+        }
+      } else {
+        // Check for Ballistic Riot Shield Directional Defense
+        const hasShield = (bestTarget.type === 'riot_shield' || (bestTarget.shield !== undefined && bestTarget.shield > 0)) && !bestTarget.isStunned;
+        if (hasShield) {
+          // Where the shield is actually pointing (it lags behind the player), versus
+          // where this strike is coming from.
+          const facingAngle = bestTarget.shieldAngle !== undefined
+            ? bestTarget.shieldAngle
+            : Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
+          const incomingAngle = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
+          let angleDiff = Math.abs(facingAngle - incomingAngle);
+          if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+
+          // Frontal coverage arc (~70 degrees, 1.22 radians)
+          if (angleDiff < 1.22) {
+            // Frontal Ballistic Shield Block!
+            const absorbed = Math.round(finalDmg * 0.85);
+            const bleedThrough = finalDmg - absorbed;
+            bestTarget.shield = Math.max(0, (bestTarget.shield || 0) - absorbed);
+            bestTarget.hp -= bleedThrough;
+            sound.playVectorClash();
+            this.spawnVectorClash(bestTarget.x, bestTarget.y, strikeAngle, '#94a3b8');
+            this.triggerScreenShake(3, 0.08);
+
+            this.state.damageNumbers.push({
+              id: ++this.dmgNumIdCounter,
+              x: bestTarget.x,
+              y: bestTarget.y - 20,
+              text: getLanguage() === 'ru' ? `БЛОК ЩИТОМ! -${absorbed}` : `SHIELD BLOCK! -${absorbed}`,
+              color: '#94a3b8',
+              opacity: 1,
+              isCrit: false,
+              vy: -35,
+            });
+
+            /*
+             * A man killed through his own shield is still killed.
+             *
+             * This path subtracts health directly and returns, so it never reached the
+             * death handler: a shield trooper finished off by bleed-through sat in the
+             * enemy list at negative health, counted as no kill, dropped no DNA and
+             * advanced no achievement until something else happened to hit him. Caught
+             * by the invariant probe as "dead enemy still in the list".
+             */
+            if (bestTarget.hp <= 0) {
+              this.killEnemy(bestTarget);
+              return true;
+            }
+
+            if (bestTarget.shield <= 0) {
+              sound.playGuardBreak();
+              bestTarget.isStunned = true;
+              bestTarget.stunTimer = 1.4;
+              this.state.damageNumbers.push({
+                id: ++this.dmgNumIdCounter,
+                x: bestTarget.x,
+                y: bestTarget.y - 32,
+                text: getLanguage() === 'ru' ? 'ЩИТ РАЗБИТ!' : 'SHIELD BROKEN!',
+                color: '#facc15',
+                opacity: 1,
+                isCrit: true,
+                vy: -50,
+              });
+            }
+            return true;
+          } else {
+            // FLANK / REAR BYPASS! Attack hits exposed side/back of shielded unit!
+            const flankDmg = Math.round(finalDmg * 1.5);
+            this.damageEnemy(bestTarget, flankDmg, true);
+            sound.playVectorSlash();
+            this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, true, arm.strikeType);
+
+            this.state.damageNumbers.push({
+              id: ++this.dmgNumIdCounter,
+              x: bestTarget.x,
+              y: bestTarget.y - 24,
+              text: getLanguage() === 'ru' ? `ОБХОД ЩИТА! -${flankDmg}` : `FLANK BYPASS! -${flankDmg}`,
+              color: '#f59e0b',
+              opacity: 1,
+              isCrit: true,
+              vy: -45,
+            });
+            return true;
+          }
+        }
+
+        // Direct vector slash (Normal enemy OR boss with broken posture / stunned!)
+        let bonusDmg = finalDmg;
+        if (bestTarget.isBoss && bestTarget.isStunned) {
+          bonusDmg = Math.round(finalDmg * 2.0); // 2x damage while boss posture is broken!
+        }
+        // The band is read before the strike drives the frequency up, so a phase build
+        // does not lose its bypass on the very hit that pushes it out of the band.
+        const strikeBand = vectorBand(arm.vibrationHz || restingHz);
+        this.damageEnemy(
+          bestTarget,
+          bonusDmg,
+          isCrit || (bestTarget.isBoss && bestTarget.isStunned),
+          undefined,
+          strikeBand === 'phase'
+        );
+        sound.playVectorSlash();
+        this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
+
+        /*
+         * Impulse whip: the strike knocks the rank back off its step.
+         *
+         * Small on any one hit and cumulative across a crowd, which is what turns a
+         * cordon closing on you into a cordon that keeps losing its footing.
+         */
+        if (this.hasMutation('lucy_kinetic_whip')) {
+          for (const other of this.state.enemies) {
+            if (other.hp <= 0 || other.isBoss || other.isHeavyMass) continue;
+            const d = Math.hypot(other.x - bestTarget.x, other.y - bestTarget.y);
+            if (d > 90) continue;
+            const push = Math.atan2(other.y - pY, other.x - pX);
+            other.x += Math.cos(push) * 26;
+            other.y += Math.sin(push) * 26;
+          }
+        }
+
+        /*
+         * Needle piercing: the point goes through the man and into the one behind, and
+         * opens the plate on both. Deliberately a shorter line than the focus lance -
+         * this is a tier 1 node, not an apex.
+         */
+        if (this.hasMutation('lucy_needle_pierce')) {
+          let pierced = 0;
+          for (const other of this.state.enemies) {
+            if (pierced >= 1) break;
+            if (other === bestTarget || other.hp <= 0) continue;
+            const along = (other.x - pX) * Math.cos(strikeAngle) + (other.y - pY) * Math.sin(strikeAngle);
+            if (along <= 0 || along > baseReach * 1.5) continue;
+            const offLine = Math.abs(
+              -(other.x - pX) * Math.sin(strikeAngle) + (other.y - pY) * Math.cos(strikeAngle)
+            );
+            if (offLine > 24) continue;
+            // Armour-piercing by definition: a needle does not have to cut the plate.
+            this.damageEnemy(other, finalDmg * 0.6, false, undefined, true);
+            this.spawnVectorImpact(other.x, other.y, strikeAngle, false, 'pierce');
+            pierced++;
+          }
+        }
+
+        /*
+         * Stasis touch: what the arm leaves behind is a man who cannot get away.
+         *
+         * Nana's whole business is holding ground, and a quarter off the target's pace
+         * for a second and a half is what lets her actually do it.
+         */
+        if (this.hasMutation('nana_stasis_tap') && !bestTarget.isBoss) {
+          bestTarget.stasisSlowTimer = 1.5;
+        }
+
+        /*
+         * Kinetic focus lance: the thrust does not stop at the first body. Everything
+         * standing on the line behind the target takes it at reduced force, which is
+         * what makes it the answer to a rank of heavy infantry, as its card says.
+         */
+        if (this.hasMutation('nana_orbital_lance')) {
+          for (const other of this.state.enemies) {
+            if (other === bestTarget || other.hp <= 0) continue;
+            const along = (other.x - pX) * Math.cos(strikeAngle) + (other.y - pY) * Math.sin(strikeAngle);
+            if (along <= 0 || along > baseReach * 2.1) continue;
+            const offLine = Math.abs(
+              -(other.x - pX) * Math.sin(strikeAngle) + (other.y - pY) * Math.cos(strikeAngle)
+            );
+            if (offLine > 26) continue;
+            this.damageEnemy(other, finalDmg * 0.55, false);
+            this.spawnVectorImpact(other.x, other.y, strikeAngle, false, 'pierce');
+          }
+        }
+
+        /*
+         * Cascading micro-needle volley: a needle goes out to a shooter holding the
+         * far line, which is the only thing that reaches the men the arms cannot.
+         */
+        /*
+         * Cluster shards: the needle comes apart on the body and the pieces go on into
+         * whoever is standing beside it. The card's own words - coverage against a
+         * dense rank.
+         */
+        if (this.hasMutation('mariko_cluster_shards')) {
+          for (let sh = 0; sh < 2; sh++) {
+            const shAng = strikeAngle + (sh === 0 ? 0.7 : -0.7);
+            this.state.projectiles.push({
+              id: ++this.projectileIdCounter,
+              x: bestTarget.x, y: bestTarget.y,
+              vx: Math.cos(shAng) * 520, vy: Math.sin(shAng) * 520,
+              radius: 3.5,
+              damage: finalDmg * 0.45,
+              isPlayer: true,
+              color: '#facc15',
+              life: 0.4, maxLife: 0.4,
+              penetration: 1,
+            });
+          }
+        }
+
+        if (this.hasMutation('mariko_storm_of_gods') && Math.random() < 0.3) {
+          let far: Enemy | null = null;
+          let farDist = 0;
+          for (const other of this.state.enemies) {
+            if (other.hp <= 0 || other.shootCooldown === undefined) continue;
+            const d = Math.hypot(other.x - pX, other.y - pY);
+            if (d > farDist && d < 900) { farDist = d; far = other; }
+          }
+          if (far) {
+            const needleAng = Math.atan2(far.y - pY, far.x - pX);
+            this.state.projectiles.push({
+              id: ++this.projectileIdCounter,
+              x: pX, y: pY,
+              vx: Math.cos(needleAng) * 880,
+              vy: Math.sin(needleAng) * 880,
+              radius: 4,
+              damage: finalDmg * 0.8,
+              isPlayer: true,
+              color: '#facc15',
+              life: 1.2,
+              maxLife: 1.2,
+              penetration: 2,
+            });
+          }
+        }
+
+        /*
+         * Vibration band effects.
+         *
+         * Striking drives the frequency up from the build's resting value, so a build
+         * that idles low still climbs during a sustained fight - the band is where the
+         * arm sits right now, not a fixed loadout choice.
+         */
+        // Overflow frequency is spent here: a build that shopped hard for frequency
+        // climbs roughly three times faster and reaches the top band in one strike.
+        const climb = 75 + this.vibrationOverflow * 0.32;
+        arm.vibrationHz = Math.min(1300, (arm.vibrationHz || restingHz) + climb);
+        const band = vectorBand(arm.vibrationHz);
+
+        if (band === 'shear') {
+          // High frequency cuts: the original resonance bonus.
+          this.damageEnemy(bestTarget, Math.round(finalDmg * 0.45), true);
+        } else if (band === 'critical') {
+          // Extreme frequency becomes visible and detonates on contact. Splash is
+          // deliberately modest per target - its value is hitting a packed rank at all.
+          // Inside the top band the blast still grows with frequency, so the scale keeps
+          // paying above 900 instead of flattening the moment the band is entered.
+          const overBand = Math.min(1, Math.max(0, (arm.vibrationHz - 900) / 400));
+          this.damageEnemy(bestTarget, Math.round(finalDmg * (0.3 + overBand * 0.25)), true);
+          const blastR = 74 + overBand * 38;
+          for (const other of this.state.enemies) {
+            if (other === bestTarget || other.hp <= 0) continue;
+            if (Math.hypot(other.x - bestTarget.x, other.y - bestTarget.y) > blastR) continue;
+            this.damageEnemy(other, Math.round(finalDmg * 0.34), false);
+          }
+          this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, true, 'slash');
+        } else if (band === 'kinetic') {
+          // Mid frequency lifts and bursts vessels: the internal rupture the engine
+          // already models, applied on a fraction of strikes.
+          if (!bestTarget.isBoss && Math.random() < 0.22 && (bestTarget.internalRuptureTimer || 0) <= 0) {
+            bestTarget.internalRuptureTimer = 1.6;
+          }
+        }
+        // 'phase' has no bonus here; its whole point is handled before mitigation,
+        // in damageEnemy, where it ignores armour and shields outright.
+
+        // Telekinetic Fling: Hurling slain enemy corpse or kinetic blast through enemy ranks
+        const canFling = arm.role === 'flinger' || (bestTarget.hp <= 0 && Math.random() < 0.4);
+        if (canFling) {
+          arm.strikeType = 'fling';
+          const flingAngle = strikeAngle + (Math.random() - 0.5) * 0.15;
+          this.state.projectiles.push({
+            id: ++this.projectileIdCounter,
+            x: bestTarget.x,
+            y: bestTarget.y,
+            vx: Math.cos(flingAngle) * 820,
+            vy: Math.sin(flingAngle) * 820,
+            damage: Math.round((48 + this.state.stats.psiPower * 0.85) * psiMultiplier),
+            radius: 8,
+            color: this.state.character.id === 'lucy' ? '#ef4444' : '#38bdf8',
+            life: 0.75,
+            maxLife: 0.75,
+            penetration: 4,
+            isPlayer: true,
+            isBullet: false,
+          });
+          this.triggerScreenShake(3, 0.1);
+        }
+      }
+
+      // Special Mutation: Lucy Relativistic Double-Rend
+      if (this.hasMutation('lucy_double_rend')) {
+        this.scheduleGameTime(0.06, () => {
+          if (bestTarget && bestTarget.hp > 0) {
+            this.damageEnemy(bestTarget, finalDmg * 0.6, isCrit);
+            this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle + 0.3, false, 'slash');
+          }
+        });
+      }
+
+      // Special Mutation: Mariko Micro-Needles
+      if (this.hasMutation('mariko_needle_fire')) {
+        this.state.projectiles.push({
+          id: ++this.projectileIdCounter,
+          x: pX,
+          y: pY,
+          vx: Math.cos(strikeAngle) * 650,
+          vy: Math.sin(strikeAngle) * 650,
+          damage: 18 * psiMultiplier,
+          radius: 4,
+          color: '#facc15',
+          life: 0.6,
+          maxLife: 0.6,
+          penetration: this.hasMutation('mariko_shield_breaker') ? 3 : 1,
+          isPlayer: true,
+          isBullet: false,
+        });
+      }
+
+      // Special Mutation: Nana Trident Needles
+      if (this.hasMutation('nana_trident_thrust') && arm.strikeType === 'pierce') {
+        [-0.2, 0.2].forEach((offsetAngle) => {
+          this.state.projectiles.push({
+            id: ++this.projectileIdCounter,
+            x: pX,
+            y: pY,
+            vx: Math.cos(strikeAngle + offsetAngle) * 580,
+            vy: Math.sin(strikeAngle + offsetAngle) * 580,
+            damage: 22 * psiMultiplier,
+            radius: 4,
+            color: '#c084fc',
+            life: 0.6,
+            maxLife: 0.6,
+            penetration: 2,
+            isPlayer: true,
+            isBullet: false,
+          });
+        });
+      }
+
+      // Cleave / Sweep: if slashing, also slice nearby enemies caught in the cutting arc
+      if (arm.strikeType === 'slash') {
+        const cleaveRadius = this.hasMutation('lucy_whirlwind_cleave') ? 80 : 38;
+        for (const otherEnemy of nearbyEnemies) {
+          if (otherEnemy.id === bestTarget.id) continue;
+          const dToLine = Math.hypot(
+            otherEnemy.x - (pX + (bestTarget.x - pX) * 0.5),
+            otherEnemy.y - (pY + (bestTarget.y - pY) * 0.5)
+          );
+          if (dToLine < cleaveRadius) {
+            this.damageEnemy(otherEnemy, finalDmg * (this.hasMutation('lucy_whirlwind_cleave') ? 0.75 : 0.5), false);
+            this.spawnVectorImpact(otherEnemy.x, otherEnemy.y, strikeAngle, false, 'slash');
+          }
+        }
+      }
+
+      // Individual vector attack cooldown (staggered for fluid multi-limb cadence)
+      let cadenceMultiplier = 1.0;
+      if (this.hasMutation('lucy_hyper_freq')) cadenceMultiplier *= 0.7;
+      if (this.hasMutation('mariko_storm_cadence')) cadenceMultiplier *= 0.55;
+      if (this.hasMutation('nana_vector_swiftness')) cadenceMultiplier *= 0.7;
+      // hasMutation matches node ids, and 'nyu_low_hp_frenzy' is a specialPerkId, not a
+      // node id - so Nyu's wounded-frenzy cadence never once triggered. The node that
+      // declares that perk is nyu_dual_psyche.
+      if (this.hasMutation('nyu_dual_psyche') && this.state.player.hp < this.state.player.maxHp * 0.5) cadenceMultiplier *= 0.5;
+
+      const isBossDuel = nearbyEnemies.some((e) => e.isBoss);
+      // Slower against rank and file, unchanged in a duel: the arms should still feel
+      // decisive against a single dangerous target, which is what they are for.
+      const baseCadence = (isBossDuel ? (totalArmCount > 10 ? 0.35 : 0.25) : (totalArmCount > 10 ? 1.05 : 0.62)) * cadenceMultiplier;
+      arm.attackCooldown = (baseCadence / atkSpeedMod) * (0.8 + Math.random() * 0.4);
+    } else if (this.state.patrolBoats && this.state.patrolBoats.some((b) => b.phase !== 'sinking' && Math.hypot(b.x - pX, b.y - pY) <= maxEngageDistance * 1.3)) {
+      /*
+       * Vectors reach out over the water.
+       *
+       * A boat sitting offshore shelling the beach has to be answerable, or the only
+       * play against it is to walk out of the arena's whole left third. The reach is the
+       * same one that tears helicopters down.
+       */
+      const boat = this.state.patrolBoats.find(
+        (b) => b.phase !== 'sinking' && Math.hypot(b.x - pX, b.y - pY) <= maxEngageDistance * 1.3
+      )!;
+      const bAngle = Math.atan2(boat.y - pY, boat.x - pX);
+      let bAngleDiff = Math.abs(arm.baseAngle - bAngle);
+      if (bAngleDiff > Math.PI) bAngleDiff = Math.PI * 2 - bAngleDiff;
+
+      if (bAngleDiff < Math.PI * 0.65) {
+        arm.striking = true;
+        arm.strikeProgress = 0;
+        arm.targetX = boat.x + (Math.random() - 0.5) * 40;
+        arm.targetY = boat.y + (Math.random() - 0.5) * 20;
+        arm.strikeType = Math.random() < 0.5 ? 'slash' : 'pierce';
+
+        const baseDmg = (34 + this.state.stats.psiPower * 0.6) * psiMultiplier;
+        const isCrit = Math.random() < (this.state.stats.critChance / 100);
+        const finalDmg = Math.round(isCrit ? baseDmg * this.state.stats.critDamage : baseDmg);
+        boat.hp -= finalDmg;
+        sound.playMetalClank();
+        this.triggerScreenShake(4, 0.14);
+        this.state.damageNumbers.push({
+          id: ++this.dmgNumIdCounter,
+          x: arm.targetX,
+          y: arm.targetY - 15,
+          text: `${finalDmg}`,
+          color: isCrit ? '#f59e0b' : '#38bdf8',
+          opacity: 1,
+          isCrit,
+          vy: -40,
+        });
+        arm.attackCooldown = (0.5 / atkSpeedMod) * (0.8 + Math.random() * 0.4);
+      }
+    } else if (this.state.dropships && this.state.dropships.length > 0) {
+      // Autonomous Vector Anti-Air: Tear into Dropship Gunships!
+      const livingDropships = this.state.dropships.filter(
+        (d) => d.phase !== 'crashing' && d.altitude <= 0.95 && Math.hypot(d.x - pX, d.y - pY) <= maxEngageDistance * 1.45
+      );
+      if (livingDropships.length > 0) {
+        const targetDropship = livingDropships[0];
+        const dAngle = Math.atan2(targetDropship.y - pY, targetDropship.x - pX);
+        let dAngleDiff = Math.abs(arm.baseAngle - dAngle);
+        if (dAngleDiff > Math.PI) dAngleDiff = Math.PI * 2 - dAngleDiff;
+
+        if (dAngleDiff < Math.PI * 0.65) {
+          arm.striking = true;
+          arm.strikeProgress = 0;
+          const strikeOffset = (Math.random() - 0.5) * 44;
+          arm.targetX = targetDropship.x + strikeOffset;
+          arm.targetY = targetDropship.y + (Math.random() - 0.5) * 22;
+          arm.strikeType = Math.random() < 0.5 ? 'slash' : 'pierce';
+
+          const baseDmg = (36 + this.state.stats.psiPower * 0.65) * psiMultiplier;
+          const isCrit = Math.random() < (this.state.stats.critChance / 100);
+          const finalDmg = isCrit ? baseDmg * this.state.stats.critDamage : baseDmg;
+
+          targetDropship.hp -= Math.round(finalDmg);
+          sound.playMetalClank();
+          sound.playVectorSlash();
+          this.triggerScreenShake(4, 0.15);
+
+          this.state.damageNumbers.push({
+            id: ++this.dmgNumIdCounter,
+            x: arm.targetX,
+            y: arm.targetY - 15,
+            text: `${Math.round(finalDmg)}`,
+            color: isCrit ? '#f59e0b' : '#38bdf8',
+            opacity: 1,
+            scale: isCrit ? 1.4 : 1.0,
+            isCrit,
+            vy: -40,
+          });
+
+          for (let sp = 0; sp < 4; sp++) {
+            this.state.particles.push({
+              x: arm.targetX,
+              y: arm.targetY,
+              vx: (Math.random() - 0.5) * 220,
+              vy: (Math.random() - 0.5) * 220,
+              life: 0.25,
+              maxLife: 0.25,
+              size: 3,
+              color: '#f59e0b',
+              alpha: 1,
+              type: 'spark',
+            });
+          }
+
+          const baseCadence = (totalArmCount > 10 ? 0.35 : 0.22) / atkSpeedMod;
+          arm.attackCooldown = baseCadence * (0.8 + Math.random() * 0.4);
+        }
+      }
+    }
+    return false;
+  }
+
   private updateVectorArms(dt: number) {
     if (this.state.vectorArms.length === 0) return;
 
@@ -3412,6 +4290,23 @@ export class GameEngine {
     const totalArmCount = this.state.vectorArms.length;
     const targetedEnemyCounts = new Map<number, number>();
 
+    // Does not depend on the arm, so it is worked out once for the frame.
+    const restingHz = this.state.stats.vibrationBase || 250;
+
+    const armFrame: ArmFrameContext = {
+      pX,
+      pY,
+      baseReach,
+      maxEngageDistance,
+      restingHz,
+      atkSpeedMod,
+      psiMultiplier,
+      nearbyEnemies,
+      nearbyDropships,
+      totalArmCount,
+      targetedEnemyCounts,
+    };
+
     this.state.vectorArms.forEach((arm, i) => {
       arm.length = baseReach;
       arm.attackCooldown -= dt;
@@ -3424,7 +4319,6 @@ export class GameEngine {
       }
 
       // Vibration frequency dynamics
-      const restingHz = this.state.stats.vibrationBase || 250;
       if (arm.vibrationHz === undefined) arm.vibrationHz = restingHz;
       if (!arm.striking) {
         arm.vibrationHz = Math.max(restingHz, arm.vibrationHz - dt * 160);
@@ -3755,846 +4649,8 @@ export class GameEngine {
       }
 
       // 2. Autonomous Vector Combat AI: Find & Engage Independent Enemy or Dropship
-      if (!arm.striking && arm.attackCooldown <= 0 && this.state.isWaveActive) {
-        let bestTarget: typeof nearbyEnemies[0] | null = null;
-        let bestDropship: typeof nearbyDropships[0] | null = null;
-        let bestScore = -Infinity;
-
-        // Check if a nearby dropship can be engaged by vectors
-        for (const d of nearbyDropships) {
-          const dist = Math.hypot(d.x - pX, d.y - pY);
-          const dropshipAngle = Math.atan2(d.y - pY, d.x - pX);
-          let angleDiff = Math.abs(arm.baseAngle - dropshipAngle);
-          if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
-
-          const targetLoad = targetedEnemyCounts.get(d.id) || 0;
-          const maxLoadOnDropship = Math.max(2, Math.min(8, Math.ceil(totalArmCount * 0.65)));
-          if (targetLoad < maxLoadOnDropship) {
-            const angleScore = Math.max(0, 1 - angleDiff / Math.PI) * 45;
-            const distScore = (1 - dist / (maxEngageDistance + d.radius)) * 40;
-            const score = angleScore + distScore + 35 - targetLoad * 12;
-            if (score > bestScore) {
-              bestScore = score;
-              bestDropship = d;
-              bestTarget = null;
-            }
-          }
-        }
-
-        for (const enemy of nearbyEnemies) {
-          const dist = Math.hypot(enemy.x - pX, enemy.y - pY);
-          const enemyAngle = Math.atan2(enemy.y - pY, enemy.x - pX);
-          let angleDiff = Math.abs(arm.baseAngle - enemyAngle);
-          if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
-
-          const targetLoad = targetedEnemyCounts.get(enemy.id) || 0;
-          // Dynamic tactical allocation: For BOSSES, ALL available player vectors engage simultaneously!
-          let maxLoadPerEnemy = enemy.isBoss
-            ? totalArmCount
-            : (totalArmCount > 10
-                ? Math.max(3, Math.min(8, Math.ceil(totalArmCount / Math.max(1, nearbyEnemies.length))))
-                : (enemy.isElite ? 2 : 1));
-          if (this.hasMutation('lucy_dual_target') && !enemy.isBoss) maxLoadPerEnemy = Math.min(maxLoadPerEnemy, 2);
-          // Vector convergence: the apex promises four arms on one target in concert.
-          if (this.hasMutation('lucy_omni_slaughter') && !enemy.isBoss) maxLoadPerEnemy = Math.max(maxLoadPerEnemy, 4);
-          if (this.hasMutation('mariko_swarm_distrib') && !enemy.isBoss) maxLoadPerEnemy = Math.max(1, Math.floor(totalArmCount / Math.max(1, nearbyEnemies.length)));
-          // Multi-capture synchronisation: the swarm spreads across six separate targets
-          // rather than piling onto whichever one is nearest.
-          if (this.hasMutation('mariko_omni_matrix') && !enemy.isBoss) maxLoadPerEnemy = Math.max(maxLoadPerEnemy, Math.ceil(totalArmCount / 6));
-
-          // Prevent dogpiling on normal grunts, but allow all vectors against bosses
-          if (targetLoad >= maxLoadPerEnemy) {
-            continue;
-          }
-
-          const angleScore = Math.max(0, 1 - angleDiff / Math.PI) * 45;
-          const distScore = (1 - dist / maxEngageDistance) * 35;
-          const bossBonus = enemy.isBoss ? 40 : 0;
-          const loadPenalty = enemy.isBoss ? 0 : targetLoad * 25;
-
-          const score = angleScore + distScore + bossBonus - loadPenalty;
-          if (score > bestScore) {
-            bestScore = score;
-            bestTarget = enemy;
-            bestDropship = null;
-          }
-        }
-
-        if (bestDropship) {
-          targetedEnemyCounts.set(bestDropship.id, (targetedEnemyCounts.get(bestDropship.id) || 0) + 1);
-          arm.striking = true;
-          arm.strikeProgress = 0;
-          arm.targetX = bestDropship.x + (Math.random() - 0.5) * 40;
-          arm.targetY = bestDropship.y + (Math.random() - 0.5) * 20;
-          arm.targetEnemyId = bestDropship.id;
-          arm.strikeType = 'slash';
-
-          // Base independent vector unit damage. Uses the same soft-capped PSI law as every
-          // other damage path - this branch used to scale uncapped and quadratically.
-          const psiEffAir = effectivePsi(this.state.stats.psiPower);
-          const charBonusAir = psiMultiplier / Math.max(0.1, 1 + this.state.stats.psiPower / 100);
-          const baseDmg = (16 + psiEffAir * 0.4) * (1 + psiEffAir / 100) * charBonusAir;
-          const isCrit = Math.random() < (this.state.stats.critChance / 100);
-          const finalDmg = Math.round((isCrit ? baseDmg * this.state.stats.critDamage : baseDmg) * 1.35);
-
-          bestDropship.hp -= finalDmg;
-          sound.playMetalClank();
-          sound.playVectorSlash();
-          const strikeAngle = Math.atan2(bestDropship.y - pY, bestDropship.x - pX);
-          this.spawnVectorImpact(bestDropship.x, bestDropship.y, strikeAngle, isCrit, 'slash');
-
-          for (let sp = 0; sp < 4; sp++) {
-            this.state.particles.push({
-              x: arm.targetX,
-              y: arm.targetY,
-              vx: (Math.random() - 0.5) * 180,
-              vy: (Math.random() - 0.5) * 180,
-              life: 0.22,
-              maxLife: 0.22,
-              size: 4,
-              color: '#f59e0b',
-              alpha: 1,
-              type: 'spark',
-            });
-          }
-
-          this.state.damageNumbers.push({
-            id: ++this.dmgNumIdCounter,
-            x: bestDropship.x + (Math.random() - 0.5) * 30,
-            y: bestDropship.y - 15,
-            text: `-${finalDmg}`,
-            color: isCrit ? '#facc15' : '#f97316',
-            opacity: 1,
-            isCrit,
-            vy: -45,
-          });
-
-          if (bestDropship.hp <= 0 && bestDropship.phase !== 'crashing') {
-            bestDropship.phase = 'crashing';
-            bestDropship.crashTimer = 2.4;
-            bestDropship.crashVx = (Math.random() - 0.5) * 140;
-            bestDropship.crashVy = 180;
-            bestDropship.crashRot = (Math.random() > 0.5 ? 1 : -1) * 8;
-            sound.playHelicopterCrash();
-            this.triggerScreenShake(14, 0.7);
-            this.state.dropshipWarningText = getLanguage() === 'ru'
-              ? 'КРУШЕНИЕ: БОЕВОЙ ВЕРТОЛЕТ SAT СБИТ И ПАДАЕТ!'
-              : 'CRASH: SAT ATTACK HELICOPTER SHOT DOWN!';
-            this.state.dropshipWarningTimer = 3.0;
-          }
-        } else if (bestTarget) {
-          targetedEnemyCounts.set(bestTarget.id, (targetedEnemyCounts.get(bestTarget.id) || 0) + 1);
-
-          arm.striking = true;
-          arm.strikeProgress = 0;
-          if (bestTarget.isBoss) {
-            // Disperse strike positions across the perimeter and approach angle of the boss!
-            const strikeOffsetAngle = arm.baseAngle + (Math.random() - 0.5) * 0.5;
-            const strikeRadius = (bestTarget.radius || 28) * (0.55 + Math.random() * 0.5);
-            arm.targetX = bestTarget.x + Math.cos(strikeOffsetAngle) * strikeRadius;
-            arm.targetY = bestTarget.y + Math.sin(strikeOffsetAngle) * strikeRadius;
-          } else {
-            arm.targetX = bestTarget.x;
-            arm.targetY = bestTarget.y;
-          }
-          arm.targetEnemyId = bestTarget.id;
-          arm.strikeType = Math.random() < 0.45 ? 'pierce' : 'slash';
-
-          // Base independent vector unit damage (scaled cleanly by psi power with soft cap and character state)
-          const psiEff = effectivePsi(this.state.stats.psiPower);
-          const charBonus = psiMultiplier / Math.max(0.1, 1 + this.state.stats.psiPower / 100);
-          /*
-           * Vectors are a scalpel, not a lawnmower.
-           *
-           * Measured: standing perfectly still at level 1, Lucy took her first damage at 41
-           * seconds and killed 79 enemies without an input; by wave 3 she finished a minute
-           * untouched with 156 kills. Bando, who has no vectors, was hit at 8 seconds and
-           * dead at 23. The vectors were playing the game on the player's behalf.
-           *
-           * In the source her power is precision and lethality against a person, and she has
-           * the SHORTEST reach of any Diclonius with the best control. So the arms keep their
-           * ability to kill what they touch and lose their ability to hold a perimeter alone;
-           * clearing a crowd is what the weapons you buy are for.
-           */
-          const baseDmg = (9 + psiEff * 0.15) * (1 + psiEff / 100) * charBonus;
-          const isCrit = Math.random() < (this.state.stats.critChance / 100);
-          let finalDmg = isCrit ? baseDmg * this.state.stats.critDamage : baseDmg;
-
-          /*
-           * Control falls away at the edge of the radius.
-           *
-           * Reach bought area and full power with it, so a long-reach build killed
-           * everything before it arrived and was never in danger - reported as "reach is
-           * immortality". In the source the trade runs the other way: Lucy has the shortest
-           * reach of any Diclonius and the finest control, Mariko reaches eleven metres and
-           * cannot stand. Inside 60% of the radius nothing changes; past that a strike
-           * loses up to 40% of its force by the fingertips. Reach still decides what you
-           * can touch. It no longer decides how hard.
-           */
-          const strikeDist = Math.hypot(bestTarget.x - pX, bestTarget.y - pY);
-          const controlEdge = baseReach * 0.6;
-          if (strikeDist > controlEdge) {
-            const past = Math.min(1, (strikeDist - controlEdge) / Math.max(1, baseReach - controlEdge));
-            // Zone expansion: its card promises more damage at distance, which is exactly
-            // the counterweight to this falloff. With it, the fingertips lose a tenth
-            // instead of two fifths - so stacking reach becomes a plan rather than a trap.
-            finalDmg *= 1 - past * (this.hasMutation('lucy_dimensional_reach') ? 0.1 : 0.4);
-          }
-
-          // Special Mutation: Lucy Queen Execution
-          if (this.hasMutation('lucy_queen_blades') && !bestTarget.isBoss && bestTarget.hp <= bestTarget.maxHp * 0.25) {
-            finalDmg = bestTarget.hp + 100; // Instant execution
-          }
-
-          const strikeAngle = Math.atan2(bestTarget.y - pY, bestTarget.x - pX);
-          const vectorsDown = !!bestTarget.vectorsDisabledTimer && bestTarget.vectorsDisabledTimer > 0;
-          const isVectorDuel =
-            (bestTarget.vectorCount || 0) > 0 &&
-            !bestTarget.isStunned &&
-            !vectorsDown &&
-            (bestTarget.vectorGuard || 0) > 0;
-
-          if (isVectorDuel) {
-            // Direction from enemy to player (angle from which attack arrives at enemy)
-            const incomingAngleAtTarget = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
-
-            // Vector Duel: a parry needs an arm that covers the angle AND is free AND the
-            // boss must be off its parry cooldown. Previously any arm within the arc
-            // parried, every frame, so no strike ever landed while guard held.
-            let interceptingArm: BossVectorArm | null = null;
-            let isUnguardedAngle = false;
-            if (bestTarget.vectorArms && bestTarget.vectorArms.length > 0) {
-              let minAngleDiff = Infinity;
-              let candidate: BossVectorArm | null = null;
-              for (const bArm of bestTarget.vectorArms) {
-                let diff = Math.abs(bArm.currentAngle - incomingAngleAtTarget);
-                if (diff > Math.PI) diff = Math.PI * 2 - diff;
-                // An arm already committed to its own attack cannot also parry.
-                const armFree = !bArm.striking && !bArm.clashing;
-                if (diff < minAngleDiff && armFree) {
-                  minAngleDiff = diff;
-                  candidate = bArm;
-                }
-              }
-              // Guarding arc: coverage of ~85 degrees (Math.PI * 0.48).
-              isUnguardedAngle = minAngleDiff > Math.PI * 0.48;
-              const parryReady = (bestTarget.parryCooldownTimer || 0) <= 0;
-              if (!isUnguardedAngle && parryReady && candidate) {
-                interceptingArm = candidate;
-                bestTarget.parryCooldownTimer = bossParryCooldown(bestTarget.vectorArms.length);
-              }
-            } else {
-              isUnguardedAngle = true;
-            }
-
-            if (interceptingArm) {
-              // Diclonius Vector Duel: Target vector intercepts and clashes midair in 2D space!
-              arm.clashing = true;
-              arm.clashTimer = 0.22;
-              sound.playVectorClash();
-
-              const clashRatio = 0.48 + (Math.random() - 0.5) * 0.12;
-              const clashX = pX * (1 - clashRatio) + bestTarget.x * clashRatio + (Math.random() - 0.5) * 16;
-              const clashY = pY * (1 - clashRatio) + bestTarget.y * clashRatio + (Math.random() - 0.5) * 16;
-              arm.targetX = clashX;
-              arm.targetY = clashY;
-
-              interceptingArm.striking = true;
-              interceptingArm.strikeProgress = 0.5;
-              interceptingArm.strikeType = 'deflect';
-              interceptingArm.targetX = clashX;
-              interceptingArm.targetY = clashY;
-              interceptingArm.clashing = true;
-              interceptingArm.clashTimer = 0.22;
-
-              this.spawnVectorClash(clashX, clashY, strikeAngle, bestTarget.color || '#38bdf8');
-              this.triggerScreenShake(5, 0.12);
-
-              // 100% of damage to HP is BLOCKED; posture (vectorGuard) is depleted instead
-              const guardDmg = Math.round((GUARD_DAMAGE_BASE + this.state.stats.psiPower * GUARD_DAMAGE_PSI_SCALE) * (isCrit ? 1.5 : 1.0));
-              bestTarget.vectorGuard = Math.max(0, (bestTarget.vectorGuard || 0) - guardDmg);
-              bestTarget.guardBreakRecoverTimer = 2.5;
-
-              this.state.damageNumbers.push({
-                id: ++this.dmgNumIdCounter,
-                x: clashX,
-                y: clashY - 10,
-                text: getLanguage() === 'ru' ? `ОТРАЖЕНИЕ! -${guardDmg}` : `DEFLECTED! -${guardDmg}`,
-                color: '#38bdf8',
-                opacity: 1,
-                isCrit: false,
-                vy: -40,
-              });
-
-              if (bestTarget.vectorGuard <= 0) {
-                /*
-                 * POSTURE BREAK.
-                 *
-                 * Against anything with horns this takes one, rather than handing out yet
-                 * another interchangeable stun. Canon: the horns carry the vectors, losing
-                 * one costs them, losing both ends them. That turns a duel from a stun
-                 * treadmill into a fight with two milestones and a conclusion.
-                 */
-                bestTarget.isStunned = true;
-                bestTarget.stunTimer = 2.4;
-                sound.playGuardBreak();
-                this.triggerScreenShake(14, 0.45);
-
-                let breakText = getLanguage() === 'ru' ? 'ПРОБИТИЕ ЗАЩИТЫ!' : 'GUARD BREAK!';
-                let breakColor = '#facc15';
-
-                if (bestTarget.hornsRemaining && bestTarget.hornsRemaining > 0) {
-                  bestTarget.hornsRemaining--;
-                  if (bestTarget.hornsRemaining <= 0) {
-                    if (bestTarget.isBoss) {
-                      /*
-                       * A boss comes back maimed rather than finished: a long opening, then
-                       * half the vectors it had. Permanent removal read as the fight ending
-                       * while the health bar carried on.
-                       */
-                      this.disableVectors(bestTarget, BOSS_BOTH_HORNS_SHUTDOWN);
-                      bestTarget.vectorCount = Math.max(1, Math.floor((bestTarget.vectorCount || 2) / 2));
-                      bestTarget.vectorArms = (bestTarget.vectorArms || []).slice(0, bestTarget.vectorCount);
-                      bestTarget.stunTimer = 3.2;
-                      breakText = loc('ОБА РОГА СЛОМАНЫ — ПОЛОВИНА ВЕКТОРОВ ОТКАЗАЛА', 'BOTH HORNS BROKEN - HALF THE VECTORS GONE');
-                    } else {
-                      // An ordinary unit with both horns gone is a body, and stays one.
-                      bestTarget.vectorsDisabledTimer = Number.POSITIVE_INFINITY;
-                      bestTarget.vectorArms = [];
-                      bestTarget.vectorCount = 0;
-                      bestTarget.stunTimer = 3.2;
-                      breakText = loc('ОБА РОГА СЛОМАНЫ — ВЕКТОРОВ БОЛЬШЕ НЕТ', 'BOTH HORNS BROKEN - VECTORS GONE');
-                    }
-                    breakColor = '#f87171';
-                  } else {
-                    // One horn: the vectors go quiet for a while and the guard cannot hold.
-                    this.disableVectors(bestTarget, 4.5);
-                    breakText = loc('РОГ СЛОМАН — ВЕКТОРЫ ОТКАЗАЛИ', 'HORN BROKEN - VECTORS DOWN');
-                    breakColor = '#fb923c';
-                  }
-                  this.triggerScreenShake(11, 0.3);
-                }
-
-                this.state.damageNumbers.push({
-                  id: ++this.dmgNumIdCounter,
-                  x: bestTarget.x,
-                  y: bestTarget.y - 28,
-                  text: breakText,
-                  color: breakColor,
-                  opacity: 1,
-                  isCrit: true,
-                  vy: -60,
-                });
-
-                this.state.particles.push({
-                  x: bestTarget.x,
-                  y: bestTarget.y,
-                  vx: 0,
-                  vy: 0,
-                  life: 0.5,
-                  maxLife: 0.5,
-                  size: bestTarget.radius * 3.5,
-                  color: '#facc15',
-                  alpha: 0.95,
-                  type: 'psychic_ring',
-                });
-              }
-            } else if (isUnguardedAngle) {
-              // FLANK / REAR STRIKE! Enemy vectors were facing away or occupied!
-              const flankDmg = Math.round(finalDmg * 1.4);
-              this.damageEnemy(bestTarget, flankDmg, true);
-              sound.playVectorSlash();
-              this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, true, arm.strikeType);
-
-              this.state.damageNumbers.push({
-                id: ++this.dmgNumIdCounter,
-                x: bestTarget.x + (Math.random() - 0.5) * 20,
-                y: bestTarget.y - 28,
-                text: getLanguage() === 'ru' ? `УДАР В ТЫЛ! -${flankDmg}` : `REAR STRIKE! -${flankDmg}`,
-                color: '#f59e0b',
-                opacity: 1,
-                isCrit: true,
-                vy: -45,
-              });
-            } else {
-              // Guard covers the angle but every arm is busy or the parry is on cooldown:
-              // the strike lands clean. This is the pressure valve that lets a duel
-              // actually progress instead of every hit pinging off the guard.
-              this.damageEnemy(bestTarget, finalDmg, isCrit);
-              sound.playVectorSlash();
-              this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
-            }
-          } else {
-            // Check for Ballistic Riot Shield Directional Defense
-            const hasShield = (bestTarget.type === 'riot_shield' || (bestTarget.shield !== undefined && bestTarget.shield > 0)) && !bestTarget.isStunned;
-            if (hasShield) {
-              // Where the shield is actually pointing (it lags behind the player), versus
-              // where this strike is coming from.
-              const facingAngle = bestTarget.shieldAngle !== undefined
-                ? bestTarget.shieldAngle
-                : Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
-              const incomingAngle = Math.atan2(pY - bestTarget.y, pX - bestTarget.x);
-              let angleDiff = Math.abs(facingAngle - incomingAngle);
-              if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
-
-              // Frontal coverage arc (~70 degrees, 1.22 radians)
-              if (angleDiff < 1.22) {
-                // Frontal Ballistic Shield Block!
-                const absorbed = Math.round(finalDmg * 0.85);
-                const bleedThrough = finalDmg - absorbed;
-                bestTarget.shield = Math.max(0, (bestTarget.shield || 0) - absorbed);
-                bestTarget.hp -= bleedThrough;
-                sound.playVectorClash();
-                this.spawnVectorClash(bestTarget.x, bestTarget.y, strikeAngle, '#94a3b8');
-                this.triggerScreenShake(3, 0.08);
-
-                this.state.damageNumbers.push({
-                  id: ++this.dmgNumIdCounter,
-                  x: bestTarget.x,
-                  y: bestTarget.y - 20,
-                  text: getLanguage() === 'ru' ? `БЛОК ЩИТОМ! -${absorbed}` : `SHIELD BLOCK! -${absorbed}`,
-                  color: '#94a3b8',
-                  opacity: 1,
-                  isCrit: false,
-                  vy: -35,
-                });
-
-                /*
-                 * A man killed through his own shield is still killed.
-                 *
-                 * This path subtracts health directly and returns, so it never reached the
-                 * death handler: a shield trooper finished off by bleed-through sat in the
-                 * enemy list at negative health, counted as no kill, dropped no DNA and
-                 * advanced no achievement until something else happened to hit him. Caught
-                 * by the invariant probe as "dead enemy still in the list".
-                 */
-                if (bestTarget.hp <= 0) {
-                  this.killEnemy(bestTarget);
-                  return;
-                }
-
-                if (bestTarget.shield <= 0) {
-                  sound.playGuardBreak();
-                  bestTarget.isStunned = true;
-                  bestTarget.stunTimer = 1.4;
-                  this.state.damageNumbers.push({
-                    id: ++this.dmgNumIdCounter,
-                    x: bestTarget.x,
-                    y: bestTarget.y - 32,
-                    text: getLanguage() === 'ru' ? 'ЩИТ РАЗБИТ!' : 'SHIELD BROKEN!',
-                    color: '#facc15',
-                    opacity: 1,
-                    isCrit: true,
-                    vy: -50,
-                  });
-                }
-                return;
-              } else {
-                // FLANK / REAR BYPASS! Attack hits exposed side/back of shielded unit!
-                const flankDmg = Math.round(finalDmg * 1.5);
-                this.damageEnemy(bestTarget, flankDmg, true);
-                sound.playVectorSlash();
-                this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, true, arm.strikeType);
-
-                this.state.damageNumbers.push({
-                  id: ++this.dmgNumIdCounter,
-                  x: bestTarget.x,
-                  y: bestTarget.y - 24,
-                  text: getLanguage() === 'ru' ? `ОБХОД ЩИТА! -${flankDmg}` : `FLANK BYPASS! -${flankDmg}`,
-                  color: '#f59e0b',
-                  opacity: 1,
-                  isCrit: true,
-                  vy: -45,
-                });
-                return;
-              }
-            }
-
-            // Direct vector slash (Normal enemy OR boss with broken posture / stunned!)
-            let bonusDmg = finalDmg;
-            if (bestTarget.isBoss && bestTarget.isStunned) {
-              bonusDmg = Math.round(finalDmg * 2.0); // 2x damage while boss posture is broken!
-            }
-            // The band is read before the strike drives the frequency up, so a phase build
-            // does not lose its bypass on the very hit that pushes it out of the band.
-            const strikeBand = vectorBand(arm.vibrationHz || restingHz);
-            this.damageEnemy(
-              bestTarget,
-              bonusDmg,
-              isCrit || (bestTarget.isBoss && bestTarget.isStunned),
-              undefined,
-              strikeBand === 'phase'
-            );
-            sound.playVectorSlash();
-            this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
-
-            /*
-             * Impulse whip: the strike knocks the rank back off its step.
-             *
-             * Small on any one hit and cumulative across a crowd, which is what turns a
-             * cordon closing on you into a cordon that keeps losing its footing.
-             */
-            if (this.hasMutation('lucy_kinetic_whip')) {
-              for (const other of this.state.enemies) {
-                if (other.hp <= 0 || other.isBoss || other.isHeavyMass) continue;
-                const d = Math.hypot(other.x - bestTarget.x, other.y - bestTarget.y);
-                if (d > 90) continue;
-                const push = Math.atan2(other.y - pY, other.x - pX);
-                other.x += Math.cos(push) * 26;
-                other.y += Math.sin(push) * 26;
-              }
-            }
-
-            /*
-             * Needle piercing: the point goes through the man and into the one behind, and
-             * opens the plate on both. Deliberately a shorter line than the focus lance -
-             * this is a tier 1 node, not an apex.
-             */
-            if (this.hasMutation('lucy_needle_pierce')) {
-              let pierced = 0;
-              for (const other of this.state.enemies) {
-                if (pierced >= 1) break;
-                if (other === bestTarget || other.hp <= 0) continue;
-                const along = (other.x - pX) * Math.cos(strikeAngle) + (other.y - pY) * Math.sin(strikeAngle);
-                if (along <= 0 || along > baseReach * 1.5) continue;
-                const offLine = Math.abs(
-                  -(other.x - pX) * Math.sin(strikeAngle) + (other.y - pY) * Math.cos(strikeAngle)
-                );
-                if (offLine > 24) continue;
-                // Armour-piercing by definition: a needle does not have to cut the plate.
-                this.damageEnemy(other, finalDmg * 0.6, false, undefined, true);
-                this.spawnVectorImpact(other.x, other.y, strikeAngle, false, 'pierce');
-                pierced++;
-              }
-            }
-
-            /*
-             * Stasis touch: what the arm leaves behind is a man who cannot get away.
-             *
-             * Nana's whole business is holding ground, and a quarter off the target's pace
-             * for a second and a half is what lets her actually do it.
-             */
-            if (this.hasMutation('nana_stasis_tap') && !bestTarget.isBoss) {
-              bestTarget.stasisSlowTimer = 1.5;
-            }
-
-            /*
-             * Kinetic focus lance: the thrust does not stop at the first body. Everything
-             * standing on the line behind the target takes it at reduced force, which is
-             * what makes it the answer to a rank of heavy infantry, as its card says.
-             */
-            if (this.hasMutation('nana_orbital_lance')) {
-              for (const other of this.state.enemies) {
-                if (other === bestTarget || other.hp <= 0) continue;
-                const along = (other.x - pX) * Math.cos(strikeAngle) + (other.y - pY) * Math.sin(strikeAngle);
-                if (along <= 0 || along > baseReach * 2.1) continue;
-                const offLine = Math.abs(
-                  -(other.x - pX) * Math.sin(strikeAngle) + (other.y - pY) * Math.cos(strikeAngle)
-                );
-                if (offLine > 26) continue;
-                this.damageEnemy(other, finalDmg * 0.55, false);
-                this.spawnVectorImpact(other.x, other.y, strikeAngle, false, 'pierce');
-              }
-            }
-
-            /*
-             * Cascading micro-needle volley: a needle goes out to a shooter holding the
-             * far line, which is the only thing that reaches the men the arms cannot.
-             */
-            /*
-             * Cluster shards: the needle comes apart on the body and the pieces go on into
-             * whoever is standing beside it. The card's own words - coverage against a
-             * dense rank.
-             */
-            if (this.hasMutation('mariko_cluster_shards')) {
-              for (let sh = 0; sh < 2; sh++) {
-                const shAng = strikeAngle + (sh === 0 ? 0.7 : -0.7);
-                this.state.projectiles.push({
-                  id: ++this.projectileIdCounter,
-                  x: bestTarget.x, y: bestTarget.y,
-                  vx: Math.cos(shAng) * 520, vy: Math.sin(shAng) * 520,
-                  radius: 3.5,
-                  damage: finalDmg * 0.45,
-                  isPlayer: true,
-                  color: '#facc15',
-                  life: 0.4, maxLife: 0.4,
-                  penetration: 1,
-                });
-              }
-            }
-
-            if (this.hasMutation('mariko_storm_of_gods') && Math.random() < 0.3) {
-              let far: Enemy | null = null;
-              let farDist = 0;
-              for (const other of this.state.enemies) {
-                if (other.hp <= 0 || other.shootCooldown === undefined) continue;
-                const d = Math.hypot(other.x - pX, other.y - pY);
-                if (d > farDist && d < 900) { farDist = d; far = other; }
-              }
-              if (far) {
-                const needleAng = Math.atan2(far.y - pY, far.x - pX);
-                this.state.projectiles.push({
-                  id: ++this.projectileIdCounter,
-                  x: pX, y: pY,
-                  vx: Math.cos(needleAng) * 880,
-                  vy: Math.sin(needleAng) * 880,
-                  radius: 4,
-                  damage: finalDmg * 0.8,
-                  isPlayer: true,
-                  color: '#facc15',
-                  life: 1.2,
-                  maxLife: 1.2,
-                  penetration: 2,
-                });
-              }
-            }
-
-            /*
-             * Vibration band effects.
-             *
-             * Striking drives the frequency up from the build's resting value, so a build
-             * that idles low still climbs during a sustained fight - the band is where the
-             * arm sits right now, not a fixed loadout choice.
-             */
-            // Overflow frequency is spent here: a build that shopped hard for frequency
-            // climbs roughly three times faster and reaches the top band in one strike.
-            const climb = 75 + this.vibrationOverflow * 0.32;
-            arm.vibrationHz = Math.min(1300, (arm.vibrationHz || restingHz) + climb);
-            const band = vectorBand(arm.vibrationHz);
-
-            if (band === 'shear') {
-              // High frequency cuts: the original resonance bonus.
-              this.damageEnemy(bestTarget, Math.round(finalDmg * 0.45), true);
-            } else if (band === 'critical') {
-              // Extreme frequency becomes visible and detonates on contact. Splash is
-              // deliberately modest per target - its value is hitting a packed rank at all.
-              // Inside the top band the blast still grows with frequency, so the scale keeps
-              // paying above 900 instead of flattening the moment the band is entered.
-              const overBand = Math.min(1, Math.max(0, (arm.vibrationHz - 900) / 400));
-              this.damageEnemy(bestTarget, Math.round(finalDmg * (0.3 + overBand * 0.25)), true);
-              const blastR = 74 + overBand * 38;
-              for (const other of this.state.enemies) {
-                if (other === bestTarget || other.hp <= 0) continue;
-                if (Math.hypot(other.x - bestTarget.x, other.y - bestTarget.y) > blastR) continue;
-                this.damageEnemy(other, Math.round(finalDmg * 0.34), false);
-              }
-              this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, true, 'slash');
-            } else if (band === 'kinetic') {
-              // Mid frequency lifts and bursts vessels: the internal rupture the engine
-              // already models, applied on a fraction of strikes.
-              if (!bestTarget.isBoss && Math.random() < 0.22 && (bestTarget.internalRuptureTimer || 0) <= 0) {
-                bestTarget.internalRuptureTimer = 1.6;
-              }
-            }
-            // 'phase' has no bonus here; its whole point is handled before mitigation,
-            // in damageEnemy, where it ignores armour and shields outright.
-
-            // Telekinetic Fling: Hurling slain enemy corpse or kinetic blast through enemy ranks
-            const canFling = arm.role === 'flinger' || (bestTarget.hp <= 0 && Math.random() < 0.4);
-            if (canFling) {
-              arm.strikeType = 'fling';
-              const flingAngle = strikeAngle + (Math.random() - 0.5) * 0.15;
-              this.state.projectiles.push({
-                id: ++this.projectileIdCounter,
-                x: bestTarget.x,
-                y: bestTarget.y,
-                vx: Math.cos(flingAngle) * 820,
-                vy: Math.sin(flingAngle) * 820,
-                damage: Math.round((48 + this.state.stats.psiPower * 0.85) * psiMultiplier),
-                radius: 8,
-                color: this.state.character.id === 'lucy' ? '#ef4444' : '#38bdf8',
-                life: 0.75,
-                maxLife: 0.75,
-                penetration: 4,
-                isPlayer: true,
-                isBullet: false,
-              });
-              this.triggerScreenShake(3, 0.1);
-            }
-          }
-
-          // Special Mutation: Lucy Relativistic Double-Rend
-          if (this.hasMutation('lucy_double_rend')) {
-            this.scheduleGameTime(0.06, () => {
-              if (bestTarget && bestTarget.hp > 0) {
-                this.damageEnemy(bestTarget, finalDmg * 0.6, isCrit);
-                this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle + 0.3, false, 'slash');
-              }
-            });
-          }
-
-          // Special Mutation: Mariko Micro-Needles
-          if (this.hasMutation('mariko_needle_fire')) {
-            this.state.projectiles.push({
-              id: ++this.projectileIdCounter,
-              x: pX,
-              y: pY,
-              vx: Math.cos(strikeAngle) * 650,
-              vy: Math.sin(strikeAngle) * 650,
-              damage: 18 * psiMultiplier,
-              radius: 4,
-              color: '#facc15',
-              life: 0.6,
-              maxLife: 0.6,
-              penetration: this.hasMutation('mariko_shield_breaker') ? 3 : 1,
-              isPlayer: true,
-              isBullet: false,
-            });
-          }
-
-          // Special Mutation: Nana Trident Needles
-          if (this.hasMutation('nana_trident_thrust') && arm.strikeType === 'pierce') {
-            [-0.2, 0.2].forEach((offsetAngle) => {
-              this.state.projectiles.push({
-                id: ++this.projectileIdCounter,
-                x: pX,
-                y: pY,
-                vx: Math.cos(strikeAngle + offsetAngle) * 580,
-                vy: Math.sin(strikeAngle + offsetAngle) * 580,
-                damage: 22 * psiMultiplier,
-                radius: 4,
-                color: '#c084fc',
-                life: 0.6,
-                maxLife: 0.6,
-                penetration: 2,
-                isPlayer: true,
-                isBullet: false,
-              });
-            });
-          }
-
-          // Cleave / Sweep: if slashing, also slice nearby enemies caught in the cutting arc
-          if (arm.strikeType === 'slash') {
-            const cleaveRadius = this.hasMutation('lucy_whirlwind_cleave') ? 80 : 38;
-            for (const otherEnemy of nearbyEnemies) {
-              if (otherEnemy.id === bestTarget.id) continue;
-              const dToLine = Math.hypot(
-                otherEnemy.x - (pX + (bestTarget.x - pX) * 0.5),
-                otherEnemy.y - (pY + (bestTarget.y - pY) * 0.5)
-              );
-              if (dToLine < cleaveRadius) {
-                this.damageEnemy(otherEnemy, finalDmg * (this.hasMutation('lucy_whirlwind_cleave') ? 0.75 : 0.5), false);
-                this.spawnVectorImpact(otherEnemy.x, otherEnemy.y, strikeAngle, false, 'slash');
-              }
-            }
-          }
-
-          // Individual vector attack cooldown (staggered for fluid multi-limb cadence)
-          let cadenceMultiplier = 1.0;
-          if (this.hasMutation('lucy_hyper_freq')) cadenceMultiplier *= 0.7;
-          if (this.hasMutation('mariko_storm_cadence')) cadenceMultiplier *= 0.55;
-          if (this.hasMutation('nana_vector_swiftness')) cadenceMultiplier *= 0.7;
-          // hasMutation matches node ids, and 'nyu_low_hp_frenzy' is a specialPerkId, not a
-          // node id - so Nyu's wounded-frenzy cadence never once triggered. The node that
-          // declares that perk is nyu_dual_psyche.
-          if (this.hasMutation('nyu_dual_psyche') && this.state.player.hp < this.state.player.maxHp * 0.5) cadenceMultiplier *= 0.5;
-
-          const isBossDuel = nearbyEnemies.some((e) => e.isBoss);
-          // Slower against rank and file, unchanged in a duel: the arms should still feel
-          // decisive against a single dangerous target, which is what they are for.
-          const baseCadence = (isBossDuel ? (totalArmCount > 10 ? 0.35 : 0.25) : (totalArmCount > 10 ? 1.05 : 0.62)) * cadenceMultiplier;
-          arm.attackCooldown = (baseCadence / atkSpeedMod) * (0.8 + Math.random() * 0.4);
-        } else if (this.state.patrolBoats && this.state.patrolBoats.some((b) => b.phase !== 'sinking' && Math.hypot(b.x - pX, b.y - pY) <= maxEngageDistance * 1.3)) {
-          /*
-           * Vectors reach out over the water.
-           *
-           * A boat sitting offshore shelling the beach has to be answerable, or the only
-           * play against it is to walk out of the arena's whole left third. The reach is the
-           * same one that tears helicopters down.
-           */
-          const boat = this.state.patrolBoats.find(
-            (b) => b.phase !== 'sinking' && Math.hypot(b.x - pX, b.y - pY) <= maxEngageDistance * 1.3
-          )!;
-          const bAngle = Math.atan2(boat.y - pY, boat.x - pX);
-          let bAngleDiff = Math.abs(arm.baseAngle - bAngle);
-          if (bAngleDiff > Math.PI) bAngleDiff = Math.PI * 2 - bAngleDiff;
-
-          if (bAngleDiff < Math.PI * 0.65) {
-            arm.striking = true;
-            arm.strikeProgress = 0;
-            arm.targetX = boat.x + (Math.random() - 0.5) * 40;
-            arm.targetY = boat.y + (Math.random() - 0.5) * 20;
-            arm.strikeType = Math.random() < 0.5 ? 'slash' : 'pierce';
-
-            const baseDmg = (34 + this.state.stats.psiPower * 0.6) * psiMultiplier;
-            const isCrit = Math.random() < (this.state.stats.critChance / 100);
-            const finalDmg = Math.round(isCrit ? baseDmg * this.state.stats.critDamage : baseDmg);
-            boat.hp -= finalDmg;
-            sound.playMetalClank();
-            this.triggerScreenShake(4, 0.14);
-            this.state.damageNumbers.push({
-              id: ++this.dmgNumIdCounter,
-              x: arm.targetX,
-              y: arm.targetY - 15,
-              text: `${finalDmg}`,
-              color: isCrit ? '#f59e0b' : '#38bdf8',
-              opacity: 1,
-              isCrit,
-              vy: -40,
-            });
-            arm.attackCooldown = (0.5 / atkSpeedMod) * (0.8 + Math.random() * 0.4);
-          }
-        } else if (this.state.dropships && this.state.dropships.length > 0) {
-          // Autonomous Vector Anti-Air: Tear into Dropship Gunships!
-          const livingDropships = this.state.dropships.filter(
-            (d) => d.phase !== 'crashing' && d.altitude <= 0.95 && Math.hypot(d.x - pX, d.y - pY) <= maxEngageDistance * 1.45
-          );
-          if (livingDropships.length > 0) {
-            const targetDropship = livingDropships[0];
-            const dAngle = Math.atan2(targetDropship.y - pY, targetDropship.x - pX);
-            let dAngleDiff = Math.abs(arm.baseAngle - dAngle);
-            if (dAngleDiff > Math.PI) dAngleDiff = Math.PI * 2 - dAngleDiff;
-
-            if (dAngleDiff < Math.PI * 0.65) {
-              arm.striking = true;
-              arm.strikeProgress = 0;
-              const strikeOffset = (Math.random() - 0.5) * 44;
-              arm.targetX = targetDropship.x + strikeOffset;
-              arm.targetY = targetDropship.y + (Math.random() - 0.5) * 22;
-              arm.strikeType = Math.random() < 0.5 ? 'slash' : 'pierce';
-
-              const baseDmg = (36 + this.state.stats.psiPower * 0.65) * psiMultiplier;
-              const isCrit = Math.random() < (this.state.stats.critChance / 100);
-              const finalDmg = isCrit ? baseDmg * this.state.stats.critDamage : baseDmg;
-
-              targetDropship.hp -= Math.round(finalDmg);
-              sound.playMetalClank();
-              sound.playVectorSlash();
-              this.triggerScreenShake(4, 0.15);
-
-              this.state.damageNumbers.push({
-                id: ++this.dmgNumIdCounter,
-                x: arm.targetX,
-                y: arm.targetY - 15,
-                text: `${Math.round(finalDmg)}`,
-                color: isCrit ? '#f59e0b' : '#38bdf8',
-                opacity: 1,
-                scale: isCrit ? 1.4 : 1.0,
-                isCrit,
-                vy: -40,
-              });
-
-              for (let sp = 0; sp < 4; sp++) {
-                this.state.particles.push({
-                  x: arm.targetX,
-                  y: arm.targetY,
-                  vx: (Math.random() - 0.5) * 220,
-                  vy: (Math.random() - 0.5) * 220,
-                  life: 0.25,
-                  maxLife: 0.25,
-                  size: 3,
-                  color: '#f59e0b',
-                  alpha: 1,
-                  type: 'spark',
-                });
-              }
-
-              const baseCadence = (totalArmCount > 10 ? 0.35 : 0.22) / atkSpeedMod;
-              arm.attackCooldown = baseCadence * (0.8 + Math.random() * 0.4);
-            }
-          }
-        }
-      }
+      // Reports back when the strike resolved in a way that ends this arm's frame.
+      if (this.updateArmCombatAI(arm, i, armFrame)) return;
 
       // 3. Smooth Kinematic Target Angle & Wave Dynamics
       const idleWave = Math.sin(time + i * 1.5) * 0.25;
