@@ -16,6 +16,15 @@ import io
 import os
 import re
 import glob
+import sys
+
+# Windows consoles default to a legacy code page, so a single emoji in a source line is
+# enough to kill the audit with UnicodeEncodeError halfway through its own report. Force
+# UTF-8 and replace anything the terminal still cannot draw.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
 # Run from anywhere in the repo.
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))

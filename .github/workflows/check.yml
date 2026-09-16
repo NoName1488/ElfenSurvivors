@@ -1,0 +1,60 @@
+# Runs the repository's own checks on every push.
+#
+# Everything here already existed as scripts anyone could run by hand, which meant in
+# practice that nobody did. The fast tier takes about ten seconds locally and under a minute
+# on a runner, so there is no reason for a commit to skip it.
+#
+# The full tier - long simulation probes and the balance sweep - runs on a schedule and on
+# demand rather than per push. Those measure whether the game is still fair, which is not
+# something a single commit breaks silently in the way a type error or a crash does, and
+# they take two minutes.
+
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: 'Include the slow simulation probes'
+        type: boolean
+        default: false
+  schedule:
+    # Once a week: catches drift in the balance probes without spending a runner on it daily.
+    - cron: '0 6 * * 1'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: npm ci
+
+      - name: Fast checks
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        run: npm run check
+
+      # The scheduled and manual runs take the long route: the same eight checks plus the
+      # sixteen-wave invariant probe, a three-seed balance sweep and the census that proves
+      # every system still fires at all.
+      - name: All checks
+        if: github.event_name == 'schedule' || inputs.full
+        run: npm run check:full
+
+      # A build failure is a different class of problem from a failing check, and worth
+      # knowing about separately.
+      - name: Build
+        run: npm run build:client
