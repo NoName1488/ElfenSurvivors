@@ -131,6 +131,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
   // capturing the state value and having to be torn down and rebuilt on every switch.
   const retroModeRef = useRef<RetroMode>(retroMode);
   retroModeRef.current = retroMode;
+  /*
+   * Set when the frame loop has been throwing for a dozen frames straight.
+   *
+   * A single bad frame is absorbed in silence - that is what the try/finally in the loop is
+   * for. A fault that will not clear is different: the player is looking at a game that is
+   * lying to them about its own state, and they deserve to be told rather than left to
+   * wonder why nothing responds.
+   */
+  const [frameFault, setFrameFault] = useState<string | null>(null);
+
   const [hudState, setHudState] = useState({
     hp: 100,
     maxHp: 100,
@@ -225,8 +235,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
     let animationFrameId: number;
     let lastTime = performance.now();
     let lastHudSync = 0;
+    /*
+     * A frame that throws must not end the run.
+     *
+     * requestAnimationFrame(render) used to be the last statement inside render, so a single
+     * exception anywhere above it meant the next frame was never scheduled: the game froze
+     * for good, said nothing, and took the run with it. The scheduling now happens in a
+     * finally, and the error is recorded where a playtester can paste it.
+     *
+     * An error that repeats every frame is a different problem from one that happens once.
+     * The first few are absorbed silently; past that the player is told, because a game
+     * quietly running on a broken frame is worse than one that admits it.
+     */
+    let frameErrors = 0;
+    let loopBroken = false;
 
     const render = (time: number) => {
+      try {
       const dt = Math.min(0.1, (time - lastTime) / 1000);
       // Real elapsed time between frames, before the clamp. The clamped dt is what the
       // simulation steps by; this is what the player actually experienced, and it is the
@@ -353,7 +378,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
         }
       }
 
-      animationFrameId = requestAnimationFrame(render);
+      } catch (err) {
+        frameErrors++;
+        const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        if (frameErrors === 1) {
+          // First one only: the stack is the useful part and repeating it floods the console.
+          console.error('[frame] render failed', err);
+          engine.logEvent(`render error: ${message}`);
+        }
+        if (frameErrors === 12 && !loopBroken) {
+          loopBroken = true;
+          engine.logEvent(`render error repeating: ${message}`);
+          setFrameFault(message);
+        }
+      } finally {
+        // Always, whatever happened above. This line is the difference between a bad frame
+        // and a dead game.
+        animationFrameId = requestAnimationFrame(render);
+      }
     };
 
     animationFrameId = requestAnimationFrame(render);
@@ -1144,6 +1186,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ engine, onPauseToggle, i
           </div>
         </div>
       </div>
+
+      {/*
+        * A fault that will not clear.
+        *
+        * Shown only once the frame loop has failed a dozen frames running, so a single
+        * hiccup never nags. It names the error rather than saying "something went wrong",
+        * because the person reading it is usually the one who can send it to me, and it
+        * points at the run report, which already carries the details.
+        */}
+      {frameFault && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-40 pointer-events-auto max-w-lg w-[92%]">
+          <div className="glass-panel border border-amber-500/60 bg-amber-950/70 rounded-xl px-4 py-3 shadow-[0_0_20px_rgba(245,158,11,0.3)] flex flex-col gap-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-mono font-black uppercase tracking-wider text-amber-300">
+                {isRu ? 'СБОЙ ОТРИСОВКИ' : 'RENDER FAULT'}
+              </span>
+              <button
+                onClick={() => setFrameFault(null)}
+                className="text-2xs font-mono text-amber-200/70 hover:text-white transition-colors cursor-pointer"
+              >
+                {isRu ? 'СКРЫТЬ' : 'DISMISS'}
+              </button>
+            </div>
+            <p className="text-2xs font-mono text-amber-100/90 leading-relaxed break-words">
+              {frameFault}
+            </p>
+            <p className="text-2xs font-mono text-amber-200/60 leading-relaxed">
+              {isRu
+                ? 'Игра продолжает работать, но кадр падает. Ошибка записана в отчёт о забеге — его можно скопировать на экране смерти и прислать.'
+                : 'The game is still running but a frame is failing. The error is in the run report, which you can copy from the game-over screen and send.'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Virtual Joystick Visual for Touch */}
       {touchControls.active && (

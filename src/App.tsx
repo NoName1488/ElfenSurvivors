@@ -44,6 +44,23 @@ export default function App() {
 
     const newEngine = new GameEngine(character, starterWeapon, window.innerWidth, window.innerHeight);
 
+    /*
+     * Hand the crash screen a way to reach the run report.
+     *
+     * The error boundary sits above this component and cannot receive the engine as a prop -
+     * by the time it renders, the tree that held the engine has already been unmounted. A
+     * getter on window is the one channel that survives that, and it turns a crash report
+     * from "something threw" into one that also says which wave, which build and which
+     * clearance it happened on.
+     */
+    (window as any).__elfenRunReport = () => {
+      try {
+        return newEngine.buildRunReport();
+      } catch (e) {
+        return '(run report unavailable)';
+      }
+    };
+
     // Wire up engine event callbacks
     newEngine.onLevelUpCallback = () => {
       setPendingLevelUps((prev) => prev + 1);
