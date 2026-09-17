@@ -43,7 +43,7 @@ import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_
  * carry. A report from an unknown build is far less useful than one that names it, so this
  * is bumped with each release.
  */
-export const RUN_REPORT_VERSION = '1.5.0';
+export const RUN_REPORT_VERSION = '1.6.0';
 import { PSYCHIC_MUTATION_TREES, PsychicMutationNode } from '../data/psychicMutationsData';
 import { BOSS_SPECS } from '../data/bossSpecs';
 import { getLanguage } from './i18n';
