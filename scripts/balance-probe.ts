@@ -87,7 +87,7 @@ if (process.env.TACTICS !== undefined) {
 }
 
 import { sound } from '../src/utils/sound';
-import { GameEngine } from '../src/utils/engine';
+import { GameEngine, MAX_OVERCHARGE, overchargeCost } from '../src/utils/engine';
 
 /*
  * Silence the audio layer completely.
@@ -153,6 +153,32 @@ function shopPhase(engine: any) {
       break;
     }
   }
+
+  /*
+   * Overcharge, once the racks are full.
+   *
+   * Without this the probe models a player whose power stops growing on wave 5, which is the
+   * state the economy probe measured and the reason the boss curve ran away. A player with
+   * DNA and nothing to buy is not the player being balanced for any more.
+   */
+  // NO_OVERCHARGE=1 models the old player, whose power stopped at the rack limit. Set it to
+  // isolate the effect of the sink inside one build rather than across two.
+  let ocGuard = Number(process.env.NO_OVERCHARGE || 0) ? 1e9 : 0;
+  while (ocGuard++ < 60) {
+    const candidates: { cost: number; buy: () => boolean }[] = [];
+    engine.state.weapons.forEach((w: any) => {
+      const next = (w.overcharge || 0) + 1;
+      if (next <= MAX_OVERCHARGE) candidates.push({ cost: overchargeCost(next, wave), buy: () => engine.overchargeWeapon(w.id) });
+    });
+    engine.state.passiveItems.forEach((_: any, idx: number) => {
+      const next = (engine.state.passiveItems[idx].overcharge || 0) + 1;
+      if (next <= MAX_OVERCHARGE) candidates.push({ cost: overchargeCost(next, wave), buy: () => engine.overchargePassive(idx) });
+    });
+    candidates.sort((a, b) => a.cost - b.cost);
+    const pick = candidates.find((c) => c.cost <= engine.state.player.dna);
+    if (!pick || !pick.buy()) break;
+  }
+
   engine.recalculateStats();
 }
 

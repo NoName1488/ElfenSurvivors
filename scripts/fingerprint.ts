@@ -73,7 +73,7 @@ function seedRandom(seed: number) {
 }
 
 import { sound } from '../src/utils/sound';
-import { GameEngine } from '../src/utils/engine';
+import { GameEngine, MAX_OVERCHARGE, overchargeCost } from '../src/utils/engine';
 import { CHARACTERS, WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS } from '../src/data/gameData';
 import { Weapon, WeaponType } from '../src/types';
 
@@ -112,6 +112,11 @@ function snapshot(s: any): string {
   const arms = s.vectorArms
     .map((a: any) => `${q(a.currentAngle)},${q(a.length ?? 0)},${q(a.vibrationHz ?? 0)},${a.striking ? 1 : 0}`)
     .join('|');
+  // Overcharge changes an item in place and shows up in derived stats, but recording it
+  // directly means a change to the tier maths cannot slip past as a rounding coincidence.
+  const gear = [...s.weapons, ...s.passiveItems]
+    .map((i: any) => `${i.tier || 1}.${i.overcharge || 0}`)
+    .join(',');
   const stats = Object.keys(s.stats)
     .sort()
     .map((k) => `${k}=${q((s.stats as any)[k])}`)
@@ -124,6 +129,7 @@ function snapshot(s: any): string {
     `E[${enemies}]`,
     `A[${arms}]`,
     `S[${stats}]`,
+    `G[${gear}]`,
   ].join(' ');
 }
 
@@ -143,6 +149,14 @@ interface Scenario {
    * before reaching the encounter, and the boss code would never be reached at all.
    */
   bossRush?: boolean;
+  /**
+   * Spends leftover DNA on overcharge between waves.
+   *
+   * Without a scenario that does this, the fingerprint never executes the overcharge path and
+   * would report "unchanged" about code it has not run - the same blindness it had about
+   * bosses, which is why the boss scenarios exist.
+   */
+  overcharge?: boolean;
 }
 
 const SCENARIOS: Scenario[] = [
@@ -158,6 +172,9 @@ const SCENARIOS: Scenario[] = [
   { name: 'boss: silpelit 14 (wave 1)', char: 'lucy', seed: 11, diff: 3, waves: 1, frames: 2600, startWave: 1, bossRush: true },
   { name: 'boss: bando (wave 5)', char: 'lucy', seed: 13, diff: 4, waves: 1, frames: 2600, startWave: 5, bossRush: true },
   { name: 'boss: kakuzawa (wave 15)', char: 'lucy', seed: 17, diff: 5, waves: 1, frames: 2600, startWave: 15, bossRush: true },
+
+  // A build that turns its DNA into power instead of hoarding it.
+  { name: 'overcharged build, waves 8-10', char: 'lucy', seed: 23, diff: 4, waves: 3, frames: 1400, startWave: 8, overcharge: true },
 ];
 
 function runScenario(sc: Scenario): string {
@@ -213,6 +230,25 @@ function runScenario(sc: Scenario): string {
       } else break;
       engine.recalculateStats();
     }
+    if (sc.overcharge) {
+      let ocGuard = 0;
+      while (ocGuard++ < 40) {
+        const picks: { cost: number; buy: () => boolean }[] = [];
+        engine.state.weapons.forEach((wp: any) => {
+          const next = (wp.overcharge || 0) + 1;
+          if (next <= MAX_OVERCHARGE) picks.push({ cost: overchargeCost(next, w), buy: () => engine.overchargeWeapon(wp.id) });
+        });
+        engine.state.passiveItems.forEach((_: any, idx: number) => {
+          const next = (engine.state.passiveItems[idx].overcharge || 0) + 1;
+          if (next <= MAX_OVERCHARGE) picks.push({ cost: overchargeCost(next, w), buy: () => engine.overchargePassive(idx) });
+        });
+        picks.sort((a, b) => a.cost - b.cost);
+        const pick = picks.find((c) => c.cost <= engine.state.player.dna);
+        if (!pick || !pick.buy()) break;
+      }
+      engine.recalculateStats();
+    }
+
     engine.state.player.hp = engine.state.player.maxHp;
     hash.update(`endwave ${w} ${snapshot(engine.state)}\n`);
   }

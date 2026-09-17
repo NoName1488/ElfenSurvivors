@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useReducer } from 'react';
 import { GameEngine, getDividendConfig, projectDividend, MAX_PASSIVE_ITEMS } from '../utils/engine';
 import { Character, Weapon, PassiveItem, StatUpgradeOption, WeaponRarity, WeaponType } from '../types';
 import { WEAPONS_DATABASE, PASSIVE_ITEMS, STAT_UPGRADE_OPTIONS, ASCENDED_STAT_UPGRADES, ITEM_SYNERGIES, WEAPON_EVOLUTIONS } from '../data/gameData';
@@ -9,6 +9,8 @@ import { LanguageFlagButton } from './LanguageFlagButton';
 import { AudioSettingsModal } from './AudioSettingsModal';
 import { ItemIcon } from './ItemIcon';
 import { exchange, tradeQuote, lostTradeBonuses, saleValue } from '../utils/shopTrade';
+import { missingSynergyPieces } from '../utils/shopOffers';
+import { MAX_OVERCHARGE, overchargeCost } from '../utils/engine';
 import { characterName, itemDescription } from '../utils/characterText';
 import {
   Dna,
@@ -59,6 +61,55 @@ interface ShopItem {
   catalystForEvolutionId?: string;
 }
 
+/**
+ * Buys one level of overcharge for an item.
+ *
+ * Shows the price rather than hiding it behind a hover: this is the main thing DNA is for
+ * after the racks fill, and a player who cannot see the cost will not plan around it. Reads
+ * as T4+ / T4++ / T4+++ so a glance at the inventory says where the run put its money.
+ */
+const OverchargeButton: React.FC<{
+  level: number;
+  wave: number;
+  dna: number;
+  isRu: boolean;
+  compact?: boolean;
+  onBuy: () => void;
+}> = ({ level, wave, dna, isRu, compact, onBuy }) => {
+  const maxed = level >= MAX_OVERCHARGE;
+  const cost = maxed ? 0 : overchargeCost(level + 1, wave);
+  const affordable = !maxed && dna >= cost;
+
+  if (maxed) {
+    return (
+      <span
+        className={`${compact ? 'px-1' : 'px-2 py-1.5'} rounded text-2xs font-mono font-black text-amber-300 bg-amber-950/40 border border-amber-500/40`}
+        title={isRu ? 'Форсирование на пределе' : 'Overcharge at its ceiling'}
+      >
+        {'+'.repeat(MAX_OVERCHARGE)}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      onClick={onBuy}
+      disabled={!affordable}
+      className={`${compact ? 'px-1 py-0.5' : 'px-2 py-1.5'} rounded text-2xs font-mono font-bold flex items-center gap-1 transition-colors ${
+        affordable
+          ? 'glass-panel text-amber-300 hover:bg-amber-950/50 hover:border-amber-500/50 cursor-pointer'
+          : 'text-gray-600 border border-white/5 cursor-not-allowed'
+      }`}
+      title={isRu
+        ? `Форсировать до уровня ${level + 1} из ${MAX_OVERCHARGE} за ${cost} ДНК. Каждый уровень стоит примерно как ещё один тир.`
+        : `Overcharge to level ${level + 1} of ${MAX_OVERCHARGE} for ${cost} DNA. Each level is worth about another tier.`}
+    >
+      <Zap className="w-3 h-3" />
+      <span>{cost}</span>
+    </button>
+  );
+};
+
 export const LabShop: React.FC<LabShopProps> = ({
   engine,
   pendingLevelUps,
@@ -96,6 +147,9 @@ export const LabShop: React.FC<LabShopProps> = ({
     setAnnouncedUnlocks(claimed);
     sound.playCharacterUnlocked();
   }, []);
+  // Overcharge raises a tier on the object itself, which React has no way to notice. This is
+  // the standard force-a-render counter; nothing reads the value, so it is not bound.
+  const [, bumpInventory] = useReducer((n: number) => n + 1, 0);
   const [tradeOffer, setTradeOffer] = useState<ShopItem | null>(null);
   const [tradeTarget, setTradeTarget] = useState<Weapon | PassiveItem | null>(null);
 
@@ -256,6 +310,21 @@ export const LabShop: React.FC<LabShopProps> = ({
       return ownsBase && !ownsCatalyst && catalystExists;
     });
 
+    /*
+     * Synergies the player is one or two items short of.
+     *
+     * Measured before this existed: 0.85 synergies live at the end of a run, because each one
+     * wants specific ids out of the whole catalogue and the shop draws at random. Owning a
+     * piece is a statement of intent, so the missing piece is put where it can be bought.
+     * Synergies the player already has, and pieces they already carry, are excluded - this
+     * reserves one slot, and it should never spend it on something owned.
+     */
+    const pendingSynergyPieces = missingSynergyPieces(
+      engine.state.passiveItems,
+      eligiblePassives,
+      engine.state.character.kind,
+    );
+
     const newOfferings: ShopItem[] = [];
 
     /*
@@ -270,6 +339,7 @@ export const LabShop: React.FC<LabShopProps> = ({
       : (engine.state.savedLockedShopItems || []).filter((i: any) => i.isLocked);
 
     let catalystSlotUsed = false;
+    let synergySlotUsed = false;
 
     for (let i = 0; i < 4; i++) {
       if (preservedItems[i]) {
@@ -279,6 +349,35 @@ export const LabShop: React.FC<LabShopProps> = ({
 
       // Requisition prices inflate with the sector so late-game DNA keeps a real cost.
       const waveCostMult = 1 + (baseWave - 1) * 0.085;
+
+      /*
+       * And one for the missing half of a synergy.
+       *
+       * Second in line behind the catalyst, and only ever one slot, so the other three stay
+       * random and the shop does not turn into a checklist.
+       */
+      if (!synergySlotUsed && pendingSynergyPieces.length > 0) {
+        synergySlotUsed = true;
+        const wantedId = pendingSynergyPieces[Math.floor(Math.random() * pendingSynergyPieces.length)];
+        const wanted = PASSIVE_ITEMS.find((p) => p.id === wantedId);
+        if (wanted) {
+          const boughtCount = purchaseCounts[wanted.id] || 0;
+          // No premium. The catalyst charges one because it hands over the biggest single
+          // power spike in the game; a synergy piece is an ordinary augment that happens to
+          // complete a pair, and taxing it would punish committing to a build.
+          const cost = Math.round((wanted.cost || 25) * (1 + boughtCount * 0.08) * waveCostMult);
+          newOfferings.push({
+            id: `shop_syn_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'passive',
+            passiveData: { ...wanted, tier: 1 },
+            tier: 1,
+            rarity: 'epic',
+            cost,
+            isLocked: false,
+          });
+          continue;
+        }
+      }
 
       // Reserve one slot for a catalyst the player is demonstrably building toward.
       if (!catalystSlotUsed && pendingCatalysts.length > 0) {
@@ -596,6 +695,40 @@ export const LabShop: React.FC<LabShopProps> = ({
     engine.state.weapons = engine.state.weapons.filter((w) => w.id !== weaponId);
     sound.playUiClick();
     engine.recalculateStats();
+  };
+
+  /*
+   * Overcharge: the only thing DNA can buy once the racks are full.
+   *
+   * Measured before this existed: the inventory caps out on wave 4 or 5 and the shop takes
+   * nothing for the rest of the campaign. Over twenty waves the probe earned 18,465 DNA and
+   * spent 967, while boss health went from 23,000 to 549,120. This is the conversion that
+   * was missing.
+   */
+  const buyOvercharge = (kind: 'weapon' | 'passive', key: string | number) => {
+    const ok = kind === 'weapon'
+      ? engine.overchargeWeapon(key as string)
+      : engine.overchargePassive(key as number);
+    if (!ok) return;
+    setCurrentDna(engine.state.player.dna);
+    bumpInventory();
+    sound.playLevelUp();
+  };
+
+  /*
+   * Melting the low tiers in one action.
+   *
+   * Reported from play: clearing them out meant selling one at a time through a confirm
+   * dialog. The refund follows the same escalating scale as a manual sale, so this is
+   * convenience, not a discount, and anything the player paid to overcharge is left alone.
+   */
+  const recycleLowTiers = (maxTier: number) => {
+    const result = engine.recycleAtOrBelow(maxTier, soldThisVisit);
+    if (result.items === 0) return;
+    setCurrentDna(engine.state.player.dna);
+    setSoldThisVisit((n) => n + result.items);
+    bumpInventory();
+    sound.playUiClick();
   };
 
   const sellPassive = (index: number) => {
@@ -1164,7 +1297,7 @@ export const LabShop: React.FC<LabShopProps> = ({
                                   : 'text-red-400 bg-red-950/50'
                               }`}
                             >
-                              {isEvo ? 'EVO T5' : `T${w.tier}`}
+                              {isEvo ? 'EVO T5' : `T${w.tier}`}{'+'.repeat(w.overcharge || 0)}
                             </span>
                           </div>
                           <div className="text-xs font-mono text-gray-400">
@@ -1172,6 +1305,14 @@ export const LabShop: React.FC<LabShopProps> = ({
                           </div>
                         </div>
                       </div>
+
+                      <OverchargeButton
+                        level={w.overcharge || 0}
+                        wave={engine.state.wave}
+                        dna={currentDna}
+                        isRu={isRu}
+                        onBuy={() => buyOvercharge('weapon', w.id)}
+                      />
 
                       <button
                         onClick={() => recycleWeapon(w.id)}
@@ -1239,7 +1380,17 @@ export const LabShop: React.FC<LabShopProps> = ({
                       size="xs"
                     />
                     <span className="truncate max-w-[110px]">{isRu ? p.russianName : p.name}</span>
-                    <span className="text-amber-400 font-bold">T{p.tier || 1}</span>
+                    <span className="text-amber-400 font-bold">
+                      T{p.tier || 1}{'+'.repeat(p.overcharge || 0)}
+                    </span>
+                    <OverchargeButton
+                      level={p.overcharge || 0}
+                      wave={engine.state.wave}
+                      dna={currentDna}
+                      isRu={isRu}
+                      compact
+                      onBuy={() => buyOvercharge('passive', idx)}
+                    />
                     <button
                       onClick={() => sellPassive(idx)}
                       className="ml-0.5 p-0.5 rounded text-gray-500 hover:text-red-400 hover:bg-red-950/40 transition-colors cursor-pointer"
@@ -1252,6 +1403,33 @@ export const LabShop: React.FC<LabShopProps> = ({
                   </div>
                 ))}
               </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-2xs font-mono uppercase tracking-wider text-gray-500">
+                  {isRu ? 'Переплавить' : 'Melt down'}
+                </span>
+                {[1, 2].map((tier) => {
+                  const doomed = [...engine.state.weapons, ...engine.state.passiveItems]
+                    .filter((i: { tier?: number; overcharge?: number }) => (i.tier || 1) <= tier && !(i.overcharge || 0));
+                  return (
+                    <button
+                      key={tier}
+                      onClick={() => recycleLowTiers(tier)}
+                      disabled={doomed.length === 0}
+                      className={`px-2 py-1 rounded text-2xs font-mono font-bold transition-colors ${
+                        doomed.length > 0
+                          ? 'melt-ready glass-panel text-gray-300 hover:text-red-300 hover:bg-red-950/40 cursor-pointer'
+                          : 'melt-empty text-gray-600 border border-white/5 cursor-not-allowed'
+                      }`}
+                      title={isRu
+                        ? `Продать всё до тира ${tier} включительно (${doomed.length} шт). Форсированные предметы не трогаются.`
+                        : `Sell everything at tier ${tier} and below (${doomed.length} items). Overcharged items are left alone.`}
+                    >
+                      {isRu ? `до T${tier}` : `T${tier} and below`} ({doomed.length})
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* The rate is the whole mechanic, so it is stated rather than discovered. */}
               <div className="text-2xs font-mono text-gray-500 leading-snug">
                 {isRu

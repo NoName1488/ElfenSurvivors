@@ -75,6 +75,14 @@ export interface Weapon {
   category: WeaponCategory;
   rarity: WeaponRarity;
   tier: number; // 1 to 4 (Common, Rare, Epic, Legendary fusion), 5 for Catalytic Evolution
+  /*
+   * Levels bought above the fusion ceiling, 0 to 3.
+   *
+   * Kept apart from `tier` because tier 5 already means "evolved" on a weapon, and the two
+   * are different things: evolution is a transformation a catalyst grants once, overcharge is
+   * raw power bought with DNA. Each level is worth about one tier.
+   */
+  overcharge?: number;
   description: string;
   /* English text; `description` holds the Russian. Read through itemDescription(). */
   descriptionEn?: string;
@@ -103,6 +111,8 @@ export interface PassiveItem {
   russianName: string;
   rarity: WeaponRarity;
   tier?: number; // 1 to 4
+  /** Levels bought above the fusion ceiling, 0 to 3. See Weapon.overcharge. */
+  overcharge?: number;
   description: string;
   descriptionEn?: string;
   cost: number;
@@ -138,12 +148,33 @@ export interface ActiveArchetype {
   icon: string;
 }
 
+/** Rules a synergy can switch on. Each is checked at exactly one place in the engine. */
+export type SynergyEffect =
+  /** Damage past an enemy's last point of health carries to the nearest other enemy. */
+  | 'overkill_cascade'
+  /** Breaking a vector guard staggers everything standing near it. */
+  | 'guard_shatter'
+  /** A kill made while the arms sit in the phase band returns health. */
+  | 'phase_harvest'
+  /** A collected DNA sample sometimes pays twice. */
+  | 'requisition_echo'
+  /** Every kill takes time off the dash. */
+  | 'adrenal_cycle';
+
 export interface ItemSynergy {
   id: string;
   name: string;
   russianName: string;
   description: string;
   descriptionEn?: string;
+  /*
+   * A rule this synergy turns on, read by the engine through hasSynergy().
+   *
+   * The original twelve only granted stats, which the engine applies from bonusStats without
+   * needing to know which synergy they came from. A rule has to be checked at the place it
+   * changes, so it is named here and matched there.
+   */
+  effect?: SynergyEffect;
   icon: string;
   color: string;
   requiredItems?: string[];

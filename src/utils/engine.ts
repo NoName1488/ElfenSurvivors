@@ -26,12 +26,14 @@ import {
   WeaponSetBonus,
   WeaponTag,
   PatrolBoat,
+  SynergyEffect,
 } from '../types';
 import { sound } from './sound';
 import { getActiveDifficulty, recordDifficultyCleared, getClearedDifficulties, DifficultyLevel } from './difficulty';
 import { recordCharacterTrials } from './progression';
 import { characterName } from './characterText';
 import { recordRunStats } from './stats';
+import { saleValue } from './shopTrade';
 import { WAVES, ITEM_SYNERGIES, WEAPONS_DATABASE, WEAPON_EVOLUTIONS, WEAPON_SET_BONUSES_CONFIG, FINAL_CAMPAIGN_WAVE } from '../data/gameData';
 
 /**
@@ -323,6 +325,22 @@ export function readCombatTimeScale(): number {
     if (Number.isFinite(raw) && raw > 0) return Math.max(0.3, Math.min(1, raw));
   } catch (e) {}
   return COMBAT_TIME_SCALE;
+}
+
+/** Levels of overcharge an item can be bought up to, above the tier-4 fusion ceiling. */
+export const MAX_OVERCHARGE = 3;
+
+/**
+ * What the next level of overcharge costs.
+ *
+ * Steep on purpose. At wave 10 the three levels cost 259, 622 and 1,491 DNA, so taking one
+ * item all the way is about two waves of income. A campaign pays out roughly 18,000 DNA,
+ * which is six or seven fully overcharged items out of eighteen carried - the player picks
+ * what the build is about rather than topping everything up.
+ */
+export function overchargeCost(nextLevel: number, wave: number): number {
+  const level = Math.max(1, Math.min(MAX_OVERCHARGE, Math.round(nextLevel)));
+  return Math.round(140 * Math.pow(2.4, level - 1) * (1 + Math.max(0, wave) * 0.085));
 }
 
 export function getDividendConfig(passiveItems: { id: string }[]): { rate: number; cap: number; hasVault: boolean } {
@@ -857,6 +875,17 @@ export class GameEngine {
     return this.state.mutationState.unlockedNodeIds.includes(nodeId);
   }
 
+  /**
+   * Whether a synergy rule is currently live.
+   *
+   * Synergies that only grant stats never come through here - recalculateStats applies those
+   * from bonusStats without caring where they came from. This is for the ones that change how
+   * something works, which has to be asked at the place it happens.
+   */
+  public hasSynergy(effect: SynergyEffect): boolean {
+    return this.state.activeSynergies.some((syn) => syn.effect === effect);
+  }
+
   public unlockMutation(nodeId: string): boolean {
     if (this.hasMutation(nodeId)) return false;
 
@@ -935,6 +964,84 @@ export class GameEngine {
     this.recalculateStats();
     sound.playUiClick();
     return true;
+  }
+
+  /**
+   * Buys one level of overcharge for a weapon, paying from the run wallet.
+   *
+   * Returns false and spends nothing when the item is already at the ceiling or the DNA is
+   * not there, so the caller can offer the button without checking twice.
+   */
+  public overchargeWeapon(weaponId: string): boolean {
+    const weapon = this.state.weapons.find((w) => w.id === weaponId);
+    if (!weapon) return false;
+    const next = (weapon.overcharge || 0) + 1;
+    if (next > MAX_OVERCHARGE) return false;
+    const cost = overchargeCost(next, this.state.wave);
+    if (this.state.player.dna < cost) return false;
+
+    this.state.player.dna -= cost;
+    weapon.overcharge = next;
+    this.recalculateStats();
+    return true;
+  }
+
+  /** The same for an augment, addressed by its slot. */
+  public overchargePassive(index: number): boolean {
+    const item = this.state.passiveItems[index];
+    if (!item) return false;
+    const next = (item.overcharge || 0) + 1;
+    if (next > MAX_OVERCHARGE) return false;
+    const cost = overchargeCost(next, this.state.wave);
+    if (this.state.player.dna < cost) return false;
+
+    this.state.player.dna -= cost;
+    item.overcharge = next;
+    this.recalculateStats();
+    return true;
+  }
+
+  /**
+   * Melts every item at or below a tier back into DNA, in one action.
+   *
+   * Reported from play: clearing out low tiers meant selling them one at a time through a
+   * confirm dialog, which nobody does past the fifth item. The refund follows the same
+   * escalating scale a manual sale uses, so bulk is convenient, not cheaper. An overcharged
+   * item is never included, whatever its tier - paying to raise something and then having it
+   * swept away by a button is not a thing the player asked for.
+   */
+  public recycleAtOrBelow(maxTier: number, salesSoFar = 0): { items: number; dna: number } {
+    const keep = <T extends { tier?: number; overcharge?: number }>(item: T) =>
+      (item.tier || 1) > maxTier || (item.overcharge || 0) > 0;
+
+    let sales = salesSoFar;
+    let gained = 0;
+    let removed = 0;
+
+    const doomedWeapons = this.state.weapons.filter((w) => !keep(w));
+    const doomedPassives = this.state.passiveItems.filter((p) => !keep(p));
+
+    // The starting weapon is the one thing a run cannot be left without.
+    const weaponsToSell = this.state.weapons.length - doomedWeapons.length > 0
+      ? doomedWeapons
+      : doomedWeapons.slice(0, Math.max(0, doomedWeapons.length - 1));
+
+    for (const w of weaponsToSell) {
+      gained += saleValue(w, sales++);
+      removed++;
+    }
+    for (const p of doomedPassives) {
+      gained += saleValue(p, sales++);
+      removed++;
+    }
+
+    const sold = new Set<object>([...weaponsToSell, ...doomedPassives]);
+    this.state.weapons = this.state.weapons.filter((w) => !sold.has(w));
+    this.state.passiveItems = this.state.passiveItems.filter((p) => !sold.has(p));
+    this.state.player.dna += gained;
+    this.recalculateStats();
+
+    return { items: removed, dna: gained };
   }
 
   public autoMergeWeapons(): { mergedName: string; newTier: number } | null {
@@ -1104,7 +1211,7 @@ export class GameEngine {
     // 1. Apply passive items with tier scaling
     for (const item of this.state.passiveItems) {
       if (!item.stats) continue;
-      const tierMult = 1 + ((item.tier || 1) - 1) * 0.5;
+      const tierMult = 1 + ((item.tier || 1) - 1) * 0.5 + (item.overcharge || 0) * 0.5;
       for (const [key, value] of Object.entries(item.stats)) {
         if (value !== undefined) {
           const val = typeof value === 'number' ? value * tierMult : value;
@@ -2466,6 +2573,8 @@ export class GameEngine {
         d.magnetized = true;
       });
       if (this.state.waveEndingTimer <= 0) {
+        this.resolvePlayerDeath();
+        if (!this.state.isWaveActive) return;
         this.finishWave();
         return;
       }
@@ -2776,6 +2885,9 @@ export class GameEngine {
     this.updateDnaDrops(dt);
     this.updateEffects(dt);
     this.updateCamera();
+
+    // Everything for this frame has landed. Now decide whether the player is alive.
+    this.resolvePlayerDeath();
   }
 
   private updateCharacterMechanics(dt: number) {
@@ -3675,6 +3787,22 @@ export class GameEngine {
             bestTarget.stunTimer = 2.4;
             sound.playGuardBreak();
             this.triggerScreenShake(14, 0.45);
+
+            /*
+             * Guard Shatter: the break travels.
+             *
+             * A shorter stagger than the target itself takes, and it does not chain - only
+             * enemies standing near the unit whose posture actually broke are caught, so the
+             * synergy rewards fighting into a cluster rather than picking off stragglers.
+             */
+            if (this.hasSynergy('guard_shatter')) {
+              for (const other of this.state.enemies) {
+                if (other === bestTarget || other.hp <= 0 || other.isBoss) continue;
+                if (Math.hypot(other.x - bestTarget.x, other.y - bestTarget.y) > 170) continue;
+                other.isStunned = true;
+                other.stunTimer = Math.max(other.stunTimer || 0, 0.8);
+              }
+            }
 
             let breakText = getLanguage() === 'ru' ? 'ПРОБИТИЕ ЗАЩИТЫ!' : 'GUARD BREAK!';
             let breakColor = '#facc15';
@@ -4839,7 +4967,7 @@ export class GameEngine {
       }
     }
 
-    let baseDamage = weapon.damage * psiMultiplier * (1 + (weapon.tier - 1) * 0.35);
+    let baseDamage = weapon.damage * psiMultiplier * (1 + (weapon.tier - 1) * 0.35 + (weapon.overcharge || 0) * 0.35);
     // Up to +30% after six unbroken seconds of fire. See sustainedFireTimer.
     if (this.sustainedFireTimer > 0) baseDamage *= 1 + (this.sustainedFireTimer / 6) * 0.3;
 
@@ -9927,6 +10055,8 @@ export class GameEngine {
   private aegisCharge = 25;
   private aegisCooldown = 0;
   /** Bando's emergency protocol fires once per wave. */
+  /** Pickups since the last doubled one, for Requisition Echo. */
+  private requisitionEchoCount = 0;
   private undyingUsedThisWave = false;
   /** Bando's suppression module: damage ramps while fire is continuous. */
   private sustainedFireTimer = 0;
@@ -10075,6 +10205,56 @@ export class GameEngine {
     }
 
     if (enemy.hp <= 0) {
+      /*
+       * Rupture Cascade: the swing does not stop at the body.
+       *
+       * Whatever was left over after the last point of health is carried to the nearest
+       * other enemy. Applied before the kill so the overkill figure is still readable, and
+       * only once per hit - the carried damage does not cascade again, which would turn one
+       * strike into a chain reaction across the whole field.
+       */
+      if (this.hasSynergy('overkill_cascade')) {
+        const overkill = Math.round(-enemy.hp);
+        if (overkill > 0) {
+          let nearest: Enemy | null = null;
+          let nearestDist = 150;
+          for (const other of this.state.enemies) {
+            if (other === enemy || other.hp <= 0) continue;
+            const d = Math.hypot(other.x - enemy.x, other.y - enemy.y);
+            if (d < nearestDist) {
+              nearest = other;
+              nearestDist = d;
+            }
+          }
+          if (nearest) {
+            nearest.hp -= overkill;
+            this.spawnVectorImpact(nearest.x, nearest.y, Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x), false);
+            this.pushDamageNumber(nearest.id, overkill, {
+              x: nearest.x,
+              y: nearest.y - 18,
+              color: '#f472b6',
+              isCrit: false,
+              vy: -40,
+            });
+            /*
+             * The kill is deferred by a frame.
+             *
+             * damageEnemy is called from inside loops that walk the enemy array backwards and
+             * tolerate exactly one removal - the enemy being hit. Removing a second one here
+             * shortened the array under the iterator, and the projectile pass read past the
+             * end: "Cannot read properties of undefined" on seed 4, wave 8. The queue already
+             * exists for follow-up hits and runs before any of those loops start.
+             */
+            if (nearest.hp <= 0) {
+              const doomed = nearest;
+              this.scheduleGameTime(0, () => {
+                if (doomed.hp <= 0) this.killEnemy(doomed);
+              });
+            }
+          }
+        }
+      }
+
       this.killEnemy(enemy);
     }
   }
@@ -10144,6 +10324,20 @@ export class GameEngine {
   private killEnemy(enemy: Enemy) {
     const idx = this.state.enemies.indexOf(enemy);
     if (idx === -1) return;
+
+    // Phase Harvest: a kill made while the arms sit in the phase band returns health.
+    if (this.hasSynergy('phase_harvest') && this.state.player.hp > 0) {
+      const arm = this.state.vectorArms[0];
+      const hz = arm?.vibrationHz ?? this.state.stats.vibrationBase ?? 0;
+      if (vectorBand(hz) === 'phase') {
+        this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 3);
+      }
+    }
+
+    // Adrenal Cycle: every kill brings the next dash forward.
+    if (this.hasSynergy('adrenal_cycle') && (this.state.player.mobilityCooldownTimer || 0) > 0) {
+      this.state.player.mobilityCooldownTimer = Math.max(0, this.state.player.mobilityCooldownTimer - 0.15);
+    }
     if (enemy.type === 'boss_mariko_unbound' || enemy.type === 'boss_mariko_berserk') this.trialDefeatedMariko = true;
     if (idx !== -1) {
       this.state.enemies.splice(idx, 1);
@@ -10639,14 +10833,31 @@ export class GameEngine {
       prefix: '-',
     });
 
-    if (this.state.player.hp <= 0) {
-      this.state.player.hp = 0;
-      this.state.isWaveActive = false;
-      checkAchievements(this.state);
-      this.bankRunProgress(false);
-      if (this.onGameOverCallback) {
-        this.onGameOverCallback(false);
-      }
+    // The run does not end here. Health is still moving this frame - lifesteal, regeneration
+    // and a second hit all land in the same update - and ending it mid-frame produced a run
+    // that was over while the player was still standing. Caught by the economy probe: the
+    // wave went inactive on the frame the player had 2 HP, because a vector kill healed after
+    // the death check had already fired. The decision is made once, at the end of the frame.
+    if (this.state.player.hp < 0) this.state.player.hp = 0;
+  }
+
+  /**
+   * Ends the run if the player is down, once the frame has finished resolving.
+   *
+   * Called at the end of update and before a wave is handed to finishWave, so every source of
+   * damage and healing for that frame has already been applied. Idempotent: the wave going
+   * inactive is what stops it running twice.
+   */
+  private resolvePlayerDeath() {
+    if (!this.state.isWaveActive) return;
+    if (this.state.player.hp > 0) return;
+
+    this.state.player.hp = 0;
+    this.state.isWaveActive = false;
+    checkAchievements(this.state);
+    this.bankRunProgress(false);
+    if (this.onGameOverCallback) {
+      this.onGameOverCallback(false);
     }
   }
 
@@ -10802,8 +11013,20 @@ export class GameEngine {
         drop.y += Math.sin(angle) * flySpeed * dt;
 
         if (dist < this.state.player.radius + drop.size) {
-          this.state.player.dna += drop.value;
-          this.state.totalDnaCollected += drop.value;
+          /*
+           * Requisition Echo: every fourth sample is counted twice.
+           *
+           * A fixed count rather than a roll. A quarter chance on a pickup the player makes
+           * hundreds of times a run is the same average with none of the readability - the
+           * player cannot see a probability, but they can see every fourth orb pay double.
+           */
+          let value = drop.value;
+          if (this.hasSynergy('requisition_echo')) {
+            this.requisitionEchoCount = (this.requisitionEchoCount + 1) % 4;
+            if (this.requisitionEchoCount === 0) value *= 2;
+          }
+          this.state.player.dna += value;
+          this.state.totalDnaCollected += value;
 
           /*
            * Harmonic DNA resonance: collecting a sample releases a stabilising flash.
