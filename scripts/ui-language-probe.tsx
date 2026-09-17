@@ -59,12 +59,36 @@ import { CharacterSelect } from '../src/components/CharacterSelect';
 import { StatsModal } from '../src/components/StatsModal';
 import { LoreEncyclopediaModal } from '../src/components/LoreEncyclopediaModal';
 import { MetaProgressionModal } from '../src/components/MetaProgressionModal';
+import { PsychicMutationTree } from '../src/components/PsychicMutationTree';
+import { GameEngine } from '../src/utils/engine';
+import { CHARACTERS, WEAPONS_DATABASE } from '../src/data/gameData';
+import type { Weapon } from '../src/types';
+
+/** A run for one subject, so its research tree can be rendered without playing to it. */
+function runFor(characterId: string) {
+  const character = CHARACTERS.find((c) => c.id === characterId)!;
+  const template = WEAPONS_DATABASE[character.startingWeaponId];
+  const starter: Weapon = { ...template, id: 'starter', tier: 1 } as Weapon;
+  const engine = new GameEngine(character, starter, 1600, 900) as any;
+  engine.state.mutationState.mutationPoints = 6;
+  return engine;
+}
 
 const SCREENS: { name: string; render: () => React.ReactElement }[] = [
   { name: 'subject select', render: () => <CharacterSelect onSelectCharacter={() => {}} onOpenLore={() => {}} /> },
   { name: 'lifetime record', render: () => <StatsModal onClose={() => {}} /> },
   { name: 'archive', render: () => <LoreEncyclopediaModal onClose={() => {}} /> },
   { name: 'research tree', render: () => <MetaProgressionModal onClose={() => {}} /> },
+
+  /*
+   * One entry per subject, because the bug this catches is per subject: the roster grew to
+   * eight and the mutation data still had five, so three of them opened an empty screen.
+   * Rendering each one also puts its text through the language check.
+   */
+  ...CHARACTERS.map((c) => ({
+    name: `mutations: ${c.id}`,
+    render: () => <PsychicMutationTree engine={runFor(c.id)} isModal onClose={() => {}} />,
+  })),
 ];
 
 /**
@@ -79,6 +103,8 @@ const NEUTRAL = new Set([
   'M60', 'SPAS-12', 'MP5', 'AT4', 'HUD', 'XP',
   // Tier labels, printed identically in both builds.
   'T1', 'T2', 'T3', 'T4', 'T5',
+  // Tier numerals on the mutation nodes, and the multiplier sign beside a crit figure.
+  'I', 'II', 'III', 'IV', 'x',
 ]);
 
 /** Strips tags, decodes the handful of entities React emits, and normalises whitespace. */

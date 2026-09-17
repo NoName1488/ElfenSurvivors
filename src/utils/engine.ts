@@ -1487,7 +1487,10 @@ export class GameEngine {
        * items granted used to be summed here and thrown away, which is why "+1 Vector /
        * Barrel" was reported as doing nothing for Bando: for him it is the barrel half.
        */
-      stats.extraBarrels = Math.min(MAX_EXTRA_BARRELS, grantedVectors);
+      // Penance Rounds is a barrel like any other, so it goes through the same path the
+      // augments do rather than opening a second way to fire twice.
+      const penance = this.hasMutation('kurama_penance_rounds') ? 1 : 0;
+      stats.extraBarrels = Math.min(MAX_EXTRA_BARRELS, grantedVectors + penance);
       stats.vectorCount = 0;
     }
     stats.vectorReach = effectiveVectorReach(stats.vectorReach);
@@ -3135,15 +3138,19 @@ export class GameEngine {
         if (this.state.characterResource.current <= 0) {
           this.state.characterResource.isActive = false;
         }
-      } else if (this.state.characterResource.current > 0) {
+      } else if (this.state.characterResource.current > 0 && !this.hasMutation('s00_locks_blown')) {
+        // Locks Blown: what the mask has stored stays stored. The only way to spend Pressure
+        // becomes striking with it, which is the whole point of taking the node.
         this.state.characterResource.current = Math.max(0, this.state.characterResource.current - dt * 2.5);
       }
     }
 
     // 7. KURAMA: Inhibitor Field aura (220px)
     if (this.state.character.id === 'kurama') {
-      const auraRadius = 220;
-      const SLOW_FACTOR = 0.62;
+      // Field Overdrive widens the prototype and makes it bite harder.
+      const overdriven = this.hasMutation('kurama_field_overdrive');
+      const auraRadius = overdriven ? 340 : 220;
+      const SLOW_FACTOR = overdriven ? 0.45 : 0.62;
       for (const e of this.state.enemies) {
         if (e.baseSpeed === undefined) e.baseSpeed = e.speed;
         const d = Math.hypot(e.x - pX, e.y - pY);
@@ -3175,21 +3182,27 @@ export class GameEngine {
 
     // 8. ANNA KAKUZAWA: Gravitational Core Singularity (Absorb bullets & pull enemies)
     if (this.state.character.id === 'anna_kakuzawa') {
-      const pullRadius = 360;
+      // Event Horizon: backing away stops being a decision anyone gets to make.
+      const horizon = this.hasMutation('anna_event_horizon');
+      const pullRadius = horizon ? 520 : 360;
+      const pullForce = horizon ? 110 : 55;
       for (const e of this.state.enemies) {
         const d = Math.hypot(e.x - pX, e.y - pY);
         if (d < pullRadius && d > 40) {
           const pullAngle = Math.atan2(pY - e.y, pX - e.x);
-          e.x += Math.cos(pullAngle) * 55 * dt;
-          e.y += Math.sin(pullAngle) * 55 * dt;
+          e.x += Math.cos(pullAngle) * pullForce * dt;
+          e.y += Math.sin(pullAngle) * pullForce * dt;
         }
       }
 
       // Absorb enemy bullets in 240px
       for (const p of this.state.projectiles) {
-        if (!p.isPlayer && Math.hypot(p.x - pX, p.y - pY) < 240) {
+        // Null Field widens the catch; Assimilation decides what the catch is worth.
+        const catchRadius = this.hasMutation('anna_null_field') ? 380 : 240;
+        const perBullet = this.hasMutation('anna_assimilation') ? 1.2 : 0.4;
+        if (!p.isPlayer && Math.hypot(p.x - pX, p.y - pY) < catchRadius) {
           p.life = 0;
-          this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 0.4);
+          this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + perBullet);
           this.state.characterResource.current = Math.min(100, this.state.characterResource.current + 3);
           this.state.particles.push({
             x: p.x,
@@ -3906,7 +3919,7 @@ export class GameEngine {
           // Guard covers the angle but every arm is busy or the parry is on cooldown:
           // the strike lands clean. This is the pressure valve that lets a duel
           // actually progress instead of every hit pinging off the guard.
-          this.damageEnemy(bestTarget, finalDmg, isCrit);
+          this.damageEnemy(bestTarget, finalDmg, isCrit, undefined, this.hasMutation('s00_phase_lash'));
           sound.playVectorSlash();
           this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle, isCrit, arm.strikeType);
         }
@@ -4203,7 +4216,7 @@ export class GameEngine {
       if (this.hasMutation('lucy_double_rend')) {
         this.scheduleGameTime(0.06, () => {
           if (bestTarget && bestTarget.hp > 0) {
-            this.damageEnemy(bestTarget, finalDmg * 0.6, isCrit);
+            this.damageEnemy(bestTarget, finalDmg * 0.6, isCrit, undefined, this.hasMutation('s00_phase_lash'));
             this.spawnVectorImpact(bestTarget.x, bestTarget.y, strikeAngle + 0.3, false, 'slash');
           }
         });
@@ -10391,6 +10404,16 @@ export class GameEngine {
       }
     }
 
+    /*
+     * Absolution: killing a Diclonius closes a line in his own ledger.
+     *
+     * Only a Diclonius. Killing a soldier is not penance, and the node text says so, so the
+     * same check the doctrine code uses decides it here.
+     */
+    if (this.hasMutation('kurama_absolution') && isDiclonius(enemy.type) && this.state.player.hp > 0) {
+      this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + 4);
+    }
+
     // Adrenal Cycle: every kill brings the next dash forward.
     if (this.hasSynergy('adrenal_cycle') && (this.state.player.mobilityCooldownTimer || 0) > 0) {
       this.state.player.mobilityCooldownTimer = Math.max(0, this.state.player.mobilityCooldownTimer - 0.15);
@@ -10784,6 +10807,15 @@ export class GameEngine {
       this.state.character.id === 'nana' && this.state.characterResource.isActive ? 8 : 0;
     const armorReduction = 100 / (100 + (this.state.stats.armor + stanceArmor) * 5);
     let finalDamage = Math.max(1, Math.round(amount * armorReduction));
+
+    /*
+     * Shroud Discharge: while Pressure is being held, part of the hit goes back into the
+     * field instead of into the body. It reads on the health bar rather than in a tooltip,
+     * which is the only reason a defensive node is worth an apex slot.
+     */
+    if (this.hasMutation('s00_shroud_discharge') && this.state.characterResource.current > 0) {
+      finalDamage = Math.max(1, Math.round(finalDamage * 0.75));
+    }
 
     /*
      * A ceiling on one blow.

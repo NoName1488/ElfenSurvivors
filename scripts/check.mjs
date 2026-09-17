@@ -52,6 +52,7 @@ const CHECKS = [
   { name: 'language leaks', cmd: 'python', args: ['scripts/lang-leak-audit.py'], fast: true, audit: true },
   { name: 'menu speaks one language', ...tsx('scripts/ui-language-probe.tsx'), fast: true },
   { name: 'shop offers its sink', ...tsx('scripts/shop-ui-probe.tsx'), fast: true },
+  { name: 'every subject can mutate', ...tsx('scripts/mutation-probe.ts'), fast: true },
   { name: 'items keep their promises', ...tsx('scripts/promise-probe.ts'), fast: false },
   {
     name: 'invariants (4 waves)',
