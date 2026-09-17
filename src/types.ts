@@ -187,6 +187,14 @@ export interface ItemSynergy {
 }
 
 export interface PlayerStats {
+  /**
+   * Extra projectiles per shot, for subjects with no biological vectors.
+   *
+   * Items and mutations read "+1 Vector / Barrel". A Diclonius gets the vector; Bando and
+   * Kurama get the barrel. Before this the barrel half existed only in the text - the points
+   * were summed into vectorCount and then zeroed, so the bonus was silently nothing.
+   */
+  extraBarrels?: number;
   maxHp: number;
   hpRegen: number; // hp per 5s
   psiPower: number; // % damage multiplier for psi / firearm firepower

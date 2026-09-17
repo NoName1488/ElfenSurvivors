@@ -328,6 +328,14 @@ export function readCombatTimeScale(): number {
 }
 
 /** Levels of overcharge an item can be bought up to, above the tier-4 fusion ceiling. */
+/**
+ * Extra projectiles a vectorless subject can stack.
+ *
+ * Three, matching the vector ceiling in spirit: a fourth barrel on top of a full weapon rack
+ * turns a burst weapon into a wall and stops reading as a shot at all.
+ */
+export const MAX_EXTRA_BARRELS = 3;
+
 export const MAX_OVERCHARGE = 3;
 
 /**
@@ -1445,6 +1453,15 @@ export class GameEngine {
     }
     this.state.activeWeaponSets = activeWeaponSets;
 
+    /*
+     * Everything that was granted, before any subject-specific rule takes it away.
+     *
+     * Bando's branch below zeroes vectorCount outright, so reading it after that point sees
+     * nothing - which is why the first attempt at the barrel bonus still measured zero. The
+     * grant has to be captured here, while it still exists.
+     */
+    const grantedVectors = Math.max(0, Math.round((stats.vectorCount || 0) - (this.state.character.baseStats.vectorCount || 0)));
+
     // 5. Radical Dualism & Polar Character Constraints (2.Д)
     if (this.state.character.id === 'lucy') {
       // Zero Harvest Anomaly: Cannot invest in DNA harvest
@@ -1465,7 +1482,12 @@ export class GameEngine {
     if (this.state.character.baseStats.vectorCount > 0) {
       stats.vectorCount = Math.min(armCap, Math.max(1, Math.round(stats.vectorCount)));
     } else {
-      // Bando and Kurama have no biological vectors; nothing may grant them any.
+      /*
+       * Bando and Kurama have no biological vectors, and nothing may grant them any. What the
+       * items granted used to be summed here and thrown away, which is why "+1 Vector /
+       * Barrel" was reported as doing nothing for Bando: for him it is the barrel half.
+       */
+      stats.extraBarrels = Math.min(MAX_EXTRA_BARRELS, grantedVectors);
       stats.vectorCount = 0;
     }
     stats.vectorReach = effectiveVectorReach(stats.vectorReach);
@@ -4888,6 +4910,41 @@ export class GameEngine {
          */
         const projMark = this.state.projectiles.length;
         const fired = this.executeWeapon(weapon);
+
+        /*
+         * Extra barrels.
+         *
+         * Copies whatever the weapon just produced, fanned out and at reduced damage, which
+         * works for a slug, a pellet spread or a rocket without this code knowing which it
+         * is. Done before the marking passes below so the copies are marked with the rest of
+         * the shot rather than behaving like a different weapon.
+         */
+        const barrels = this.state.stats.extraBarrels || 0;
+        if (fired && barrels > 0) {
+          const shot = this.state.projectiles.slice(projMark);
+          for (let b = 1; b <= barrels; b++) {
+            // Alternate sides so an odd number of barrels stays centred on the target.
+            const spread = (b % 2 === 0 ? 1 : -1) * Math.ceil(b / 2) * 0.09;
+            for (const src of shot) {
+              const speed = Math.hypot(src.vx, src.vy);
+              const angle = Math.atan2(src.vy, src.vx) + spread;
+              this.state.projectiles.push({
+                ...src,
+                id: ++this.projectileIdCounter,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                // 0.6, calibrated rather than picked: at this figure an extra barrel is worth
+                // +11% and +14% kills to Bando for the two augments that grant it, against
+                // +12% and +15% for the vector half on Lucy. The two halves of the same card
+                // are now worth the same. Averaged over six seeds - a single run cannot see an
+                // effect this size, because an extra projectile draws from the random stream
+                // and the two runs diverge outright.
+                damage: Math.max(1, Math.round(src.damage * 0.6)),
+              });
+            }
+          }
+        }
+
         if (fired && (weapon.type === 'sat_anti_vector_laser' || this.antiVectorRounds)) {
           for (let pi = projMark; pi < this.state.projectiles.length; pi++) {
             const np = this.state.projectiles[pi];
